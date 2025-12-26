@@ -5,8 +5,8 @@ import Foundation
 final class LayoutRefreshController {
     private weak var controller: WMController?
 
-    private var isRefreshInProgress: Bool = false
-    private var hasPendingRefresh: Bool = false
+    private var activeRefreshTask: Task<Void, Never>?
+    private var isInLightSession: Bool = false
     private var isImmediateLayoutInProgress: Bool = false
     private var refreshTimer: Timer?
 
@@ -15,27 +15,26 @@ final class LayoutRefreshController {
     }
 
     func refreshWindowsAndLayout() {
-        if isRefreshInProgress {
-            hasPendingRefresh = true
-            return
-        }
-
-        isRefreshInProgress = true
-        hasPendingRefresh = false
-
-        Task { @MainActor [weak self] in
-            await self?.executeLayoutRefresh()
-            self?.finishRefresh()
+        guard !isInLightSession else { return }
+        activeRefreshTask?.cancel()
+        activeRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try Task.checkCancellation()
+                try await executeLayoutRefresh()
+            } catch {
+                return
+            }
         }
     }
 
-    private func finishRefresh() {
-        isRefreshInProgress = false
-
-        if hasPendingRefresh {
-            hasPendingRefresh = false
-            refreshWindowsAndLayout()
-        }
+    func runLightSession(_ body: () -> Void) {
+        activeRefreshTask?.cancel()
+        activeRefreshTask = nil
+        isInLightSession = true
+        body()
+        isInLightSession = false
+        refreshWindowsAndLayout()
     }
 
     func executeLayoutRefreshImmediate() {
@@ -72,11 +71,12 @@ final class LayoutRefreshController {
     }
 
     func resetState() {
-        isRefreshInProgress = false
-        hasPendingRefresh = false
+        activeRefreshTask?.cancel()
+        activeRefreshTask = nil
+        isInLightSession = false
     }
 
-    private func executeLayoutRefresh() async {
+    private func executeLayoutRefresh() async throws {
         guard let controller else { return }
         let interval = signpostInterval("executeLayoutRefresh")
         defer { interval.end() }
@@ -86,6 +86,7 @@ final class LayoutRefreshController {
         }
 
         let windows = await controller.internalAXManager.currentWindowsAsync()
+        try Task.checkCancellation()
         var seenKeys: Set<WindowModel.WindowKey> = []
         let focusedWorkspaceId = controller.activeWorkspace()?.id
 
@@ -124,6 +125,8 @@ final class LayoutRefreshController {
         }
         controller.internalWorkspaceManager.removeMissing(keys: seenKeys)
         controller.internalWorkspaceManager.garbageCollectUnusedWorkspaces(focusedWorkspaceId: focusedWorkspaceId)
+
+        try Task.checkCancellation()
 
         var activeWorkspaceIds: Set<WorkspaceDescriptor.ID> = []
         for monitor in controller.internalWorkspaceManager.monitors {
