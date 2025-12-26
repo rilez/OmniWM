@@ -11,7 +11,8 @@ final class WorkspaceNavigationHandler {
 
     func focusMonitorInDirection(_ direction: Direction) {
         guard let controller else { return }
-        guard let currentMonitorId = controller.internalActiveMonitorId ?? controller.monitorForInteraction()?.id else { return }
+        guard let currentMonitorId = controller.internalActiveMonitorId ?? controller.monitorForInteraction()?.id
+        else { return }
 
         guard let targetMonitor = controller.internalWorkspaceManager.adjacentMonitor(
             from: currentMonitorId,
@@ -25,7 +26,8 @@ final class WorkspaceNavigationHandler {
 
     func focusMonitorCyclic(previous: Bool) {
         guard let controller else { return }
-        guard let currentMonitorId = controller.internalActiveMonitorId ?? controller.monitorForInteraction()?.id else { return }
+        guard let currentMonitorId = controller.internalActiveMonitorId ?? controller.monitorForInteraction()?.id
+        else { return }
 
         let targetMonitor: Monitor? = if previous {
             controller.internalWorkspaceManager.previousMonitor(from: currentMonitorId)
@@ -40,7 +42,8 @@ final class WorkspaceNavigationHandler {
     func focusLastMonitor() {
         guard let controller else { return }
         guard let previousId = controller.internalPreviousMonitorId else { return }
-        guard let currentMonitorId = controller.internalActiveMonitorId ?? controller.monitorForInteraction()?.id else { return }
+        guard let currentMonitorId = controller.internalActiveMonitorId ?? controller.monitorForInteraction()?.id
+        else { return }
 
         guard controller.internalWorkspaceManager.monitors.contains(where: { $0.id == previousId }) else {
             controller.internalPreviousMonitorId = nil
@@ -54,7 +57,8 @@ final class WorkspaceNavigationHandler {
         guard let controller else { return }
         controller.internalPreviousMonitorId = currentMonitorId
 
-        guard let targetWorkspace = controller.internalWorkspaceManager.activeWorkspaceOrFirst(on: targetMonitorId) else {
+        guard let targetWorkspace = controller.internalWorkspaceManager.activeWorkspaceOrFirst(on: targetMonitorId)
+        else {
             return
         }
 
@@ -73,7 +77,8 @@ final class WorkspaceNavigationHandler {
 
     func moveCurrentWorkspaceToMonitor(direction: Direction) {
         guard let controller else { return }
-        guard let currentMonitorId = controller.internalActiveMonitorId ?? controller.monitorForInteraction()?.id else { return }
+        guard let currentMonitorId = controller.internalActiveMonitorId ?? controller.monitorForInteraction()?.id
+        else { return }
         guard let wsId = controller.activeWorkspace()?.id else { return }
 
         guard let targetMonitor = controller.internalWorkspaceManager.adjacentMonitor(
@@ -92,7 +97,8 @@ final class WorkspaceNavigationHandler {
     func moveColumnToMonitorInDirection(_ direction: Direction) {
         guard let controller else { return }
         guard let engine = controller.internalNiriEngine else { return }
-        guard let currentMonitorId = controller.internalActiveMonitorId ?? controller.monitorForInteraction()?.id else { return }
+        guard let currentMonitorId = controller.internalActiveMonitorId ?? controller.monitorForInteraction()?.id
+        else { return }
         guard let wsId = controller.activeWorkspace()?.id else { return }
 
         guard let targetMonitor = controller.internalWorkspaceManager.adjacentMonitor(
@@ -111,7 +117,8 @@ final class WorkspaceNavigationHandler {
             return
         }
 
-        guard let targetWorkspace = controller.internalWorkspaceManager.activeWorkspaceOrFirst(on: targetMonitor.id) else {
+        guard let targetWorkspace = controller.internalWorkspaceManager.activeWorkspaceOrFirst(on: targetMonitor.id)
+        else {
             return
         }
 
@@ -189,10 +196,12 @@ final class WorkspaceNavigationHandler {
 
     func summonWorkspace(index: Int) {
         guard let controller else { return }
-        guard let currentMonitorId = controller.internalActiveMonitorId ?? controller.monitorForInteraction()?.id else { return }
+        guard let currentMonitorId = controller.internalActiveMonitorId ?? controller.monitorForInteraction()?.id
+        else { return }
 
         let targetName = String(max(0, index) + 1)
-        guard let targetWsId = controller.internalWorkspaceManager.workspaceId(for: targetName, createIfMissing: false) else { return }
+        guard let targetWsId = controller.internalWorkspaceManager.workspaceId(for: targetName, createIfMissing: false)
+        else { return }
 
         guard let targetMonitorId = controller.internalWorkspaceManager.monitorId(for: targetWsId),
               targetMonitorId != currentMonitorId
@@ -329,7 +338,8 @@ final class WorkspaceNavigationHandler {
         guard let wsId = controller.activeWorkspace()?.id else { return }
 
         let targetName = String(max(0, index) + 1)
-        guard let targetWsId = controller.internalWorkspaceManager.workspaceId(for: targetName, createIfMissing: true) else { return }
+        guard let targetWsId = controller.internalWorkspaceManager.workspaceId(for: targetName, createIfMissing: true)
+        else { return }
 
         guard targetWsId != wsId else { return }
 
@@ -407,10 +417,12 @@ final class WorkspaceNavigationHandler {
                 {
                     controller.internalFocusedHandle = newSelectedNode.handle
                 } else {
-                    controller.internalFocusedHandle = controller.internalWorkspaceManager.entries(in: currentWorkspaceId).first?.handle
+                    controller.internalFocusedHandle = controller.internalWorkspaceManager
+                        .entries(in: currentWorkspaceId).first?.handle
                 }
             } else {
-                controller.internalFocusedHandle = controller.internalWorkspaceManager.entries(in: currentWorkspaceId).first?.handle
+                controller.internalFocusedHandle = controller.internalWorkspaceManager.entries(in: currentWorkspaceId)
+                    .first?.handle
             }
         }
 

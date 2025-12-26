@@ -293,7 +293,8 @@ final class LayoutRefreshController {
         guard let frame = try? AXWindowService.frame(entry.axRef) else { return }
         if !controller.internalWorkspaceManager.isHiddenInCorner(entry.handle) {
             let center = CGPoint(x: frame.midX, y: frame.midY)
-            let referenceFrame = center.monitorApproximation(in: controller.internalWorkspaceManager.monitors)?.frame ?? monitor.frame
+            let referenceFrame = center.monitorApproximation(in: controller.internalWorkspaceManager.monitors)?
+                .frame ?? monitor.frame
             let proportional = proportionalPosition(topLeft: frame.topLeftCorner, in: referenceFrame)
             controller.internalWorkspaceManager.setHiddenProportionalPosition(proportional, for: entry.handle)
         }
@@ -344,7 +345,8 @@ final class LayoutRefreshController {
 
         var infos: [TabbedColumnOverlayInfo] = []
         for monitor in controller.internalWorkspaceManager.monitors {
-            guard let workspace = controller.internalWorkspaceManager.activeWorkspaceOrFirst(on: monitor.id) else { continue }
+            guard let workspace = controller.internalWorkspaceManager.activeWorkspaceOrFirst(on: monitor.id)
+            else { continue }
 
             for column in engine.columns(in: workspace.id) where column.isTabbed {
                 guard let frame = column.frame else { continue }

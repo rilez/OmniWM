@@ -37,7 +37,11 @@ final class AXEventHandler {
             return
         }
 
-        let workspaceId = controller.resolveWorkspaceForNewWindow(axRef: ref, pid: pid, fallbackWorkspaceId: controller.activeWorkspace()?.id)
+        let workspaceId = controller.resolveWorkspaceForNewWindow(
+            axRef: ref,
+            pid: pid,
+            fallbackWorkspaceId: controller.activeWorkspace()?.id
+        )
         _ = controller.internalWorkspaceManager.addWindow(ref, pid: pid, windowId: winId, to: workspaceId)
 
         controller.internalLayoutRefreshController?.refreshWindowsAndLayout()
@@ -95,13 +99,15 @@ final class AXEventHandler {
                 if entry.windowId == winId, entry.handle.pid == pid {
                     if ws.id != controller.activeWorkspace()?.id {
                         guard let monitor = controller.internalWorkspaceManager.monitor(for: ws.id),
-                              controller.internalWorkspaceManager.workspaces(on: monitor.id).contains(where: { $0.id == ws.id })
+                              controller.internalWorkspaceManager.workspaces(on: monitor.id)
+                              .contains(where: { $0.id == ws.id })
                         else {
                             return
                         }
 
-                        if let currentMonitorId = controller.internalActiveMonitorId ?? controller.monitorForInteraction()?.id,
-                           currentMonitorId != monitor.id
+                        if let currentMonitorId = controller.internalActiveMonitorId ?? controller
+                            .monitorForInteraction()?.id,
+                            currentMonitorId != monitor.id
                         {
                             controller.internalPreviousMonitorId = currentMonitorId
                         }
@@ -205,7 +211,9 @@ final class AXEventHandler {
 
         for ws in controller.internalWorkspaceManager.workspaces {
             for entry in controller.internalWorkspaceManager.entries(in: ws.id) {
-                if entry.handle.pid == pid, controller.internalWorkspaceManager.layoutReason(for: entry.handle) == .macosHiddenApp {
+                if entry.handle.pid == pid,
+                   controller.internalWorkspaceManager.layoutReason(for: entry.handle) == .macosHiddenApp
+                {
                     _ = controller.internalWorkspaceManager.restoreFromNativeState(for: entry.handle)
                 }
             }
@@ -271,7 +279,7 @@ final class AXEventHandler {
             guard let self, let controller else { return }
             guard let entry = controller.internalWorkspaceManager.entry(for: handleForBorder) else { return }
             if let frame = try? AXWindowService.frame(entry.axRef) {
-                self.updateBorderIfAllowed(handle: entry.handle, frame: frame, windowId: entry.windowId)
+                updateBorderIfAllowed(handle: entry.handle, frame: frame, windowId: entry.windowId)
             }
         }
     }
