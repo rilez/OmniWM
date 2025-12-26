@@ -727,17 +727,8 @@ final class WMController {
     }
 
     @objc private func workspaceDidChange() {
+        borderManager.hideBorder()
         refreshWindowsAndLayout()
-
-        // Hide border if new workspace has no windows
-        guard let activeWs = activeWorkspace() else {
-            borderManager.hideBorder()
-            return
-        }
-        let entries = workspaceManager.entries(in: activeWs.id)
-        if entries.isEmpty {
-            borderManager.hideBorder()
-        }
     }
 
     private func setupAppActivationObserver() {
@@ -2399,6 +2390,8 @@ final class WMController {
     }
 
     private func switchWorkspace(index: Int) {
+        borderManager.hideBorder()
+
         if let currentWorkspace = activeWorkspace() {
             saveNiriViewportState(for: currentWorkspace.id)
         }
@@ -2676,6 +2669,12 @@ final class WMController {
     }
 
     private func updateBorderIfAllowed(handle: WindowHandle, frame: CGRect, windowId: Int) {
+        guard let activeWs = activeWorkspace(),
+              workspaceManager.workspace(for: handle) == activeWs.id else {
+            borderManager.hideBorder()
+            return
+        }
+
         if isNonManagedFocusActive {
             borderManager.hideBorder()
             return
