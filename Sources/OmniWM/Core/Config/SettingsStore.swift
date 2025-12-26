@@ -160,6 +160,10 @@ final class SettingsStore {
         didSet { saveAppRules() }
     }
 
+    var preventSleepEnabled: Bool {
+        didSet { defaults.set(preventSleepEnabled, forKey: Keys.preventSleepEnabled) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         hotkeysEnabled = defaults.object(forKey: Keys.hotkeysEnabled) as? Bool ?? true
@@ -212,6 +216,7 @@ final class SettingsStore {
         workspaceBarYOffset = defaults.object(forKey: Keys.workspaceBarYOffset) as? Double ?? 0.0
         monitorBarSettings = Self.loadMonitorBarSettings(from: defaults)
         appRules = Self.loadAppRules(from: defaults)
+        preventSleepEnabled = defaults.object(forKey: Keys.preventSleepEnabled) as? Bool ?? false
     }
 
     private static func loadBindings(from defaults: UserDefaults) -> [HotkeyBinding] {
@@ -531,4 +536,5 @@ private enum Keys {
     static let monitorBarSettings = "settings.workspaceBar.monitorSettings"
 
     static let appRules = "settings.appRules"
+    static let preventSleepEnabled = "settings.preventSleepEnabled"
 }

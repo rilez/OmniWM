@@ -290,6 +290,14 @@ final class WMController {
         }
     }
 
+    func setPreventSleepEnabled(_ enabled: Bool) {
+        if enabled {
+            SleepPreventionManager.shared.preventSleep()
+        } else {
+            SleepPreventionManager.shared.allowSleep()
+        }
+    }
+
     func updateWorkspaceBar() {
         workspaceBarManager.update()
     }

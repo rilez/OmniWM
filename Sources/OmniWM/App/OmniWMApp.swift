@@ -43,6 +43,7 @@ struct OmniWMApp: App {
         controller.setMoveMouseToFocusedWindow(settings.moveMouseToFocusedWindow)
 
         controller.setWorkspaceBarEnabled(settings.workspaceBarEnabled)
+        controller.setPreventSleepEnabled(settings.preventSleepEnabled)
     }
 
     var body: some Scene {
@@ -62,6 +63,10 @@ struct OmniWMApp: App {
             Toggle("Workspace Bar", isOn: $settings.workspaceBarEnabled)
                 .onChange(of: settings.workspaceBarEnabled) { _, newValue in
                     controller.setWorkspaceBarEnabled(newValue)
+                }
+            Toggle("Keep Awake", isOn: $settings.preventSleepEnabled)
+                .onChange(of: settings.preventSleepEnabled) { _, newValue in
+                    controller.setPreventSleepEnabled(newValue)
                 }
             Divider()
             Button("App Rules…") {
