@@ -728,6 +728,16 @@ final class WMController {
 
     @objc private func workspaceDidChange() {
         refreshWindowsAndLayout()
+
+        // Hide border if new workspace has no windows
+        guard let activeWs = activeWorkspace() else {
+            borderManager.hideBorder()
+            return
+        }
+        let entries = workspaceManager.entries(in: activeWs.id)
+        if entries.isEmpty {
+            borderManager.hideBorder()
+        }
     }
 
     private func setupAppActivationObserver() {
