@@ -114,10 +114,10 @@ struct GeneralSettingsTab: View {
 
                 HStack {
                     Text("Scroll Sensitivity")
-                    Slider(value: $settings.scrollSensitivity, in: 0.1 ... 10.0, step: 0.1)
+                    Slider(value: $settings.scrollSensitivity, in: 0.1 ... 100.0, step: 0.1)
                     Text(String(format: "%.1f", settings.scrollSensitivity) + "x")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .frame(width: 48, alignment: .trailing)
+                        .frame(width: 56, alignment: .trailing)
                 }
 
                 Picker("Mouse Scroll Modifier", selection: $settings.scrollModifierKey) {

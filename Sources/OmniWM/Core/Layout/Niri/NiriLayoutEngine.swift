@@ -341,6 +341,7 @@ final class NiriLayoutEngine {
         let root = ensureRoot(for: workspaceId)
 
         if let existingColumn = claimEmptyColumnIfWorkspaceEmpty(in: root) {
+            existingColumn.width = .proportion(1.0 / CGFloat(maxVisibleColumns))
             let windowNode = NiriWindow(handle: handle)
             existingColumn.appendChild(windowNode)
             handleToNode[handle] = windowNode
@@ -357,6 +358,7 @@ final class NiriLayoutEngine {
         }
 
         let newColumn = NiriContainer()
+        newColumn.width = .proportion(1.0 / CGFloat(maxVisibleColumns))
         if let refCol = referenceColumn {
             root.insertAfter(newColumn, reference: refCol)
         } else {
@@ -830,6 +832,7 @@ final class NiriLayoutEngine {
         }
 
         let newColumn = NiriContainer()
+        newColumn.width = .proportion(1.0 / CGFloat(maxVisibleColumns))
         newColumn.activatePrevRestoreStart = state.viewOffsetPixels.current()
 
         if direction == .right {
@@ -1056,6 +1059,7 @@ final class NiriLayoutEngine {
         }
 
         let newColumn = NiriContainer()
+        newColumn.width = .proportion(1.0 / CGFloat(maxVisibleColumns))
 
         if direction == .right {
             root.insertAfter(newColumn, reference: currentColumn)
@@ -1124,9 +1128,11 @@ final class NiriLayoutEngine {
 
         let targetColumn: NiriContainer
         if let existingColumn = claimEmptyColumnIfWorkspaceEmpty(in: targetRoot) {
+            existingColumn.width = .proportion(1.0 / CGFloat(maxVisibleColumns))
             targetColumn = existingColumn
         } else {
             let newColumn = NiriContainer()
+            newColumn.width = .proportion(1.0 / CGFloat(maxVisibleColumns))
             targetRoot.appendChild(newColumn)
             targetColumn = newColumn
         }
