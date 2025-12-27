@@ -11,7 +11,6 @@ final class MouseEventHandler {
     private var mouseDraggedMonitor: Any?
     private var mouseUpMonitor: Any?
     private var scrollWheelMonitor: Any?
-    private var isScrollGestureActive: Bool = false
     private var currentHoveredEdges: ResizeEdge = []
     private var isResizing: Bool = false
     private var isMoving: Bool = false
@@ -89,7 +88,6 @@ final class MouseEventHandler {
         }
         currentHoveredEdges = []
         isResizing = false
-        isScrollGestureActive = false
     }
 
     private func handleMouseMoved() {
@@ -327,8 +325,7 @@ final class MouseEventHandler {
             state.cancelAnimation()
         }
 
-        if !isScrollGestureActive {
-            isScrollGestureActive = true
+        if !state.viewOffsetPixels.isGesture {
             state.beginGesture(isTrackpad: isTrackpad)
         }
 
@@ -374,8 +371,7 @@ final class MouseEventHandler {
             controller.focusWindow(handle)
         }
 
-        if gestureEnding, isScrollGestureActive {
-            isScrollGestureActive = false
+        if gestureEnding, state.viewOffsetPixels.isGesture {
             var endState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
             endState.endGesture(
                 columns: columns,

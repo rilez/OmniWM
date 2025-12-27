@@ -594,7 +594,11 @@ final class CommandHandler {
                 return
             }
 
-            if engine.consumeWindow(into: windowNode, from: direction, in: wsId, state: &state) {
+            guard let monitor = controller.internalWorkspaceManager.monitor(for: wsId) else { return }
+            let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+            let gaps = CGFloat(controller.internalWorkspaceManager.gaps)
+
+            if engine.consumeWindow(into: windowNode, from: direction, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps) {
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                 controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
             }

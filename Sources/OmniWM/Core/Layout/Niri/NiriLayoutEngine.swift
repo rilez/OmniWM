@@ -954,7 +954,9 @@ final class NiriLayoutEngine {
         into window: NiriWindow,
         from direction: Direction,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> Bool {
         guard direction == .left || direction == .right else { return false }
 
@@ -1007,6 +1009,15 @@ final class NiriLayoutEngine {
         }
 
         cleanupEmptyColumn(neighborColumn, in: workspaceId, state: &state)
+
+        ensureSelectionVisible(
+            node: window,
+            in: workspaceId,
+            state: &state,
+            edge: direction == .right ? .right : .left,
+            workingFrame: workingFrame,
+            gaps: gaps
+        )
 
         return true
     }
