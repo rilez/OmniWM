@@ -5,6 +5,7 @@ struct HotkeySettingsView: View {
     @Bindable var controller: WMController
     @State private var recordingBindingId: String?
     @State private var conflictAlert: ConflictAlert?
+    @State private var searchText: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -20,17 +21,38 @@ struct HotkeySettingsView: View {
             }
             .padding(.bottom, 12)
 
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                TextField("Search hotkeys...", text: $searchText)
+                    .textFieldStyle(.plain)
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(8)
+            .background(Color.secondary.opacity(0.1))
+            .cornerRadius(8)
+            .padding(.bottom, 12)
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     ForEach(HotkeyCategory.allCases, id: \.self) { category in
-                        HotkeyCategorySection(
-                            category: category,
-                            bindings: bindingsForCategory(category),
-                            recordingBindingId: $recordingBindingId,
-                            registrationFailures: controller.hotkeyRegistrationFailures,
-                            onBindingChange: handleBindingChange,
-                            onClear: clearBinding
-                        )
+                        let bindings = bindingsForCategory(category)
+                        if !bindings.isEmpty {
+                            HotkeyCategorySection(
+                                category: category,
+                                bindings: bindings,
+                                recordingBindingId: $recordingBindingId,
+                                registrationFailures: controller.hotkeyRegistrationFailures,
+                                onBindingChange: handleBindingChange,
+                                onClear: clearBinding
+                            )
+                        }
                     }
                 }
             }
@@ -50,7 +72,10 @@ struct HotkeySettingsView: View {
     }
 
     private func bindingsForCategory(_ category: HotkeyCategory) -> [HotkeyBinding] {
-        settings.hotkeyBindings.filter { $0.category == category }
+        settings.hotkeyBindings.filter { binding in
+            binding.category == category &&
+            (searchText.isEmpty || binding.command.displayName.localizedCaseInsensitiveContains(searchText))
+        }
     }
 
     private func handleBindingChange(bindingId: String, newBinding: KeyBinding) {
