@@ -42,14 +42,8 @@ final class LayoutRefreshController {
         }
 
         var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
-        let total = engine.columns(in: wsId).count
-        let visibleCap = min(engine.maxVisibleColumns, total)
 
-        let shouldContinue = state.tickAnimation(
-            totalColumns: total,
-            visibleCap: visibleCap,
-            infiniteLoop: engine.infiniteLoop
-        )
+        let shouldContinue = state.tickAnimation()
 
         controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
         executeLayoutRefreshImmediate()
@@ -445,7 +439,17 @@ final class LayoutRefreshController {
         let target = windows[index]
         var state = controller.internalWorkspaceManager.niriViewportState(for: workspaceId)
         state.selectedNodeId = target.id
-        engine.ensureSelectionVisible(node: target, in: workspaceId, state: &state, edge: .left)
+        if let monitor = controller.internalWorkspaceManager.monitor(for: workspaceId) {
+            let gap = CGFloat(controller.internalWorkspaceManager.gaps)
+            engine.ensureSelectionVisible(
+                node: target,
+                in: workspaceId,
+                state: &state,
+                edge: .left,
+                workingFrame: monitor.visibleFrame,
+                gaps: gap
+            )
+        }
         controller.internalWorkspaceManager.updateNiriViewportState(state, for: workspaceId)
 
         controller.internalFocusedHandle = target.handle

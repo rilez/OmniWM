@@ -3,17 +3,17 @@ import Foundation
 
 final class ViewGesture {
     let tracker: SwipeTracker
-    let startOffset: Double
+    let startOffsetPixels: Double
     let isTrackpad: Bool
 
-    init(startOffset: Double, isTrackpad: Bool) {
+    init(startOffsetPixels: Double, isTrackpad: Bool) {
         self.tracker = SwipeTracker()
-        self.startOffset = startOffset
+        self.startOffsetPixels = startOffsetPixels
         self.isTrackpad = isTrackpad
     }
 
-    var currentOffset: Double {
-        startOffset + tracker.position
+    var currentOffsetPixels: Double {
+        startOffsetPixels + tracker.position
     }
 }
 
@@ -28,7 +28,7 @@ enum ViewOffset {
         case let .static(offset):
             offset
         case let .gesture(g):
-            CGFloat(g.currentOffset)
+            CGFloat(g.currentOffsetPixels)
         case let .animating(anim):
             CGFloat(anim.value(at: CACurrentMediaTime()))
         case let .decelerating(anim):
@@ -57,9 +57,9 @@ enum ViewOffset {
 }
 
 struct ViewportState {
-    var firstVisibleColumn: Int = 0
+    var activeColumnIndex: Int = 0
 
-    var viewportOffset: ViewOffset = .static(0.0)
+    var viewOffsetPixels: ViewOffset = .static(0.0)
 
     var selectionProgress: CGFloat = 0.0
 
@@ -67,16 +67,33 @@ struct ViewportState {
 
     var viewOffsetToRestore: CGFloat?
 
-    var viewportStart: CGFloat {
-        CGFloat(firstVisibleColumn) + viewportOffset.current()
+    func columnX(at index: Int, columns: [NiriContainer], gap: CGFloat) -> CGFloat {
+        var x: CGFloat = 0
+        for i in 0..<index {
+            guard i < columns.count else { break }
+            x += columns[i].cachedWidth + gap
+        }
+        return x
+    }
+
+    func totalWidth(columns: [NiriContainer], gap: CGFloat) -> CGFloat {
+        guard !columns.isEmpty else { return 0 }
+        let widthSum = columns.reduce(0) { $0 + $1.cachedWidth }
+        let gapSum = CGFloat(max(0, columns.count - 1)) * gap
+        return widthSum + gapSum
+    }
+
+    func viewPosPixels(columns: [NiriContainer], gap: CGFloat) -> CGFloat {
+        let activeColX = columnX(at: activeColumnIndex, columns: columns, gap: gap)
+        return activeColX + viewOffsetPixels.current()
     }
 
     mutating func saveViewOffsetForFullscreen() {
-        viewOffsetToRestore = viewportOffset.current()
+        viewOffsetToRestore = viewOffsetPixels.current()
     }
 
     mutating func restoreViewOffset(_ offset: CGFloat) {
-        viewportOffset = .static(offset)
+        viewOffsetPixels = .static(offset)
         viewOffsetToRestore = nil
     }
 
@@ -84,222 +101,186 @@ struct ViewportState {
         viewOffsetToRestore = nil
     }
 
-    mutating func setViewportStart(
-        _ start: CGFloat,
-        totalColumns: Int,
-        visibleCap: Int,
-        infiniteLoop: Bool
+    mutating func setActiveColumn(
+        _ index: Int,
+        columns: [NiriContainer],
+        gap: CGFloat,
+        viewportWidth: CGFloat,
+        animate: Bool = false
     ) {
-        let normalized = normalizeViewport(
-            start: start,
-            total: totalColumns,
-            visibleCap: visibleCap,
-            infiniteLoop: infiniteLoop
+        guard !columns.isEmpty else { return }
+        let clampedIndex = index.clamped(to: 0 ... (columns.count - 1))
+
+        let oldActiveColX = columnX(at: activeColumnIndex, columns: columns, gap: gap)
+        let newActiveColX = columnX(at: clampedIndex, columns: columns, gap: gap)
+
+        let offsetDelta = oldActiveColX - newActiveColX
+        let currentOffset = viewOffsetPixels.current()
+        let newOffset = currentOffset + offsetDelta
+
+        activeColumnIndex = clampedIndex
+
+        let targetOffset = computeCenteredOffset(
+            columnIndex: clampedIndex,
+            columns: columns,
+            gap: gap,
+            viewportWidth: viewportWidth
         )
-        firstVisibleColumn = normalized.base
-        viewportOffset = .static(normalized.offset)
-    }
 
-    func normalizeViewport(
-        start: CGFloat,
-        total: Int,
-        visibleCap: Int,
-        infiniteLoop: Bool
-    ) -> (base: Int, offset: CGFloat) {
-        guard total > 0, visibleCap > 0 else {
-            return (0, 0.0)
-        }
-
-        if infiniteLoop {
-            let modulo = CGFloat(total)
-            let wrapped = ((start.truncatingRemainder(dividingBy: modulo)) + modulo)
-                .truncatingRemainder(dividingBy: modulo)
-            let base = wrapped.rounded(.down).clamped(to: 0 ... CGFloat(total - 1))
-            let offset = wrapped - base
-            return (Int(base), offset)
+        if animate {
+            let now = CACurrentMediaTime()
+            let animation = ViewAnimation(
+                from: newOffset,
+                to: targetOffset,
+                duration: 0.3,
+                curve: .easeOutCubic,
+                startTime: now,
+                initialVelocity: 0
+            )
+            viewOffsetPixels = .animating(animation)
         } else {
-            let maxStart = CGFloat(max(0, total - visibleCap))
-            let clamped = start.clamped(to: 0 ... maxStart)
-            let base = clamped.rounded(.down)
-            let offset = clamped - base
-            return (Int(base), offset)
+            viewOffsetPixels = .static(targetOffset)
         }
     }
 
-    mutating func snapToColumn(
-        _ columnIndex: Int,
-        totalColumns: Int,
-        visibleCap: Int,
-        infiniteLoop: Bool
-    ) {
-        let newStart: CGFloat
-        if infiniteLoop {
-            newStart = CGFloat(columnIndex)
-        } else {
-            let maxStart = max(0, totalColumns - visibleCap)
-            newStart = CGFloat(min(columnIndex, maxStart))
+    func computeCenteredOffset(
+        columnIndex: Int,
+        columns: [NiriContainer],
+        gap: CGFloat,
+        viewportWidth: CGFloat
+    ) -> CGFloat {
+        guard !columns.isEmpty, columnIndex < columns.count else { return 0 }
+
+        let totalW = totalWidth(columns: columns, gap: gap)
+
+        if totalW <= viewportWidth {
+            let colX = columnX(at: columnIndex, columns: columns, gap: gap)
+            return -colX + (viewportWidth - totalW) / 2
         }
-        setViewportStart(newStart, totalColumns: totalColumns, visibleCap: visibleCap, infiniteLoop: infiniteLoop)
-        selectionProgress = 0.0
+
+        let colWidth = columns[columnIndex].cachedWidth
+        let colX = columnX(at: columnIndex, columns: columns, gap: gap)
+        let centeredOffset = (viewportWidth - colWidth) / 2 - colX
+
+        let maxOffset: CGFloat = 0
+        let minOffset = viewportWidth - totalW
+
+        return centeredOffset.clamped(to: minOffset ... maxOffset)
     }
 
-    mutating func scrollBy(
-        _ delta: CGFloat,
-        totalColumns: Int,
-        visibleCap: Int,
-        infiniteLoop: Bool,
+    mutating func scrollByPixels(
+        _ deltaPixels: CGFloat,
+        columns: [NiriContainer],
+        gap: CGFloat,
+        viewportWidth: CGFloat,
         changeSelection: Bool
     ) -> Int? {
-        guard abs(delta) > CGFloat.ulpOfOne else { return nil }
-        guard totalColumns > 0, visibleCap > 0 else { return nil }
+        guard abs(deltaPixels) > CGFloat.ulpOfOne else { return nil }
+        guard !columns.isEmpty else { return nil }
 
-        let currentStart = viewportStart
-        var newStart = currentStart + delta
+        let totalW = totalWidth(columns: columns, gap: gap)
+        guard totalW > 0 else { return nil }
 
-        if !infiniteLoop {
-            let maxStart = CGFloat(max(0, totalColumns - visibleCap))
-            let clamped = newStart.clamped(to: 0 ... maxStart)
-            let actualDelta = clamped - currentStart
-            newStart = clamped
+        let currentOffset = viewOffsetPixels.current()
+        var newOffset = currentOffset + deltaPixels
 
-            setViewportStart(newStart, totalColumns: totalColumns, visibleCap: visibleCap, infiniteLoop: infiniteLoop)
+        let maxOffset: CGFloat = 0
+        let minOffset = viewportWidth - totalW
 
-            if changeSelection {
-                selectionProgress += actualDelta
-                let steps = Int(selectionProgress.rounded(.towardZero))
-                if steps != 0 {
-                    selectionProgress -= CGFloat(steps)
-                    return steps
-                }
-            }
+        if minOffset < maxOffset {
+            newOffset = newOffset.clamped(to: minOffset ... maxOffset)
         } else {
-            setViewportStart(newStart, totalColumns: totalColumns, visibleCap: visibleCap, infiniteLoop: infiniteLoop)
+            newOffset = 0
+        }
 
-            if changeSelection {
-                selectionProgress += delta
-                let steps = Int(selectionProgress.rounded(.towardZero))
-                if steps != 0 {
-                    selectionProgress -= CGFloat(steps)
-                    return steps
-                }
+        viewOffsetPixels = .static(newOffset)
+
+        if changeSelection {
+            selectionProgress += deltaPixels
+            let avgColumnWidth = totalW / CGFloat(columns.count)
+            let steps = Int((selectionProgress / avgColumnWidth).rounded(.towardZero))
+            if steps != 0 {
+                selectionProgress -= CGFloat(steps) * avgColumnWidth
+                return steps
             }
         }
 
         return nil
     }
 
-    mutating func dndScrollBegin() {
-        selectionProgress = 0.0
-    }
-
-    mutating func dndScrollUpdate(
-        delta: CGFloat,
-        totalColumns: Int,
-        visibleCap: Int,
-        infiniteLoop: Bool
-    ) -> Int? {
-        scrollBy(
-            delta,
-            totalColumns: totalColumns,
-            visibleCap: visibleCap,
-            infiniteLoop: infiniteLoop,
-            changeSelection: true
-        )
-    }
-
-    mutating func dndScrollEnd(
-        totalColumns: Int,
-        visibleCap: Int,
-        infiniteLoop: Bool
-    ) {
-        let target = Int(viewportStart.rounded())
-        snapToColumn(
-            target,
-            totalColumns: totalColumns,
-            visibleCap: visibleCap,
-            infiniteLoop: infiniteLoop
-        )
-    }
-
     mutating func beginGesture(isTrackpad: Bool) {
-        let currentOffset = viewportOffset.current()
-        viewportOffset = .gesture(ViewGesture(startOffset: Double(currentOffset), isTrackpad: isTrackpad))
+        let currentOffset = viewOffsetPixels.current()
+        viewOffsetPixels = .gesture(ViewGesture(startOffsetPixels: Double(currentOffset), isTrackpad: isTrackpad))
         selectionProgress = 0.0
     }
 
     mutating func updateGesture(
-        delta: CGFloat,
+        deltaPixels: CGFloat,
         timestamp: TimeInterval,
-        totalColumns: Int,
-        visibleCap: Int,
-        infiniteLoop: Bool,
-        workingAreaWidth: CGFloat
+        columns: [NiriContainer],
+        gap: CGFloat,
+        viewportWidth: CGFloat
     ) -> Int? {
-        guard case let .gesture(gesture) = viewportOffset else {
+        guard case let .gesture(gesture) = viewOffsetPixels else {
             return nil
         }
 
-        let normFactor = Double(workingAreaWidth) / 1200.0
-        let normalizedDelta = Double(delta) / 1200.0 * normFactor
+        gesture.tracker.push(delta: Double(deltaPixels), timestamp: timestamp)
 
-        gesture.tracker.push(delta: normalizedDelta, timestamp: timestamp)
+        let totalW = totalWidth(columns: columns, gap: gap)
+        let maxOffset: CGFloat = 0
+        let minOffset = viewportWidth - totalW
 
-        let newOffset = CGFloat(gesture.currentOffset)
-        let newStart = CGFloat(firstVisibleColumn) + newOffset
-
-        if !infiniteLoop {
-            let maxStart = CGFloat(max(0, totalColumns - visibleCap))
-            let clamped = newStart.clamped(to: 0 ... maxStart)
-            let normalized = normalizeViewport(
-                start: clamped,
-                total: totalColumns,
-                visibleCap: visibleCap,
-                infiniteLoop: infiniteLoop
-            )
-            firstVisibleColumn = normalized.base
-            viewportOffset = .gesture(ViewGesture(startOffset: Double(normalized.offset), isTrackpad: gesture.isTrackpad))
-            if let newGesture = viewportOffset.gestureRef {
-                newGesture.tracker.push(delta: 0, timestamp: timestamp)
+        let currentOffset = CGFloat(gesture.currentOffsetPixels)
+        if minOffset < maxOffset {
+            let clampedOffset = currentOffset.clamped(to: minOffset ... maxOffset)
+            if abs(clampedOffset - currentOffset) > 0.5 {
+                viewOffsetPixels = .gesture(ViewGesture(startOffsetPixels: Double(clampedOffset), isTrackpad: gesture.isTrackpad))
+                if let newGesture = viewOffsetPixels.gestureRef {
+                    newGesture.tracker.push(delta: 0, timestamp: timestamp)
+                }
             }
         }
 
-        selectionProgress += delta / CGFloat(workingAreaWidth) * CGFloat(normFactor)
-        let steps = Int(selectionProgress.rounded(.towardZero))
+        guard !columns.isEmpty else { return nil }
+        let avgColumnWidth = totalW / CGFloat(columns.count)
+        selectionProgress += deltaPixels
+        let steps = Int((selectionProgress / avgColumnWidth).rounded(.towardZero))
         if steps != 0 {
-            selectionProgress -= CGFloat(steps)
+            selectionProgress -= CGFloat(steps) * avgColumnWidth
             return steps
         }
         return nil
     }
 
     mutating func endGesture(
-        totalColumns: Int,
-        visibleCap: Int,
-        infiniteLoop: Bool
+        columns: [NiriContainer],
+        gap: CGFloat,
+        viewportWidth: CGFloat
     ) {
-        guard case let .gesture(gesture) = viewportOffset else {
+        guard case let .gesture(gesture) = viewOffsetPixels else {
             return
         }
 
         let velocity = gesture.tracker.velocity()
-        let currentOffset = gesture.currentOffset
+        let currentOffset = gesture.currentOffsetPixels
 
-        let projectedEnd = gesture.tracker.projectedEndPosition() + Double(firstVisibleColumn)
+        let projectedEndOffset = gesture.tracker.projectedEndPosition()
 
-        let targetColumn = Int(projectedEnd.rounded())
-        let clampedTarget: Int
-        if infiniteLoop {
-            clampedTarget = ((targetColumn % totalColumns) + totalColumns) % totalColumns
+        let totalW = totalWidth(columns: columns, gap: gap)
+        let maxOffset: CGFloat = 0
+        let minOffset = Double(viewportWidth - totalW)
+
+        var targetOffset: Double
+        if minOffset < maxOffset {
+            targetOffset = min(max(projectedEndOffset, minOffset), Double(maxOffset))
         } else {
-            let maxStart = max(0, totalColumns - visibleCap)
-            clampedTarget = min(max(0, targetColumn), maxStart)
+            targetOffset = 0
         }
-
-        let targetOffset = Double(clampedTarget) - Double(firstVisibleColumn)
 
         let now = CACurrentMediaTime()
 
-        if abs(velocity) > 0.5 {
+        if abs(velocity) > 50 {
             let animation = ViewAnimation(
                 from: currentOffset,
                 to: targetOffset,
@@ -308,7 +289,7 @@ struct ViewportState {
                 startTime: now,
                 initialVelocity: velocity
             )
-            viewportOffset = .animating(animation)
+            viewOffsetPixels = .animating(animation)
         } else {
             let animation = ViewAnimation(
                 from: currentOffset,
@@ -318,57 +299,28 @@ struct ViewportState {
                 startTime: now,
                 initialVelocity: 0
             )
-            viewportOffset = .animating(animation)
+            viewOffsetPixels = .animating(animation)
         }
 
         selectionProgress = 0.0
     }
 
-    mutating func tickAnimation(
-        totalColumns: Int,
-        visibleCap: Int,
-        infiniteLoop: Bool
-    ) -> Bool {
+    mutating func tickAnimation() -> Bool {
         let now = CACurrentMediaTime()
 
-        switch viewportOffset {
+        switch viewOffsetPixels {
         case let .animating(anim):
             if anim.isComplete(at: now) {
                 let finalOffset = CGFloat(anim.targetValue)
-                let finalStart = CGFloat(firstVisibleColumn) + finalOffset
-                let normalized = normalizeViewport(
-                    start: finalStart,
-                    total: totalColumns,
-                    visibleCap: visibleCap,
-                    infiniteLoop: infiniteLoop
-                )
-                firstVisibleColumn = normalized.base
-                viewportOffset = .static(normalized.offset)
+                viewOffsetPixels = .static(finalOffset)
                 return false
             }
-            let currentOffset = anim.value(at: now)
-            let currentStart = CGFloat(firstVisibleColumn) + CGFloat(currentOffset)
-            let normalized = normalizeViewport(
-                start: currentStart,
-                total: totalColumns,
-                visibleCap: visibleCap,
-                infiniteLoop: infiniteLoop
-            )
-            firstVisibleColumn = normalized.base
             return true
 
         case let .decelerating(anim):
             if anim.isComplete(at: now) {
                 let finalOffset = CGFloat(anim.targetValue)
-                let finalStart = CGFloat(firstVisibleColumn) + finalOffset
-                let normalized = normalizeViewport(
-                    start: finalStart,
-                    total: totalColumns,
-                    visibleCap: visibleCap,
-                    infiniteLoop: infiniteLoop
-                )
-                firstVisibleColumn = normalized.base
-                viewportOffset = .static(normalized.offset)
+                viewOffsetPixels = .static(finalOffset)
                 return false
             }
             return true
@@ -379,19 +331,96 @@ struct ViewportState {
     }
 
     mutating func cancelAnimation() {
-        let current = viewportOffset.current()
-        viewportOffset = .static(current)
+        let current = viewOffsetPixels.current()
+        viewOffsetPixels = .static(current)
     }
 
     mutating func reset() {
-        firstVisibleColumn = 0
-        viewportOffset = .static(0.0)
+        activeColumnIndex = 0
+        viewOffsetPixels = .static(0.0)
         selectionProgress = 0.0
         selectedNodeId = nil
+    }
+
+    mutating func ensureColumnVisible(
+        columnIndex: Int,
+        columns: [NiriContainer],
+        gap: CGFloat,
+        viewportWidth: CGFloat,
+        preferredEdge: NiriRevealEdge? = nil,
+        animate: Bool = true
+    ) {
+        guard !columns.isEmpty, columnIndex >= 0, columnIndex < columns.count else { return }
+
+        let colX = columnX(at: columnIndex, columns: columns, gap: gap)
+        let colWidth = columns[columnIndex].cachedWidth
+        let currentOffset = viewOffsetPixels.current()
+
+        let viewLeft = -currentOffset
+        let viewRight = viewLeft + viewportWidth
+
+        let colLeft = colX
+        let colRight = colX + colWidth
+
+        var targetOffset = currentOffset
+
+        if colLeft < viewLeft {
+            targetOffset = -colX
+        } else if colRight > viewRight {
+            targetOffset = viewportWidth - colRight
+        }
+
+        let totalW = totalWidth(columns: columns, gap: gap)
+        let maxOffset: CGFloat = 0
+        let minOffset = viewportWidth - totalW
+        if minOffset < maxOffset {
+            targetOffset = targetOffset.clamped(to: minOffset ... maxOffset)
+        }
+
+        if abs(targetOffset - currentOffset) < 1 {
+            return
+        }
+
+        if animate {
+            let now = CACurrentMediaTime()
+            let animation = ViewAnimation(
+                from: Double(currentOffset),
+                to: Double(targetOffset),
+                duration: 0.25,
+                curve: .easeOutCubic,
+                startTime: now,
+                initialVelocity: 0
+            )
+            viewOffsetPixels = .animating(animation)
+        } else {
+            viewOffsetPixels = .static(targetOffset)
+        }
     }
 }
 
 enum NiriRevealEdge {
     case left
     case right
+}
+
+extension ViewportState {
+    mutating func snapToColumn(
+        _ columnIndex: Int,
+        columns: [NiriContainer],
+        gap: CGFloat,
+        viewportWidth: CGFloat
+    ) {
+        guard !columns.isEmpty else { return }
+        let clampedIndex = columnIndex.clamped(to: 0 ... (columns.count - 1))
+        activeColumnIndex = clampedIndex
+
+        let targetOffset = computeCenteredOffset(
+            columnIndex: clampedIndex,
+            columns: columns,
+            gap: gap,
+            viewportWidth: viewportWidth
+        )
+        viewOffsetPixels = .static(targetOffset)
+        selectionProgress = 0
+    }
 }

@@ -111,20 +111,20 @@ struct FrozenWorkspace: Sendable {
 }
 
 struct FrozenViewportState: Sendable {
-    let firstVisibleColumn: Int
-    let viewportOffset: CGFloat
+    let activeColumnIndex: Int
+    let viewOffsetPixels: CGFloat
     let selectionProgress: CGFloat
 
     init(from state: ViewportState) {
-        firstVisibleColumn = state.firstVisibleColumn
-        viewportOffset = state.viewportOffset.current()
+        activeColumnIndex = state.activeColumnIndex
+        viewOffsetPixels = state.viewOffsetPixels.current()
         selectionProgress = state.selectionProgress
     }
 
     func toViewportState() -> ViewportState {
         var state = ViewportState()
-        state.firstVisibleColumn = firstVisibleColumn
-        state.viewportOffset = .static(viewportOffset)
+        state.activeColumnIndex = activeColumnIndex
+        state.viewOffsetPixels = .static(viewOffsetPixels)
         state.selectionProgress = selectionProgress
         return state
     }

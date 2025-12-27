@@ -54,125 +54,73 @@ extension NiriLayoutEngine {
         let viewFrame = workingArea?.viewFrame ?? screenFrame ?? monitorFrame
         let effectiveScale = workingArea?.scale ?? scale
 
-        let total = cols.count
-        let visibleCap = min(maxVisibleColumns, total)
-        let startPos = state.viewportStart
-        let spanEnd = startPos + CGFloat(visibleCap)
-
-        var visibleIndices: [Int] = []
-
-        var idx = Int(startPos.rounded(.down))
-        while CGFloat(idx) < spanEnd + CGFloat.ulpOfOne, visibleIndices.count < total + 1 {
-            guard let wrappedIdx = wrapIndex(idx, total: total) else { break }
-
-            let colStart = CGFloat(idx)
-            let colEnd = colStart + 1.0
-            let overlap = min(colEnd, spanEnd) - max(colStart, startPos)
-
-            if overlap > CGFloat.ulpOfOne {
-                visibleIndices.append(wrappedIdx)
-            }
-
-            idx += 1
-        }
-
-        guard !visibleIndices.isEmpty else { return result }
-
         let horizontalGap = gaps.horizontal
 
-        let aspectRatioMaxWidth: CGFloat? = {
-            guard total == 1,
-                  let ratio = singleWindowAspectRatio.ratio
-            else {
-                return nil
+        for column in cols {
+            if column.cachedWidth <= 0 {
+                column.resolveAndCacheWidth(workingAreaWidth: workingFrame.width, gaps: horizontalGap)
             }
-
-            return workingFrame.height * ratio
-        }()
-
-        let columnsForWidthCalc = Array(visibleIndices.prefix(visibleCap))
-        let columnInputs: [NiriColumnWidthSolver.ColumnInput] = columnsForWidthCalc.map { idx in
-            let column = cols[idx]
-
-            let minWidthConstraint = column.windowNodes.map(\.constraints.minSize.width).max()
-            var maxWidthConstraint = column.windowNodes
-                .compactMap { $0.constraints.hasMaxWidth ? $0.constraints.maxSize.width : nil }
-                .min()
-
-            if let aspectMax = aspectRatioMaxWidth {
-                if let existing = maxWidthConstraint {
-                    maxWidthConstraint = min(existing, aspectMax)
-                } else {
-                    maxWidthConstraint = aspectMax
-                }
-            }
-
-            let effectiveWidth: ColumnWidth = switch column.width {
-            case let .proportion(p):
-                .proportion(max(0.1, p))
-            case let .fixed(f):
-                .fixed(max(1, f))
-            }
-
-            return NiriColumnWidthSolver.ColumnInput(
-                width: effectiveWidth,
-                isFullWidth: column.isFullWidth,
-                minWidth: minWidthConstraint,
-                maxWidth: maxWidthConstraint
-            )
         }
 
-        let widthOutputs = NiriColumnWidthSolver.solve(
-            columns: columnInputs,
-            availableWidth: workingFrame.width,
-            gapSize: horizontalGap
-        )
-        guard !widthOutputs.isEmpty else { return result }
+        func columnX(at index: Int) -> CGFloat {
+            var x: CGFloat = 0
+            for i in 0..<index {
+                x += cols[i].cachedWidth + horizontalGap
+            }
+            return x
+        }
 
-        let centeringOffset = computeCenteringOffset(
-            visibleIndices: columnsForWidthCalc,
-            widths: widthOutputs.map(\.width),
-            horizontalGap: horizontalGap,
-            workingFrame: workingFrame,
-            totalColumns: total
-        )
+        let totalColumnsWidth = cols.reduce(0) { $0 + $1.cachedWidth } + CGFloat(max(0, cols.count - 1)) * horizontalGap
 
-        let fractionalOffset = startPos - floor(startPos)
-        let firstColWidth = widthOutputs.first?.width ?? 0
-        let viewportShift = fractionalOffset * (firstColWidth + horizontalGap)
+        let viewOffset = state.viewOffsetPixels.current()
+        let viewLeft = -viewOffset
+        let viewRight = viewLeft + workingFrame.width
 
-        var x = workingFrame.origin.x + centeringOffset - viewportShift
+        let centeringOffset: CGFloat
+        if totalColumnsWidth < workingFrame.width {
+            if alwaysCenterSingleColumn || cols.count == 1 {
+                centeringOffset = (workingFrame.width - totalColumnsWidth) / 2
+            } else {
+                centeringOffset = 0
+            }
+        } else {
+            centeringOffset = 0
+        }
+
         var usedIndices = Set<Int>()
 
-        for (i, colIdx) in visibleIndices.enumerated() {
-            let widthIndex = i % widthOutputs.count
-            let width = widthOutputs[widthIndex].width.roundedToPhysicalPixel(scale: effectiveScale)
-            guard width > CGFloat.ulpOfOne else { continue }
+        for (idx, column) in cols.enumerated() {
+            let colX = columnX(at: idx)
+            let colRight = colX + column.cachedWidth
 
-            usedIndices.insert(colIdx)
+            let isVisible = colRight > viewLeft && colX < viewRight
 
-            let columnRect = CGRect(
-                x: x,
-                y: workingFrame.origin.y,
-                width: width,
-                height: workingFrame.height
-            ).roundedToPhysicalPixels(scale: effectiveScale)
+            if isVisible {
+                usedIndices.insert(idx)
 
-            let column = cols[colIdx]
-            layoutColumn(
-                column: column,
-                columnRect: columnRect,
-                screenRect: viewFrame,
-                verticalGap: gaps.vertical,
-                scale: effectiveScale,
-                result: &result
-            )
+                let screenX = workingFrame.origin.x + colX + viewOffset + centeringOffset
+                let width = column.cachedWidth.roundedToPhysicalPixel(scale: effectiveScale)
 
-            x += width + horizontalGap
+                let columnRect = CGRect(
+                    x: screenX,
+                    y: workingFrame.origin.y,
+                    width: width,
+                    height: workingFrame.height
+                ).roundedToPhysicalPixels(scale: effectiveScale)
+
+                layoutColumn(
+                    column: column,
+                    columnRect: columnRect,
+                    screenRect: viewFrame,
+                    verticalGap: gaps.vertical,
+                    scale: effectiveScale,
+                    result: &result
+                )
+            }
         }
 
-        if total > usedIndices.count {
-            let avgWidth = widthOutputs.map(\.width).reduce(0, +) / CGFloat(max(1, widthOutputs.count))
+        if cols.count > usedIndices.count {
+            let avgWidth = totalColumnsWidth / CGFloat(max(1, cols.count))
             let hiddenWidth = max(1, avgWidth).roundedToPhysicalPixel(scale: effectiveScale)
             for (idx, column) in cols.enumerated() {
                 if usedIndices.contains(idx) { continue }
@@ -195,31 +143,6 @@ extension NiriLayoutEngine {
         }
 
         return result
-    }
-
-    private func computeCenteringOffset(
-        visibleIndices: [Int],
-        widths: [CGFloat],
-        horizontalGap: CGFloat,
-        workingFrame: CGRect,
-        totalColumns: Int
-    ) -> CGFloat {
-        let shouldApplyCentering: Bool = switch centerFocusedColumn {
-        case .always:
-            totalColumns < maxVisibleColumns
-        case .never:
-            alwaysCenterSingleColumn && totalColumns == 1
-        case .onOverflow:
-            alwaysCenterSingleColumn && totalColumns == 1
-        }
-
-        guard shouldApplyCentering else { return 0 }
-
-        let gapCount = max(0, visibleIndices.count - 1)
-        let totalColumnsWidth = widths.reduce(0, +) + CGFloat(gapCount) * horizontalGap
-
-        let remainingSpace = workingFrame.width - totalColumnsWidth
-        return max(0, remainingSpace / 2.0)
     }
 
     private func layoutColumn(
@@ -338,15 +261,5 @@ extension NiriLayoutEngine {
             y: screenRect.maxY - 2
         )
         return CGRect(origin: origin, size: CGSize(width: width, height: height))
-    }
-
-    private func wrapIndex(_ idx: Int, total: Int) -> Int? {
-        guard total > 0 else { return nil }
-        if infiniteLoop {
-            let modulo = total
-            return ((idx % modulo) + modulo) % modulo
-        } else {
-            return (idx >= 0 && idx < total) ? idx : nil
-        }
     }
 }

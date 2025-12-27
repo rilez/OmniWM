@@ -258,10 +258,13 @@ final class MouseEventHandler {
 
         if isMoving {
             if let engine = controller.internalNiriEngine,
-               let wsId = controller.activeWorkspace()?.id
+               let wsId = controller.activeWorkspace()?.id,
+               let monitor = controller.internalWorkspaceManager.monitor(for: wsId)
             {
                 var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
-                if engine.interactiveMoveEnd(at: location, in: wsId, state: &state) {
+                let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+                let gaps = CGFloat(controller.internalWorkspaceManager.gaps)
+                if engine.interactiveMoveEnd(at: location, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps) {
                     controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                     controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
                 }
@@ -320,7 +323,7 @@ final class MouseEventHandler {
 
         var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
 
-        if state.viewportOffset.isAnimating {
+        if state.viewOffsetPixels.isAnimating {
             state.cancelAnimation()
         }
 
@@ -331,21 +334,20 @@ final class MouseEventHandler {
 
         guard let monitor = controller.monitorForInteraction() else { return }
         let insetFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
-        let workingAreaWidth = insetFrame.width
+        let viewportWidth = insetFrame.width
+        let gap = CGFloat(controller.internalWorkspaceManager.gaps)
+        let columns = engine.columns(in: wsId)
 
-        let total = engine.columns(in: wsId).count
-        let visibleCap = min(engine.maxVisibleColumns, total)
         let sensitivity = CGFloat(controller.internalSettings.scrollSensitivity)
         let adjustedDelta = deltaX * sensitivity
 
         var targetWindowHandle: WindowHandle?
         if let steps = state.updateGesture(
-            delta: adjustedDelta,
+            deltaPixels: adjustedDelta,
             timestamp: timestamp,
-            totalColumns: total,
-            visibleCap: visibleCap,
-            infiniteLoop: engine.infiniteLoop,
-            workingAreaWidth: workingAreaWidth
+            columns: columns,
+            gap: gap,
+            viewportWidth: viewportWidth
         ) {
             if let currentId = state.selectedNodeId,
                let currentNode = engine.findNode(by: currentId),
@@ -376,9 +378,9 @@ final class MouseEventHandler {
             isScrollGestureActive = false
             var endState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
             endState.endGesture(
-                totalColumns: total,
-                visibleCap: visibleCap,
-                infiniteLoop: engine.infiniteLoop
+                columns: columns,
+                gap: gap,
+                viewportWidth: viewportWidth
             )
             controller.internalWorkspaceManager.updateNiriViewportState(endState, for: wsId)
             controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)

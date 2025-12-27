@@ -430,16 +430,20 @@ final class WorkspaceNavigationHandler {
 
         if target.id == controller.activeWorkspace()?.id {
             if let engine = controller.internalNiriEngine,
-               let movedNode = engine.findNode(for: handle)
+               let movedNode = engine.findNode(for: handle),
+               let monitor = controller.internalWorkspaceManager.monitor(for: target.id)
             {
                 var targetState = controller.internalWorkspaceManager.niriViewportState(for: target.id)
                 targetState.selectedNodeId = movedNode.id
 
+                let gap = CGFloat(controller.internalWorkspaceManager.gaps)
                 engine.ensureSelectionVisible(
                     node: movedNode,
                     in: target.id,
                     state: &targetState,
-                    edge: .left
+                    edge: .left,
+                    workingFrame: monitor.visibleFrame,
+                    gaps: gap
                 )
                 controller.internalWorkspaceManager.updateNiriViewportState(targetState, for: target.id)
             }

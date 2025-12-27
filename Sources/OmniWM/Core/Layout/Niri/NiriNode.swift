@@ -286,6 +286,8 @@ class NiriContainer: NiriNode {
 
     var width: ColumnWidth = .default
 
+    var cachedWidth: CGFloat = 0
+
     var presetWidthIdx: Int?
 
     var isFullWidth: Bool = false
@@ -296,6 +298,23 @@ class NiriContainer: NiriNode {
 
     override init() {
         super.init()
+    }
+
+    func resolveAndCacheWidth(workingAreaWidth: CGFloat, gaps: CGFloat) {
+        if isFullWidth {
+            cachedWidth = workingAreaWidth
+            return
+        }
+        switch width {
+        case let .proportion(p):
+            cachedWidth = (workingAreaWidth - gaps) * p
+        case let .fixed(f):
+            cachedWidth = f
+        }
+        let minW = windowNodes.map(\.constraints.minSize.width).max() ?? 0
+        let maxW = windowNodes.compactMap { $0.constraints.hasMaxWidth ? $0.constraints.maxSize.width : nil }.min()
+        if cachedWidth < minW { cachedWidth = minW }
+        if let maxW, cachedWidth > maxW { cachedWidth = maxW }
     }
 
     override var size: CGFloat {

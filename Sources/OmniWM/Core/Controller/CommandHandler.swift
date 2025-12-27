@@ -171,11 +171,16 @@ final class CommandHandler {
                 return
             }
 
+            guard let monitor = controller.internalWorkspaceManager.monitor(for: wsId) else { return }
+            let gap = CGFloat(controller.internalWorkspaceManager.gaps)
+
             if let newNode = engine.focusTarget(
                 direction: direction,
                 currentSelection: currentNode,
                 in: wsId,
-                state: &state
+                state: &state,
+                workingFrame: monitor.visibleFrame,
+                gaps: gap
             ) {
                 state.selectedNodeId = newNode.id
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
@@ -206,10 +211,15 @@ final class CommandHandler {
                 engine.updateFocusTimestamp(for: currentId)
             }
 
+            guard let monitor = controller.internalWorkspaceManager.monitor(for: wsId) else { return }
+            let gap = CGFloat(controller.internalWorkspaceManager.gaps)
+
             guard let previousWindow = engine.focusPrevious(
                 currentNodeId: state.selectedNodeId,
                 in: wsId,
                 state: &state,
+                workingFrame: monitor.visibleFrame,
+                gaps: gap,
                 limitToWorkspace: true
             ) else {
                 return
@@ -226,44 +236,44 @@ final class CommandHandler {
     }
 
     private func focusDownOrLeftInNiri() {
-        executeCombinedNavigation { engine, currentNode, wsId, state in
-            engine.focusDownOrLeft(currentSelection: currentNode, in: wsId, state: &state)
+        executeCombinedNavigation { engine, currentNode, wsId, state, workingFrame, gaps in
+            engine.focusDownOrLeft(currentSelection: currentNode, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps)
         }
     }
 
     private func focusUpOrRightInNiri() {
-        executeCombinedNavigation { engine, currentNode, wsId, state in
-            engine.focusUpOrRight(currentSelection: currentNode, in: wsId, state: &state)
+        executeCombinedNavigation { engine, currentNode, wsId, state, workingFrame, gaps in
+            engine.focusUpOrRight(currentSelection: currentNode, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps)
         }
     }
 
     private func focusColumnFirstInNiri() {
-        executeCombinedNavigation { engine, currentNode, wsId, state in
-            engine.focusColumnFirst(currentSelection: currentNode, in: wsId, state: &state)
+        executeCombinedNavigation { engine, currentNode, wsId, state, workingFrame, gaps in
+            engine.focusColumnFirst(currentSelection: currentNode, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps)
         }
     }
 
     private func focusColumnLastInNiri() {
-        executeCombinedNavigation { engine, currentNode, wsId, state in
-            engine.focusColumnLast(currentSelection: currentNode, in: wsId, state: &state)
+        executeCombinedNavigation { engine, currentNode, wsId, state, workingFrame, gaps in
+            engine.focusColumnLast(currentSelection: currentNode, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps)
         }
     }
 
     private func focusColumnInNiri(index: Int) {
-        executeCombinedNavigation { engine, currentNode, wsId, state in
-            engine.focusColumn(index, currentSelection: currentNode, in: wsId, state: &state)
+        executeCombinedNavigation { engine, currentNode, wsId, state, workingFrame, gaps in
+            engine.focusColumn(index, currentSelection: currentNode, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps)
         }
     }
 
     private func focusWindowTopInNiri() {
-        executeCombinedNavigation { engine, currentNode, wsId, state in
-            engine.focusWindowTop(currentSelection: currentNode, in: wsId, state: &state)
+        executeCombinedNavigation { engine, currentNode, wsId, state, workingFrame, gaps in
+            engine.focusWindowTop(currentSelection: currentNode, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps)
         }
     }
 
     private func focusWindowBottomInNiri() {
-        executeCombinedNavigation { engine, currentNode, wsId, state in
-            engine.focusWindowBottom(currentSelection: currentNode, in: wsId, state: &state)
+        executeCombinedNavigation { engine, currentNode, wsId, state, workingFrame, gaps in
+            engine.focusWindowBottom(currentSelection: currentNode, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps)
         }
     }
 
@@ -327,11 +337,12 @@ final class CommandHandler {
     }
 
     private func executeCombinedNavigation(
-        _ navigationAction: (NiriLayoutEngine, NiriNode, WorkspaceDescriptor.ID, inout ViewportState) -> NiriNode?
+        _ navigationAction: (NiriLayoutEngine, NiriNode, WorkspaceDescriptor.ID, inout ViewportState, CGRect, CGFloat) -> NiriNode?
     ) {
         guard let controller else { return }
         guard let engine = controller.internalNiriEngine else { return }
         guard let wsId = controller.activeWorkspace()?.id else { return }
+        guard let monitor = controller.internalWorkspaceManager.monitor(for: wsId) else { return }
         var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
 
         guard let currentId = state.selectedNodeId,
@@ -340,7 +351,8 @@ final class CommandHandler {
             return
         }
 
-        guard let newNode = navigationAction(engine, currentNode, wsId, &state) else {
+        let gap = CGFloat(controller.internalWorkspaceManager.gaps)
+        guard let newNode = navigationAction(engine, currentNode, wsId, &state, monitor.visibleFrame, gap) else {
             return
         }
 
@@ -370,7 +382,11 @@ final class CommandHandler {
                 return
             }
 
-            if engine.moveWindow(windowNode, direction: direction, in: wsId, state: &state) {
+            guard let monitor = controller.internalWorkspaceManager.monitor(for: wsId) else { return }
+            let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+            let gaps = CGFloat(controller.internalWorkspaceManager.gaps)
+
+            if engine.moveWindow(windowNode, direction: direction, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps) {
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                 controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
             }
@@ -392,7 +408,11 @@ final class CommandHandler {
                 return
             }
 
-            if engine.swapWindow(windowNode, direction: direction, in: wsId, state: &state) {
+            guard let monitor = controller.internalWorkspaceManager.monitor(for: wsId) else { return }
+            let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+            let gaps = CGFloat(controller.internalWorkspaceManager.gaps)
+
+            if engine.swapWindow(windowNode, direction: direction, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps) {
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                 controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
             }
@@ -548,7 +568,11 @@ final class CommandHandler {
                 return
             }
 
-            if engine.moveColumn(column, direction: direction, in: wsId, state: &state) {
+            guard let monitor = controller.internalWorkspaceManager.monitor(for: wsId) else { return }
+            let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+            let gaps = CGFloat(controller.internalWorkspaceManager.gaps)
+
+            if engine.moveColumn(column, direction: direction, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps) {
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                 controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
             }
@@ -592,7 +616,11 @@ final class CommandHandler {
                 return
             }
 
-            if engine.expelWindow(windowNode, to: direction, in: wsId, state: &state) {
+            guard let monitor = controller.internalWorkspaceManager.monitor(for: wsId) else { return }
+            let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+            let gaps = CGFloat(controller.internalWorkspaceManager.gaps)
+
+            if engine.expelWindow(windowNode, to: direction, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps) {
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                 controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
             }

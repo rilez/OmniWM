@@ -350,14 +350,16 @@ final class WMController {
             state.selectedNodeId = niriWindow.id
 
             if let column = engine.findColumn(containing: niriWindow, in: entry.workspaceId),
-               let colIdx = engine.columnIndex(of: column, in: entry.workspaceId)
+               let colIdx = engine.columnIndex(of: column, in: entry.workspaceId),
+               let monitor = workspaceManager.monitor(for: entry.workspaceId)
             {
                 let cols = engine.columns(in: entry.workspaceId)
+                let gap = CGFloat(workspaceManager.gaps)
                 state.snapToColumn(
                     colIdx,
-                    totalColumns: cols.count,
-                    visibleCap: engine.maxVisibleColumns,
-                    infiniteLoop: engine.infiniteLoop
+                    columns: cols,
+                    gap: gap,
+                    viewportWidth: monitor.visibleFrame.width
                 )
             }
 
@@ -845,14 +847,16 @@ final class WMController {
             state.selectedNodeId = niriWindow.id
 
             if let column = engine.findColumn(containing: niriWindow, in: entry.workspaceId),
-               let colIdx = engine.columnIndex(of: column, in: entry.workspaceId)
+               let colIdx = engine.columnIndex(of: column, in: entry.workspaceId),
+               let monitor = workspaceManager.monitor(for: entry.workspaceId)
             {
                 let cols = engine.columns(in: entry.workspaceId)
+                let gap = CGFloat(workspaceManager.gaps)
                 state.snapToColumn(
                     colIdx,
-                    totalColumns: cols.count,
-                    visibleCap: engine.maxVisibleColumns,
-                    infiniteLoop: engine.infiniteLoop
+                    columns: cols,
+                    gap: gap,
+                    viewportWidth: monitor.visibleFrame.width
                 )
             }
 

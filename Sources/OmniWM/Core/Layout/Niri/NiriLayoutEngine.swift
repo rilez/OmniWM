@@ -231,38 +231,40 @@ final class NiriLayoutEngine {
     func hiddenWindowHandles(
         in workspaceId: WorkspaceDescriptor.ID,
         state: ViewportState,
-        workingFrame: CGRect? = nil
+        workingFrame: CGRect? = nil,
+        gaps: CGFloat = 0
     ) -> Set<WindowHandle> {
         let cols = columns(in: workspaceId)
         guard !cols.isEmpty else { return [] }
 
-        let total = cols.count
-        let visibleCap = min(maxVisibleColumns, total)
-        let startPos = state.viewportStart
-        let spanEnd = startPos + CGFloat(visibleCap)
+        guard let workingFrame else {
+            return []
+        }
 
-        var visibleIndices = Set<Int>()
-        var idx = Int(startPos.rounded(.down))
-        while CGFloat(idx) < spanEnd + CGFloat.ulpOfOne, visibleIndices.count < total + 1 {
-            guard let wrappedIdx = wrapIndex(idx, total: total) else { break }
+        let viewOffset = state.viewOffsetPixels.current()
+        let viewLeft = -viewOffset
+        let viewRight = viewLeft + workingFrame.width
 
-            let colStart = CGFloat(idx)
-            let colEnd = colStart + 1.0
-            let overlap = min(colEnd, spanEnd) - max(colStart, startPos)
-
-            if overlap > CGFloat.ulpOfOne {
-                visibleIndices.insert(wrappedIdx)
+        func columnX(at index: Int) -> CGFloat {
+            var x: CGFloat = 0
+            for i in 0..<index {
+                x += cols[i].cachedWidth + gaps
             }
-            idx += 1
+            return x
         }
 
         var hiddenHandles = Set<WindowHandle>()
         for (colIdx, column) in cols.enumerated() {
-            if !visibleIndices.contains(colIdx) {
+            let colX = columnX(at: colIdx)
+            let colRight = colX + column.cachedWidth
+
+            let isVisible = colRight > viewLeft && colX < viewRight
+
+            if !isVisible {
                 for window in column.windowNodes {
                     hiddenHandles.insert(window.handle)
                 }
-            } else if let workingFrame {
+            } else {
                 for window in column.windowNodes {
                     if let windowFrame = window.frame {
                         let visibleWidth = min(windowFrame.maxX, workingFrame.maxX) - max(windowFrame.minX, workingFrame.minX)
@@ -516,13 +518,15 @@ final class NiriLayoutEngine {
         _ node: NiriWindow,
         direction: Direction,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> Bool {
         switch direction {
         case .down, .up:
             moveWindowVertical(node, direction: direction)
         case .left, .right:
-            moveWindowHorizontal(node, direction: direction, in: workspaceId, state: &state)
+            moveWindowHorizontal(node, direction: direction, in: workspaceId, state: &state, workingFrame: workingFrame, gaps: gaps)
         }
     }
 
@@ -530,13 +534,15 @@ final class NiriLayoutEngine {
         _ node: NiriWindow,
         direction: Direction,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> Bool {
         switch direction {
         case .down, .up:
             swapWindowVertical(node, direction: direction)
         case .left, .right:
-            swapWindowHorizontal(node, direction: direction, in: workspaceId, state: &state)
+            swapWindowHorizontal(node, direction: direction, in: workspaceId, state: &state, workingFrame: workingFrame, gaps: gaps)
         }
     }
 
@@ -614,7 +620,9 @@ final class NiriLayoutEngine {
         _ node: NiriWindow,
         direction: Direction,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> Bool {
         let cols = columns(in: workspaceId)
         guard !cols.isEmpty else { return false }
@@ -662,7 +670,9 @@ final class NiriLayoutEngine {
             node: node,
             in: workspaceId,
             state: &state,
-            edge: direction == .right ? .right : .left
+            edge: direction == .right ? .right : .left,
+            workingFrame: workingFrame,
+            gaps: gaps
         )
 
         return true
@@ -672,7 +682,9 @@ final class NiriLayoutEngine {
         _ node: NiriWindow,
         direction: Direction,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> Bool {
         let cols = columns(in: workspaceId)
         guard !cols.isEmpty else { return false }
@@ -743,7 +755,7 @@ final class NiriLayoutEngine {
         }
 
         let edge: NiriRevealEdge = direction == .right ? .right : .left
-        ensureSelectionVisible(node: node, in: workspaceId, state: &state, edge: edge)
+        ensureSelectionVisible(node: node, in: workspaceId, state: &state, edge: edge, workingFrame: workingFrame, gaps: gaps)
 
         return true
     }
@@ -818,7 +830,7 @@ final class NiriLayoutEngine {
         }
 
         let newColumn = NiriContainer()
-        newColumn.activatePrevRestoreStart = state.viewportStart
+        newColumn.activatePrevRestoreStart = state.viewOffsetPixels.current()
 
         if direction == .right {
             root.insertAfter(newColumn, reference: sourceColumn)
@@ -850,13 +862,7 @@ final class NiriLayoutEngine {
         column.remove()
 
         if let restore = column.activatePrevRestoreStart {
-            let totalAfter = max(0, totalBeforeRemoval - 1)
-            state.setViewportStart(
-                restore,
-                totalColumns: max(1, totalAfter),
-                visibleCap: maxVisibleColumns,
-                infiniteLoop: infiniteLoop
-            )
+            state.viewOffsetPixels = .static(restore)
             state.selectionProgress = 0.0
             state.viewOffsetToRestore = nil
             column.activatePrevRestoreStart = nil
@@ -911,7 +917,9 @@ final class NiriLayoutEngine {
         _ column: NiriContainer,
         direction: Direction,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> Bool {
         guard direction == .left || direction == .right else { return false }
 
@@ -937,7 +945,7 @@ final class NiriLayoutEngine {
         root.swapChildren(column, targetColumn)
 
         let edge: NiriRevealEdge = direction == .right ? .right : .left
-        ensureColumnVisible(column, in: workspaceId, state: &state, edge: edge)
+        ensureColumnVisible(column, in: workspaceId, state: &state, edge: edge, workingFrame: workingFrame, gaps: gaps)
 
         return true
     }
@@ -1007,7 +1015,9 @@ final class NiriLayoutEngine {
         _ window: NiriWindow,
         to direction: Direction,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> Bool {
         guard direction == .left || direction == .right else { return false }
 
@@ -1054,7 +1064,7 @@ final class NiriLayoutEngine {
 
         cleanupEmptyColumn(currentColumn, in: workspaceId, state: &state)
 
-        ensureSelectionVisible(node: window, in: workspaceId, state: &state, edge: direction == .right ? .right : .left)
+        ensureSelectionVisible(node: window, in: workspaceId, state: &state, edge: direction == .right ? .right : .left, workingFrame: workingFrame, gaps: gaps)
 
         return true
     }
@@ -1063,10 +1073,12 @@ final class NiriLayoutEngine {
         _ column: NiriContainer,
         in workspaceId: WorkspaceDescriptor.ID,
         state: inout ViewportState,
-        edge: NiriRevealEdge
+        edge: NiriRevealEdge,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) {
         if let firstWindow = column.windowNodes.first {
-            ensureSelectionVisible(node: firstWindow, in: workspaceId, state: &state, edge: edge)
+            ensureSelectionVisible(node: firstWindow, in: workspaceId, state: &state, edge: edge, workingFrame: workingFrame, gaps: gaps)
         }
     }
 
@@ -1299,7 +1311,7 @@ final class NiriLayoutEngine {
         let winIdx = column.children.firstIndex { $0.id == windowId } ?? 0
         let isTopmost = winIdx == 0
 
-        let originalColumnWidth = edges.hasHorizontal ? column.size : nil
+        let originalColumnWidth = edges.hasHorizontal ? column.cachedWidth : nil
         let originalWindowHeight = edges.hasVertical ? windowNode.size : nil
 
         interactiveResize = InteractiveResize(
@@ -1348,20 +1360,13 @@ final class NiriLayoutEngine {
                 dx = -dx
             }
 
-            let pixelsPerWeight = calculateHorizontalPixelsPerWeightUnit(
-                in: resize.workspaceId,
-                monitorFrame: monitorFrame,
-                gaps: gaps
-            )
+            let minWidth = column.windowNodes.map(\.constraints.minSize.width).max() ?? 50
+            let maxWidth = monitorFrame.width - gaps.horizontal
 
-            if pixelsPerWeight > 0 {
-                let weightDelta = dx / pixelsPerWeight
-                let newWeight = originalWidth + weightDelta
-                column.size = newWeight.clamped(
-                    to: resizeConfiguration.minColumnWeight ... resizeConfiguration.maxColumnWeight
-                )
-                changed = true
-            }
+            let newWidth = originalWidth + dx
+            column.cachedWidth = newWidth.clamped(to: minWidth ... maxWidth)
+            column.width = .fixed(column.cachedWidth)
+            changed = true
         }
 
         if resize.edges.hasVertical, let originalHeight = resize.originalWindowHeight {
@@ -1462,7 +1467,9 @@ final class NiriLayoutEngine {
     func interactiveMoveEnd(
         at _: CGPoint,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> Bool {
         guard let move = interactiveMove else { return false }
         defer { interactiveMove = nil }
@@ -1478,7 +1485,9 @@ final class NiriLayoutEngine {
                     sourceWindowId: move.windowId,
                     targetWindowId: targetNodeId,
                     in: workspaceId,
-                    state: &state
+                    state: &state,
+                    workingFrame: workingFrame,
+                    gaps: gaps
                 )
             }
             return false
@@ -1522,7 +1531,9 @@ final class NiriLayoutEngine {
         sourceWindowId: NodeId,
         targetWindowId: NodeId,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> Bool {
         guard let sourceWindow = findNode(by: sourceWindowId) as? NiriWindow,
               let targetWindow = findNode(by: targetWindowId) as? NiriWindow
@@ -1577,7 +1588,9 @@ final class NiriLayoutEngine {
             node: sourceWindow,
             in: workspaceId,
             state: &state,
-            edge: .left
+            edge: .left,
+            workingFrame: workingFrame,
+            gaps: gaps
         )
 
         return true
@@ -1718,6 +1731,7 @@ final class NiriLayoutEngine {
 
         column.width = presetColumnWidths[nextIdx].asColumnWidth
         column.presetWidthIdx = nextIdx
+        column.cachedWidth = 0
     }
 
     func toggleFullWidth(_ column: NiriContainer) {
@@ -1732,6 +1746,7 @@ final class NiriLayoutEngine {
             column.isFullWidth = true
             column.presetWidthIdx = nil
         }
+        column.cachedWidth = 0
     }
 
     func setWindowHeight(_ window: NiriWindow, height: WindowHeight) {

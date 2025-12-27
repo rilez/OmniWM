@@ -44,7 +44,9 @@ extension NiriLayoutEngine {
         direction: Direction,
         currentSelection: NiriNode,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> NiriNode? {
         let step = (direction == .right) ? 1 : -1
         guard let newSelection = moveSelectionByColumns(
@@ -60,7 +62,9 @@ extension NiriLayoutEngine {
             node: newSelection,
             in: workspaceId,
             state: &state,
-            edge: edge
+            edge: edge,
+            workingFrame: workingFrame,
+            gaps: gaps
         )
 
         return newSelection
@@ -132,7 +136,9 @@ extension NiriLayoutEngine {
         node: NiriNode,
         in workspaceId: WorkspaceDescriptor.ID,
         state: inout ViewportState,
-        edge: NiriRevealEdge = .left
+        edge: NiriRevealEdge = .left,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) {
         let cols = columns(in: workspaceId)
         guard !cols.isEmpty else { return }
@@ -143,192 +149,26 @@ extension NiriLayoutEngine {
             return
         }
 
-        let total = cols.count
-        let visibleCap = min(maxVisibleColumns, total)
-
-        let shouldCenter = computeShouldCenter(
-            targetColumnIndex: targetIdx,
-            totalColumns: total,
-            visibleCap: visibleCap,
-            state: state
+        state.ensureColumnVisible(
+            columnIndex: targetIdx,
+            columns: cols,
+            gap: gaps,
+            viewportWidth: workingFrame.width,
+            preferredEdge: edge,
+            animate: true
         )
 
-        if visibleCap >= total {
-            if shouldCenter, total == 1 {
-                state.setViewportStart(
-                    0,
-                    totalColumns: total,
-                    visibleCap: visibleCap,
-                    infiniteLoop: infiniteLoop
-                )
-            } else {
-                state.setViewportStart(
-                    0,
-                    totalColumns: total,
-                    visibleCap: visibleCap,
-                    infiniteLoop: infiniteLoop
-                )
-            }
-            state.selectionProgress = 0.0
-            return
-        }
-
-        let isVisible: Bool
-        if infiniteLoop {
-            isVisible = isColumnVisibleInViewport(
-                columnIndex: targetIdx,
-                viewportStart: state.firstVisibleColumn,
-                visibleCap: visibleCap,
-                totalColumns: total
-            )
-        } else {
-            let viewportEnd = state.firstVisibleColumn + visibleCap
-            isVisible = targetIdx >= state.firstVisibleColumn && targetIdx < viewportEnd
-        }
-
-        if isVisible, !shouldCenter {
-            return
-        }
-
-        let newStart: CGFloat
-
-        if shouldCenter {
-            let centeredStart = CGFloat(targetIdx) - CGFloat(visibleCap - 1) / 2.0
-
-            if infiniteLoop {
-                newStart = centeredStart
-            } else {
-                let maxStart = CGFloat(max(0, total - visibleCap))
-                newStart = centeredStart.clamped(to: 0 ... maxStart)
-            }
-        } else {
-            if infiniteLoop {
-                switch edge {
-                case .left:
-                    newStart = CGFloat(targetIdx)
-                case .right:
-                    newStart = CGFloat(targetIdx) - CGFloat(visibleCap - 1)
-                }
-            } else {
-                let maxStart = CGFloat(max(0, total - visibleCap))
-                switch edge {
-                case .left:
-                    newStart = CGFloat(targetIdx).clamped(to: 0 ... maxStart)
-                case .right:
-                    let trailing = CGFloat(visibleCap - 1)
-                    newStart = (CGFloat(targetIdx) - trailing).clamped(to: 0 ... maxStart)
-                }
-            }
-        }
-
-        state.setViewportStart(
-            newStart,
-            totalColumns: total,
-            visibleCap: visibleCap,
-            infiniteLoop: infiniteLoop
-        )
-
+        state.activeColumnIndex = targetIdx
         state.selectionProgress = 0.0
-    }
-
-    private func computeShouldCenter(
-        targetColumnIndex: Int,
-        totalColumns: Int,
-        visibleCap: Int,
-        state: ViewportState
-    ) -> Bool {
-        if alwaysCenterSingleColumn, totalColumns == 1 {
-            return true
-        }
-
-        switch centerFocusedColumn {
-        case .never:
-            return false
-
-        case .always:
-            return true
-
-        case .onOverflow:
-            let currentStart = state.firstVisibleColumn
-            let currentEnd = currentStart + visibleCap
-
-            let isAtLeftEdge = targetColumnIndex == currentStart
-            let isAtRightEdge = targetColumnIndex == currentEnd - 1
-
-            let isVisible: Bool = if infiniteLoop {
-                isColumnVisibleInViewport(
-                    columnIndex: targetColumnIndex,
-                    viewportStart: currentStart,
-                    visibleCap: visibleCap,
-                    totalColumns: totalColumns
-                )
-            } else {
-                targetColumnIndex >= currentStart && targetColumnIndex < currentEnd
-            }
-
-            return !isVisible || isAtLeftEdge || isAtRightEdge
-        }
-    }
-
-    private func isColumnVisibleInViewport(
-        columnIndex: Int,
-        viewportStart: Int,
-        visibleCap: Int,
-        totalColumns: Int
-    ) -> Bool {
-        for i in 0 ..< visibleCap {
-            let visibleIdx = (viewportStart + i) % totalColumns
-            if visibleIdx == columnIndex {
-                return true
-            }
-        }
-        return false
-    }
-
-    func dndScrollBegin(
-        in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
-    ) {
-        guard !columns(in: workspaceId).isEmpty else { return }
-        state.dndScrollBegin()
-    }
-
-    func dndScrollUpdate(
-        _ delta: CGFloat,
-        in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
-    ) -> Int? {
-        let total = columns(in: workspaceId).count
-        guard total > 0 else { return nil }
-        let visibleCap = min(maxVisibleColumns, total)
-
-        return state.dndScrollUpdate(
-            delta: delta,
-            totalColumns: total,
-            visibleCap: visibleCap,
-            infiniteLoop: infiniteLoop
-        )
-    }
-
-    func dndScrollEnd(
-        in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
-    ) {
-        let total = columns(in: workspaceId).count
-        guard total > 0 else { return }
-        let visibleCap = min(maxVisibleColumns, total)
-        state.dndScrollEnd(
-            totalColumns: total,
-            visibleCap: visibleCap,
-            infiniteLoop: infiniteLoop
-        )
     }
 
     func focusTarget(
         direction: Direction,
         currentSelection: NiriNode,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> NiriNode? {
         switch direction {
         case .left, .right:
@@ -336,7 +176,9 @@ extension NiriLayoutEngine {
                 direction: direction,
                 currentSelection: currentSelection,
                 in: workspaceId,
-                state: &state
+                state: &state,
+                workingFrame: workingFrame,
+                gaps: gaps
             )
         case .down, .up:
             let target = moveSelectionVertical(
@@ -349,7 +191,9 @@ extension NiriLayoutEngine {
                     node: target,
                     in: workspaceId,
                     state: &state,
-                    edge: .left
+                    edge: .left,
+                    workingFrame: workingFrame,
+                    gaps: gaps
                 )
             }
             return target
@@ -359,10 +203,19 @@ extension NiriLayoutEngine {
     func focusDownOrLeft(
         currentSelection: NiriNode,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> NiriNode? {
         if let target = moveSelectionVertical(direction: .down, currentSelection: currentSelection) {
-            ensureSelectionVisible(node: target, in: workspaceId, state: &state, edge: .left)
+            ensureSelectionVisible(
+                node: target,
+                in: workspaceId,
+                state: &state,
+                edge: .left,
+                workingFrame: workingFrame,
+                gaps: gaps
+            )
             return target
         }
 
@@ -370,17 +223,28 @@ extension NiriLayoutEngine {
             direction: .left,
             currentSelection: currentSelection,
             in: workspaceId,
-            state: &state
+            state: &state,
+            workingFrame: workingFrame,
+            gaps: gaps
         )
     }
 
     func focusUpOrRight(
         currentSelection: NiriNode,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> NiriNode? {
         if let target = moveSelectionVertical(direction: .up, currentSelection: currentSelection) {
-            ensureSelectionVisible(node: target, in: workspaceId, state: &state, edge: .left)
+            ensureSelectionVisible(
+                node: target,
+                in: workspaceId,
+                state: &state,
+                edge: .left,
+                workingFrame: workingFrame,
+                gaps: gaps
+            )
             return target
         }
 
@@ -388,14 +252,18 @@ extension NiriLayoutEngine {
             direction: .right,
             currentSelection: currentSelection,
             in: workspaceId,
-            state: &state
+            state: &state,
+            workingFrame: workingFrame,
+            gaps: gaps
         )
     }
 
     func focusColumnFirst(
         currentSelection: NiriNode,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> NiriNode? {
         let cols = columns(in: workspaceId)
         guard !cols.isEmpty else { return nil }
@@ -411,14 +279,23 @@ extension NiriLayoutEngine {
         guard !windows.isEmpty else { return firstColumn.firstChild() }
 
         let target = windows[min(currentRowIndex, windows.count - 1)]
-        ensureSelectionVisible(node: target, in: workspaceId, state: &state, edge: .left)
+        ensureSelectionVisible(
+            node: target,
+            in: workspaceId,
+            state: &state,
+            edge: .left,
+            workingFrame: workingFrame,
+            gaps: gaps
+        )
         return target
     }
 
     func focusColumnLast(
         currentSelection: NiriNode,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> NiriNode? {
         let cols = columns(in: workspaceId)
         guard !cols.isEmpty else { return nil }
@@ -434,7 +311,14 @@ extension NiriLayoutEngine {
         guard !windows.isEmpty else { return lastColumn.firstChild() }
 
         let target = windows[min(currentRowIndex, windows.count - 1)]
-        ensureSelectionVisible(node: target, in: workspaceId, state: &state, edge: .right)
+        ensureSelectionVisible(
+            node: target,
+            in: workspaceId,
+            state: &state,
+            edge: .right,
+            workingFrame: workingFrame,
+            gaps: gaps
+        )
         return target
     }
 
@@ -442,7 +326,9 @@ extension NiriLayoutEngine {
         _ columnIndex: Int,
         currentSelection: NiriNode,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> NiriNode? {
         let cols = columns(in: workspaceId)
         guard cols.indices.contains(columnIndex) else { return nil }
@@ -458,7 +344,14 @@ extension NiriLayoutEngine {
         guard !windows.isEmpty else { return targetColumn.firstChild() }
 
         let target = windows[min(currentRowIndex, windows.count - 1)]
-        ensureSelectionVisible(node: target, in: workspaceId, state: &state, edge: .left)
+        ensureSelectionVisible(
+            node: target,
+            in: workspaceId,
+            state: &state,
+            edge: .left,
+            workingFrame: workingFrame,
+            gaps: gaps
+        )
         return target
     }
 
@@ -466,7 +359,9 @@ extension NiriLayoutEngine {
         _ windowIndex: Int,
         currentSelection: NiriNode,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> NiriNode? {
         guard let currentColumn = column(of: currentSelection) else { return nil }
 
@@ -479,22 +374,40 @@ extension NiriLayoutEngine {
         }
 
         let target = windows[windowIndex]
-        ensureSelectionVisible(node: target, in: workspaceId, state: &state, edge: .left)
+        ensureSelectionVisible(
+            node: target,
+            in: workspaceId,
+            state: &state,
+            edge: .left,
+            workingFrame: workingFrame,
+            gaps: gaps
+        )
         return target
     }
 
     func focusWindowTop(
         currentSelection: NiriNode,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> NiriNode? {
-        focusWindowInColumn(0, currentSelection: currentSelection, in: workspaceId, state: &state)
+        focusWindowInColumn(
+            0,
+            currentSelection: currentSelection,
+            in: workspaceId,
+            state: &state,
+            workingFrame: workingFrame,
+            gaps: gaps
+        )
     }
 
     func focusWindowBottom(
         currentSelection: NiriNode,
         in workspaceId: WorkspaceDescriptor.ID,
-        state: inout ViewportState
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> NiriNode? {
         guard let currentColumn = column(of: currentSelection) else { return nil }
         let windows = currentColumn.windowNodes
@@ -503,7 +416,9 @@ extension NiriLayoutEngine {
             windows.count - 1,
             currentSelection: currentSelection,
             in: workspaceId,
-            state: &state
+            state: &state,
+            workingFrame: workingFrame,
+            gaps: gaps
         )
     }
 
@@ -511,6 +426,8 @@ extension NiriLayoutEngine {
         currentNodeId: NodeId?,
         in workspaceId: WorkspaceDescriptor.ID,
         state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat,
         limitToWorkspace: Bool = true
     ) -> NiriWindow? {
         let searchWorkspaceId = limitToWorkspace ? workspaceId : nil
@@ -525,7 +442,9 @@ extension NiriLayoutEngine {
             node: previousWindow,
             in: workspaceId,
             state: &state,
-            edge: .left
+            edge: .left,
+            workingFrame: workingFrame,
+            gaps: gaps
         )
 
         return previousWindow
