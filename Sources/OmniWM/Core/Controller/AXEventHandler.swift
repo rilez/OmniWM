@@ -31,7 +31,7 @@ final class AXEventHandler {
 
     private func handleCreated(ref: AXWindowRef, pid: pid_t, winId: Int) {
         guard let controller else { return }
-        if let bundleId = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+        if let bundleId = controller.internalAppInfoCache.bundleId(for: pid),
            controller.internalAppRulesByBundleId[bundleId]?.alwaysFloat == true
         {
             return
@@ -85,14 +85,13 @@ final class AXEventHandler {
 
     private func handleFocused(ref: AXWindowRef, pid: pid_t, winId: Int) {
         guard let controller else { return }
-        if let app = NSRunningApplication(processIdentifier: pid) {
-            let windowType = AXWindowService.windowType(ref, appPolicy: app.activationPolicy)
-            if windowType != .tiling {
-                controller.internalIsNonManagedFocusActive = true
-                controller.internalIsAppFullscreenActive = false
-                controller.internalBorderManager.hideBorder()
-                return
-            }
+        let appPolicy = controller.internalAppInfoCache.activationPolicy(for: pid)
+        let windowType = AXWindowService.windowType(ref, appPolicy: appPolicy)
+        if windowType != .tiling {
+            controller.internalIsNonManagedFocusActive = true
+            controller.internalIsAppFullscreenActive = false
+            controller.internalBorderManager.hideBorder()
+            return
         }
         controller.internalIsNonManagedFocusActive = false
         for ws in controller.internalWorkspaceManager.workspaces {

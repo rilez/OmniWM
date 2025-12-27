@@ -98,7 +98,7 @@ final class LayoutRefreshController {
 
     func startRefreshTimer() {
         refreshTimer?.invalidate()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshWindowsAndLayout()
             }
@@ -140,16 +140,13 @@ final class LayoutRefreshController {
         )
 
         for (ax, pid, winId) in windows {
-            if let bundleId = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
-               bundleId == LockScreenObserver.lockScreenAppBundleId
-            {
-                continue
-            }
-
-            if let bundleId = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
-               controller.internalAppRulesByBundleId[bundleId]?.alwaysFloat == true
-            {
-                continue
+            if let bundleId = controller.internalAppInfoCache.bundleId(for: pid) {
+                if bundleId == LockScreenObserver.lockScreenAppBundleId {
+                    continue
+                }
+                if controller.internalAppRulesByBundleId[bundleId]?.alwaysFloat == true {
+                    continue
+                }
             }
 
             let wsForWindow: WorkspaceDescriptor.ID
@@ -210,7 +207,7 @@ final class LayoutRefreshController {
                 let currentSize = (try? AXWindowService.frame(entry.axRef))?.size
                 var constraints = AXWindowService.sizeConstraints(entry.axRef, currentSize: currentSize)
 
-                if let bundleId = NSRunningApplication(processIdentifier: entry.handle.pid)?.bundleIdentifier,
+                if let bundleId = controller.internalAppInfoCache.bundleId(for: entry.handle.pid),
                    let rule = controller.internalAppRulesByBundleId[bundleId]
                 {
                     if let minW = rule.minWidth {
@@ -379,8 +376,7 @@ final class LayoutRefreshController {
     }
 
     private func isZoomApp(_ pid: pid_t) -> Bool {
-        guard let app = NSRunningApplication(processIdentifier: pid) else { return false }
-        return app.bundleIdentifier == "us.zoom.xos"
+        controller?.internalAppInfoCache.bundleId(for: pid) == "us.zoom.xos"
     }
 
     func updateTabbedColumnOverlays() {

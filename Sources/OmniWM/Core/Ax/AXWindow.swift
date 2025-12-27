@@ -69,10 +69,21 @@ enum AXWindowService {
         guard err1 == .success, err2 == .success else { throw .cannotSetFrame }
     }
 
+    nonisolated(unsafe) private static var _cachedGlobalFrame: CGRect?
+
+    static func invalidateGlobalFrameCache() {
+        _cachedGlobalFrame = nil
+    }
+
     private static var globalFrame: CGRect {
-        NSScreen.screens.reduce(into: CGRect.null) { result, screen in
+        if let cached = _cachedGlobalFrame {
+            return cached
+        }
+        let frame = NSScreen.screens.reduce(into: CGRect.null) { result, screen in
             result = result.union(screen.frame)
         }
+        _cachedGlobalFrame = frame
+        return frame
     }
 
     private static func convertFromAX(_ rect: CGRect) -> CGRect {

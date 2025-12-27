@@ -26,12 +26,14 @@ final class WorkspaceManager {
     private var screenPointToVisibleWorkspace: [CGPoint: WorkspaceDescriptor.ID] = [:]
     private var visibleWorkspaceToScreenPoint: [WorkspaceDescriptor.ID: CGPoint] = [:]
     private var screenPointToPrevVisibleWorkspace: [CGPoint: WorkspaceDescriptor.ID] = [:]
+    private var _sortedWorkspacesCache: [WorkspaceDescriptor]?
 
     private(set) var gaps: Double = 8
     private(set) var outerGaps: LayoutGaps.OuterGaps = .zero
     private let windows = WindowModel()
 
     private var niriViewportStates: [WorkspaceDescriptor.ID: ViewportState] = [:]
+    private var currentAnimationSettings: ViewportState = ViewportState()
 
     var onGapsChanged: (() -> Void)?
 
@@ -109,6 +111,35 @@ final class WorkspaceManager {
         applyForcedAssignments()
         reconcileForcedVisibleWorkspaces()
         fillMissingVisibleWorkspaces()
+        applyAnimationSettingsFromStore()
+    }
+
+    private func applyAnimationSettingsFromStore() {
+        currentAnimationSettings.animationsEnabled = settings.animationsEnabled
+
+        let focusSpringConfig = settings.focusChangeUseCustom
+            ? SpringConfig(stiffness: settings.focusChangeCustomStiffness, dampingRatio: settings.focusChangeCustomDamping)
+            : settings.focusChangeSpringPreset.config
+        currentAnimationSettings.focusChangeSpringConfig = focusSpringConfig
+        currentAnimationSettings.focusChangeAnimationType = settings.focusChangeAnimationType
+        currentAnimationSettings.focusChangeEasingCurve = settings.focusChangeEasingCurve
+        currentAnimationSettings.focusChangeEasingDuration = settings.focusChangeEasingDuration
+
+        let gestureSpringConfig = settings.gestureUseCustom
+            ? SpringConfig(stiffness: settings.gestureCustomStiffness, dampingRatio: settings.gestureCustomDamping)
+            : settings.gestureSpringPreset.config
+        currentAnimationSettings.gestureSpringConfig = gestureSpringConfig
+        currentAnimationSettings.gestureAnimationType = settings.gestureAnimationType
+        currentAnimationSettings.gestureEasingCurve = settings.gestureEasingCurve
+        currentAnimationSettings.gestureEasingDuration = settings.gestureEasingDuration
+
+        let columnRevealSpringConfig = settings.columnRevealUseCustom
+            ? SpringConfig(stiffness: settings.columnRevealCustomStiffness, dampingRatio: settings.columnRevealCustomDamping)
+            : settings.columnRevealSpringPreset.config
+        currentAnimationSettings.columnRevealSpringConfig = columnRevealSpringConfig
+        currentAnimationSettings.columnRevealAnimationType = settings.columnRevealAnimationType
+        currentAnimationSettings.columnRevealEasingCurve = settings.columnRevealEasingCurve
+        currentAnimationSettings.columnRevealEasingDuration = settings.columnRevealEasingDuration
     }
 
     func updateMonitors(_ newMonitors: [Monitor]) {
@@ -339,11 +370,126 @@ final class WorkspaceManager {
     }
 
     func niriViewportState(for workspaceId: WorkspaceDescriptor.ID) -> ViewportState {
-        niriViewportStates[workspaceId] ?? ViewportState()
+        if let state = niriViewportStates[workspaceId] {
+            return state
+        }
+        var newState = ViewportState()
+        newState.animationsEnabled = currentAnimationSettings.animationsEnabled
+        newState.focusChangeSpringConfig = currentAnimationSettings.focusChangeSpringConfig
+        newState.gestureSpringConfig = currentAnimationSettings.gestureSpringConfig
+        newState.columnRevealSpringConfig = currentAnimationSettings.columnRevealSpringConfig
+        newState.focusChangeAnimationType = currentAnimationSettings.focusChangeAnimationType
+        newState.focusChangeEasingCurve = currentAnimationSettings.focusChangeEasingCurve
+        newState.focusChangeEasingDuration = currentAnimationSettings.focusChangeEasingDuration
+        newState.gestureAnimationType = currentAnimationSettings.gestureAnimationType
+        newState.gestureEasingCurve = currentAnimationSettings.gestureEasingCurve
+        newState.gestureEasingDuration = currentAnimationSettings.gestureEasingDuration
+        newState.columnRevealAnimationType = currentAnimationSettings.columnRevealAnimationType
+        newState.columnRevealEasingCurve = currentAnimationSettings.columnRevealEasingCurve
+        newState.columnRevealEasingDuration = currentAnimationSettings.columnRevealEasingDuration
+        return newState
     }
 
     func updateNiriViewportState(_ state: ViewportState, for workspaceId: WorkspaceDescriptor.ID) {
         niriViewportStates[workspaceId] = state
+    }
+
+    func updateAnimationSettings(
+        animationsEnabled: Bool? = nil,
+        focusChangeSpringConfig: SpringConfig? = nil,
+        gestureSpringConfig: SpringConfig? = nil,
+        columnRevealSpringConfig: SpringConfig? = nil,
+        focusChangeAnimationType: AnimationType? = nil,
+        focusChangeEasingCurve: EasingCurve? = nil,
+        focusChangeEasingDuration: Double? = nil,
+        gestureAnimationType: AnimationType? = nil,
+        gestureEasingCurve: EasingCurve? = nil,
+        gestureEasingDuration: Double? = nil,
+        columnRevealAnimationType: AnimationType? = nil,
+        columnRevealEasingCurve: EasingCurve? = nil,
+        columnRevealEasingDuration: Double? = nil
+    ) {
+        if let enabled = animationsEnabled {
+            currentAnimationSettings.animationsEnabled = enabled
+        }
+        if let config = focusChangeSpringConfig {
+            currentAnimationSettings.focusChangeSpringConfig = config
+        }
+        if let config = gestureSpringConfig {
+            currentAnimationSettings.gestureSpringConfig = config
+        }
+        if let config = columnRevealSpringConfig {
+            currentAnimationSettings.columnRevealSpringConfig = config
+        }
+        if let animType = focusChangeAnimationType {
+            currentAnimationSettings.focusChangeAnimationType = animType
+        }
+        if let curve = focusChangeEasingCurve {
+            currentAnimationSettings.focusChangeEasingCurve = curve
+        }
+        if let duration = focusChangeEasingDuration {
+            currentAnimationSettings.focusChangeEasingDuration = duration
+        }
+        if let animType = gestureAnimationType {
+            currentAnimationSettings.gestureAnimationType = animType
+        }
+        if let curve = gestureEasingCurve {
+            currentAnimationSettings.gestureEasingCurve = curve
+        }
+        if let duration = gestureEasingDuration {
+            currentAnimationSettings.gestureEasingDuration = duration
+        }
+        if let animType = columnRevealAnimationType {
+            currentAnimationSettings.columnRevealAnimationType = animType
+        }
+        if let curve = columnRevealEasingCurve {
+            currentAnimationSettings.columnRevealEasingCurve = curve
+        }
+        if let duration = columnRevealEasingDuration {
+            currentAnimationSettings.columnRevealEasingDuration = duration
+        }
+
+        for workspaceId in niriViewportStates.keys {
+            if let enabled = animationsEnabled {
+                niriViewportStates[workspaceId]?.animationsEnabled = enabled
+            }
+            if let config = focusChangeSpringConfig {
+                niriViewportStates[workspaceId]?.focusChangeSpringConfig = config
+            }
+            if let config = gestureSpringConfig {
+                niriViewportStates[workspaceId]?.gestureSpringConfig = config
+            }
+            if let config = columnRevealSpringConfig {
+                niriViewportStates[workspaceId]?.columnRevealSpringConfig = config
+            }
+            if let animType = focusChangeAnimationType {
+                niriViewportStates[workspaceId]?.focusChangeAnimationType = animType
+            }
+            if let curve = focusChangeEasingCurve {
+                niriViewportStates[workspaceId]?.focusChangeEasingCurve = curve
+            }
+            if let duration = focusChangeEasingDuration {
+                niriViewportStates[workspaceId]?.focusChangeEasingDuration = duration
+            }
+            if let animType = gestureAnimationType {
+                niriViewportStates[workspaceId]?.gestureAnimationType = animType
+            }
+            if let curve = gestureEasingCurve {
+                niriViewportStates[workspaceId]?.gestureEasingCurve = curve
+            }
+            if let duration = gestureEasingDuration {
+                niriViewportStates[workspaceId]?.gestureEasingDuration = duration
+            }
+            if let animType = columnRevealAnimationType {
+                niriViewportStates[workspaceId]?.columnRevealAnimationType = animType
+            }
+            if let curve = columnRevealEasingCurve {
+                niriViewportStates[workspaceId]?.columnRevealEasingCurve = curve
+            }
+            if let duration = columnRevealEasingDuration {
+                niriViewportStates[workspaceId]?.columnRevealEasingDuration = duration
+            }
+        }
     }
 
     func garbageCollectUnusedWorkspaces(focusedWorkspaceId: WorkspaceDescriptor.ID?) {
@@ -376,6 +522,7 @@ final class WorkspaceManager {
             screenPointToVisibleWorkspace = screenPointToVisibleWorkspace.filter { !toRemove.contains($0.value) }
             screenPointToPrevVisibleWorkspace = screenPointToPrevVisibleWorkspace
                 .filter { !toRemove.contains($0.value) }
+            invalidateSortedWorkspacesCache()
         }
     }
 
@@ -457,11 +604,20 @@ final class WorkspaceManager {
     }
 
     private func sortedWorkspaces() -> [WorkspaceDescriptor] {
-        workspacesById.values.sorted {
+        if let cached = _sortedWorkspacesCache {
+            return cached
+        }
+        let sorted = workspacesById.values.sorted {
             let a = $0.name.toLogicalSegments()
             let b = $1.name.toLogicalSegments()
             return a < b
         }
+        _sortedWorkspacesCache = sorted
+        return sorted
+    }
+
+    private func invalidateSortedWorkspacesCache() {
+        _sortedWorkspacesCache = nil
     }
 
     private func ensurePersistentWorkspaces() {
@@ -624,6 +780,7 @@ final class WorkspaceManager {
         let workspace = WorkspaceDescriptor(name: "fallback")
         workspacesById[workspace.id] = workspace
         workspaceIdByName[workspace.name] = workspace.id
+        invalidateSortedWorkspacesCache()
         return workspace.id
     }
 
@@ -693,6 +850,7 @@ final class WorkspaceManager {
         let workspace = WorkspaceDescriptor(name: parsed.raw)
         workspacesById[workspace.id] = workspace
         workspaceIdByName[workspace.name] = workspace.id
+        invalidateSortedWorkspacesCache()
         return workspace.id
     }
 }

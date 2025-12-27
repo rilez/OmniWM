@@ -43,6 +43,7 @@ final class WMController {
     private var hiddenAppPIDs: Set<pid_t> = []
 
     private var appRulesByBundleId: [String: AppRule] = [:]
+    private let appInfoCache = AppInfoCache()
 
     private var mouseEventHandler: MouseEventHandler?
     private var commandHandler: CommandHandler?
@@ -199,8 +200,7 @@ final class WMController {
             var orderedAppNames: [String] = []
 
             for entry in entries {
-                let app = NSRunningApplication(processIdentifier: entry.handle.pid)
-                let appName = app?.localizedName ?? "Unknown"
+                let appName = appInfoCache.name(for: entry.handle.pid)
 
                 if groupedByApp[appName] == nil {
                     groupedByApp[appName] = []
@@ -212,7 +212,7 @@ final class WMController {
 
             return orderedAppNames.compactMap { appName in
                 guard let appEntries = groupedByApp[appName], let firstEntry = appEntries.first else { return nil }
-                let app = NSRunningApplication(processIdentifier: firstEntry.handle.pid)
+                let appInfo = appInfoCache.info(for: firstEntry.handle.pid)
                 let anyFocused = appEntries.contains { $0.handle.id == focusedHandle?.id }
 
                 let windowInfos = appEntries.map { entry -> WorkspaceBarWindowInfo in
@@ -228,7 +228,7 @@ final class WMController {
                     id: firstEntry.handle.id,
                     windowId: firstEntry.windowId,
                     appName: appName,
-                    icon: app?.icon,
+                    icon: appInfo.icon,
                     isFocused: anyFocused,
                     windowCount: appEntries.count,
                     allWindows: windowInfos
@@ -237,13 +237,12 @@ final class WMController {
         }
 
         let groupedByApp = Dictionary(grouping: entries) { entry -> String in
-            let app = NSRunningApplication(processIdentifier: entry.handle.pid)
-            return app?.localizedName ?? "Unknown"
+            appInfoCache.name(for: entry.handle.pid)
         }
 
         return groupedByApp.map { appName, appEntries -> WorkspaceBarWindowItem in
             let firstEntry = appEntries.first!
-            let app = NSRunningApplication(processIdentifier: firstEntry.handle.pid)
+            let appInfo = appInfoCache.info(for: firstEntry.handle.pid)
             let anyFocused = appEntries.contains { $0.handle.id == focusedHandle?.id }
 
             let windowInfos = appEntries.map { entry -> WorkspaceBarWindowInfo in
@@ -259,7 +258,7 @@ final class WMController {
                 id: firstEntry.handle.id,
                 windowId: firstEntry.windowId,
                 appName: appName,
-                icon: app?.icon,
+                icon: appInfo.icon,
                 isFocused: anyFocused,
                 windowCount: appEntries.count,
                 allWindows: windowInfos
@@ -269,15 +268,14 @@ final class WMController {
 
     private func createIndividualWindowItems(entries: [WindowModel.Entry]) -> [WorkspaceBarWindowItem] {
         entries.map { entry in
-            let app = NSRunningApplication(processIdentifier: entry.handle.pid)
-            let appName = app?.localizedName ?? "Unknown"
-            let title = getWindowTitle(for: entry) ?? appName
+            let appInfo = appInfoCache.info(for: entry.handle.pid)
+            let title = getWindowTitle(for: entry) ?? appInfo.name
 
             return WorkspaceBarWindowItem(
                 id: entry.handle.id,
                 windowId: entry.windowId,
-                appName: appName,
-                icon: app?.icon,
+                appName: appInfo.name,
+                icon: appInfo.icon,
                 isFocused: entry.handle.id == focusedHandle?.id,
                 windowCount: 1,
                 allWindows: [
@@ -707,6 +705,21 @@ final class WMController {
             columnRevealEasingCurve: columnRevealEasingCurve,
             columnRevealEasingDuration: columnRevealEasingDuration
         )
+        workspaceManager.updateAnimationSettings(
+            animationsEnabled: animationsEnabled,
+            focusChangeSpringConfig: focusChangeSpringConfig,
+            gestureSpringConfig: gestureSpringConfig,
+            columnRevealSpringConfig: columnRevealSpringConfig,
+            focusChangeAnimationType: focusChangeAnimationType,
+            focusChangeEasingCurve: focusChangeEasingCurve,
+            focusChangeEasingDuration: focusChangeEasingDuration,
+            gestureAnimationType: gestureAnimationType,
+            gestureEasingCurve: gestureEasingCurve,
+            gestureEasingDuration: gestureEasingDuration,
+            columnRevealAnimationType: columnRevealAnimationType,
+            columnRevealEasingCurve: columnRevealEasingCurve,
+            columnRevealEasingDuration: columnRevealEasingDuration
+        )
         layoutRefreshController?.refreshWindowsAndLayout()
     }
 
@@ -730,7 +743,7 @@ final class WMController {
         pid: pid_t,
         fallbackWorkspaceId: WorkspaceDescriptor.ID?
     ) -> WorkspaceDescriptor.ID {
-        if let bundleId = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+        if let bundleId = appInfoCache.bundleId(for: pid),
            let rule = appRulesByBundleId[bundleId],
            let wsName = rule.assignToWorkspace,
            let wsId = workspaceManager.workspaceId(for: wsName, createIfMissing: true)
@@ -783,9 +796,7 @@ final class WMController {
 
             let title = (try? AXWindowService.title(entry.axRef)) ?? ""
 
-            let app = NSRunningApplication(processIdentifier: entry.handle.pid)
-            let appName = app?.localizedName ?? "Unknown"
-            let appIcon = app?.icon
+            let appInfo = appInfoCache.info(for: entry.handle.pid)
 
             let workspaceName = workspaceManager.descriptor(for: entry.workspaceId)?.name ?? "?"
 
@@ -793,8 +804,8 @@ final class WMController {
                 id: entry.handle.id,
                 handle: entry.handle,
                 title: title,
-                appName: appName,
-                appIcon: appIcon,
+                appName: appInfo.name,
+                appIcon: appInfo.icon,
                 workspaceName: workspaceName,
                 workspaceId: entry.workspaceId
             ))
@@ -917,8 +928,8 @@ final class WMController {
         for entry in workspaceManager.allEntries() {
             guard entry.layoutReason == .standard else { continue }
 
-            let app = NSRunningApplication(processIdentifier: entry.handle.pid)
-            guard let bundleId = app?.bundleIdentifier else { continue }
+            let appInfo = appInfoCache.info(for: entry.handle.pid)
+            guard let bundleId = appInfo.bundleId else { continue }
 
             if appInfoMap[bundleId] != nil { continue }
 
@@ -927,8 +938,8 @@ final class WMController {
             appInfoMap[bundleId] = RunningAppInfo(
                 id: bundleId,
                 bundleId: bundleId,
-                appName: app?.localizedName ?? bundleId,
-                icon: app?.icon,
+                appName: appInfo.name,
+                icon: appInfo.icon,
                 windowSize: frame.size
             )
         }
@@ -947,6 +958,7 @@ extension WMController {
     var internalWindowStateCache: WindowStateCache { windowStateCache }
     var internalLockScreenObserver: LockScreenObserver { lockScreenObserver }
     var internalAppRulesByBundleId: [String: AppRule] { appRulesByBundleId }
+    var internalAppInfoCache: AppInfoCache { appInfoCache }
 
     var internalFocusedHandle: WindowHandle? {
         get { focusedHandle }
