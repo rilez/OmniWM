@@ -57,35 +57,10 @@ brew install omniwm
 
 ## Configuration
 
-Access settings by clicking the **O** menu bar icon and selecting **Settings**.
+Access settings by clicking the **O** menu bar icon and selecting **Settings** or **App Rules**.
 
-### General
-- **Inner gaps** - Spacing between windows
-- **Outer margins** - Margins around the screen edges
-
-### Layout (Niri)
-- **Windows per column** - Maximum windows stacked in each column
-- **Visible columns** - Number of columns visible at once
-- **Center focused column** - Behavior for centering the active column
-- **Single window aspect ratio** - Constraint for single windows (16:9, 4:3, etc.)
-
-### Workspaces
-- Create and name workspaces
-- Assign workspaces to specific monitors
-- Choose layout algorithm per workspace
-
-### Borders
-- Enable/disable window borders
-- Customize border color and width
-
-### Bar
-- Show/hide workspace bar
-- Configure position and appearance
-- Per-monitor settings
-
-### Hotkeys
-- Customize all keyboard shortcuts
-- Visual key recording interface
+There are huge amount of features and customizations and I'm really bad at doing guides but the GUI settings/customization should be fairly intuitive, some features have never before been available for macOS tiling WMs.
+If anyone is good at making video guides DM me on discord or through GitHub discussions I'd appreciate it.
 
 ## App Rules
 
