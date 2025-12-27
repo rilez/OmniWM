@@ -12,6 +12,7 @@ final class AppAXContext: @unchecked Sendable {
     private let windows: ThreadGuardedValue<[Int: AXUIElement]>
     private var thread: Thread?
     private var setFrameJobs: [Int: RunLoopJob] = [:]
+    private let windowSubscriptions: ThreadGuardedValue<[Int: AXSubscription]>
 
     var lastNativeFocusedWindowId: Int?
 
@@ -36,6 +37,7 @@ final class AppAXContext: @unchecked Sendable {
         self.axApp = .init(axApp)
         self.subscription = .init(subscription)
         windows = .init([:])
+        windowSubscriptions = .init([:])
         self.thread = thread
     }
 
@@ -100,7 +102,7 @@ final class AppAXContext: @unchecked Sendable {
         let interval = signpostIntervalNonIsolated("getWindowsAsync", "pid: \(pid)")
         defer { interval.end() }
 
-        let (results, deadWindowIds) = try await thread.runInLoop { [axApp, windows, nsApp] job -> (
+        let (results, deadWindowIds) = try await thread.runInLoop { [axApp, windows, windowSubscriptions, nsApp] job -> (
             [(AXWindowRef, Int)],
             [Int]
         ) in
@@ -150,18 +152,24 @@ final class AppAXContext: @unchecked Sendable {
                         kAXMovedNotification,
                         kAXResizedNotification
                     ]
-                    _ = try? AXSubscription.bulkSubscribe(
+                    if let sub = try? AXSubscription.bulkSubscribe(
                         nsApp,
                         element,
                         job,
                         windowNotifications.map { $0 as String },
                         axObserverCallback
-                    )
+                    ) {
+                        windowSubscriptions.value[windowId] = sub
+                    }
                 }
             }
 
             let newWindowIds = Set(newWindows.keys)
             let deadIds = Array(oldWindowIds.subtracting(newWindowIds))
+
+            for deadId in deadIds {
+                windowSubscriptions.value.removeValue(forKey: deadId)
+            }
 
             windows.value = newWindows
             return (results, deadIds)
@@ -253,7 +261,8 @@ final class AppAXContext: @unchecked Sendable {
         }
         setFrameJobs = [:]
 
-        thread?.runInLoopAsync { [windows, subscription, axApp] _ in
+        thread?.runInLoopAsync { [windows, windowSubscriptions, subscription, axApp] _ in
+            windowSubscriptions.destroy()
             subscription.destroy()
             windows.destroy()
             axApp.destroy()
