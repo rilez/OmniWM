@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 struct SpringConfig {
     var stiffness: Double
@@ -14,6 +15,12 @@ struct SpringConfig {
     static let snappy = SpringConfig(stiffness: 800, dampingRatio: 1.0)
     static let smooth = SpringConfig(stiffness: 400, dampingRatio: 1.0)
     static let bouncy = SpringConfig(stiffness: 600, dampingRatio: 0.7)
+
+    var appleSpring: Spring {
+        let mass = 1.0
+        let absoluteDamping = 2.0 * dampingRatio * sqrt(stiffness * mass)
+        return Spring(mass: mass, stiffness: stiffness, damping: absoluteDamping)
+    }
 }
 
 final class SpringAnimation {
@@ -24,8 +31,8 @@ final class SpringAnimation {
     let config: SpringConfig
     private let clock: AnimationClock?
 
-    private let beta: Double
-    private let omega0: Double
+    private let spring: Spring
+    private let displacement: Double
 
     init(
         from: Double,
@@ -44,10 +51,8 @@ final class SpringAnimation {
         let scaledVelocity = initialVelocity / max(clock?.rate ?? 1.0, 0.001)
         self.initialVelocity = scaledVelocity
 
-        let mass = 1.0
-        let damping = 2.0 * config.dampingRatio * sqrt(config.stiffness * mass)
-        self.beta = damping / (2.0 * mass)
-        self.omega0 = sqrt(config.stiffness / mass)
+        self.spring = config.appleSpring
+        self.displacement = to - from
     }
 
     func value(at time: TimeInterval) -> Double {
@@ -56,18 +61,15 @@ final class SpringAnimation {
         }
 
         let currentTime = clock?.now() ?? time
-        let t = max(0, currentTime - startTime)
-        let value = oscillate(t: t)
+        let elapsed = max(0, currentTime - startTime)
 
-        let range = (target - from) * 10.0
-        let a = from - range
-        let b = target + range
+        let springValue = spring.value(
+            target: displacement,
+            initialVelocity: initialVelocity,
+            time: elapsed
+        )
 
-        if from <= target {
-            return min(max(value, a), b)
-        } else {
-            return min(max(value, b), a)
-        }
+        return from + springValue
     }
 
     func isComplete(at time: TimeInterval) -> Bool {
@@ -75,108 +77,22 @@ final class SpringAnimation {
             return true
         }
 
-        let currentTime = clock?.now() ?? time
-        let t = max(0, currentTime - startTime)
-        let position = oscillate(t: t)
+        let position = value(at: time)
         return abs(position - target) < config.epsilon
     }
 
     func duration() -> TimeInterval {
-        let delta = 0.001
-
-        if abs(beta) <= .ulpOfOne || beta < 0 {
-            return .infinity
-        }
-
-        if abs(target - from) <= .ulpOfOne {
-            return 0
-        }
-
-        var x0 = -log(config.epsilon) / beta
-
-        let epsilonForComparison = Double(Float.ulpOfOne)
-        if abs(beta - omega0) <= epsilonForComparison || beta < omega0 {
-            return x0
-        }
-
-        var y0 = oscillate(t: x0)
-        var m = (oscillate(t: x0 + delta) - y0) / delta
-
-        var x1 = (target - y0 + m * x0) / m
-        var y1 = oscillate(t: x1)
-
-        var i = 0
-        while abs(target - y1) > config.epsilon {
-            if i > 1000 {
-                return 0
-            }
-
-            x0 = x1
-            y0 = y1
-
-            m = (oscillate(t: x0 + delta) - y0) / delta
-
-            x1 = (target - y0 + m * x0) / m
-            y1 = oscillate(t: x1)
-
-            if !y1.isFinite {
-                return x0
-            }
-
-            i += 1
-        }
-
-        return x1
+        return spring.settlingDuration
     }
 
-    func clampedDuration() -> TimeInterval? {
-        if abs(beta) <= .ulpOfOne || beta < 0 {
-            return .infinity
-        }
+    func velocity(at time: TimeInterval) -> Double {
+        let currentTime = clock?.now() ?? time
+        let elapsed = max(0, currentTime - startTime)
 
-        if abs(target - from) <= .ulpOfOne {
-            return 0
-        }
-
-        var i: UInt16 = 1
-        var y = oscillate(t: Double(i) / 1000.0)
-
-        while (target - from > .ulpOfOne && target - y > config.epsilon) ||
-              (from - target > .ulpOfOne && y - target > config.epsilon) {
-            if i > 3000 {
-                return nil
-            }
-
-            i += 1
-            y = oscillate(t: Double(i) / 1000.0)
-        }
-
-        return Double(i) / 1000.0
+        return spring.velocity(
+            target: displacement,
+            initialVelocity: initialVelocity,
+            time: elapsed
+        )
     }
-
-    private func oscillate(t: Double) -> Double {
-        let x0 = from - target
-        let v0 = initialVelocity
-
-        let envelope = exp(-beta * t)
-
-        let epsilonForComparison = Double(Float.ulpOfOne)
-
-        if abs(beta - omega0) <= epsilonForComparison {
-            return target + envelope * (x0 + (beta * x0 + v0) * t)
-        } else if beta < omega0 {
-            let omega1 = sqrt(omega0 * omega0 - beta * beta)
-            return target + envelope * (
-                x0 * cos(omega1 * t) +
-                ((beta * x0 + v0) / omega1) * sin(omega1 * t)
-            )
-        } else {
-            let omega2 = sqrt(beta * beta - omega0 * omega0)
-            return target + envelope * (
-                x0 * cosh(omega2 * t) +
-                ((beta * x0 + v0) / omega2) * sinh(omega2 * t)
-            )
-        }
-    }
-
 }
