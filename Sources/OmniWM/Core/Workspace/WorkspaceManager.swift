@@ -34,6 +34,8 @@ final class WorkspaceManager {
 
     private var niriViewportStates: [WorkspaceDescriptor.ID: ViewportState] = [:]
     private var currentAnimationSettings: ViewportState = ViewportState()
+    var animationClock: AnimationClock?
+    var decelerationRate: Double = DecelerationAnimation.defaultDecelerationRate
 
     var onGapsChanged: (() -> Void)?
 
@@ -387,6 +389,7 @@ final class WorkspaceManager {
         newState.columnRevealAnimationType = currentAnimationSettings.columnRevealAnimationType
         newState.columnRevealEasingCurve = currentAnimationSettings.columnRevealEasingCurve
         newState.columnRevealEasingDuration = currentAnimationSettings.columnRevealEasingDuration
+        newState.animationClock = animationClock
         return newState
     }
 
@@ -489,6 +492,18 @@ final class WorkspaceManager {
             if let duration = columnRevealEasingDuration {
                 niriViewportStates[workspaceId]?.columnRevealEasingDuration = duration
             }
+        }
+    }
+
+    func updateDecelerationRate(_ rate: Double) {
+        decelerationRate = rate
+    }
+
+    func updateAnimationClock(_ clock: AnimationClock?) {
+        animationClock = clock
+        currentAnimationSettings.animationClock = clock
+        for workspaceId in niriViewportStates.keys {
+            niriViewportStates[workspaceId]?.animationClock = clock
         }
     }
 

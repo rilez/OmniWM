@@ -87,6 +87,8 @@ struct ViewportState {
     var columnRevealEasingCurve: EasingCurve = .easeOutCubic
     var columnRevealEasingDuration: Double = 0.3
 
+    var animationClock: AnimationClock?
+
     func columnX(at index: Int, columns: [NiriContainer], gap: CGFloat) -> CGFloat {
         var x: CGFloat = 0
         for i in 0..<index {
@@ -148,7 +150,7 @@ struct ViewportState {
         )
 
         if animate && animationsEnabled {
-            let now = CACurrentMediaTime()
+            let now = animationClock?.now() ?? CACurrentMediaTime()
             switch focusChangeAnimationType {
             case .spring:
                 let animation = SpringAnimation(
@@ -156,7 +158,8 @@ struct ViewportState {
                     to: targetOffset,
                     initialVelocity: 0,
                     startTime: now,
-                    config: focusChangeSpringConfig
+                    config: focusChangeSpringConfig,
+                    clock: animationClock
                 )
                 viewOffsetPixels = .spring(animation)
             case .easing:
@@ -165,7 +168,8 @@ struct ViewportState {
                     to: targetOffset,
                     duration: focusChangeEasingDuration,
                     curve: focusChangeEasingCurve,
-                    startTime: now
+                    startTime: now,
+                    clock: animationClock
                 )
                 viewOffsetPixels = .animating(animation)
             }
@@ -310,7 +314,7 @@ struct ViewportState {
         }
 
         if animationsEnabled {
-            let now = CACurrentMediaTime()
+            let now = animationClock?.now() ?? CACurrentMediaTime()
             switch gestureAnimationType {
             case .spring:
                 let animation = SpringAnimation(
@@ -318,7 +322,8 @@ struct ViewportState {
                     to: targetOffset,
                     initialVelocity: velocity,
                     startTime: now,
-                    config: gestureSpringConfig
+                    config: gestureSpringConfig,
+                    clock: animationClock
                 )
                 viewOffsetPixels = .spring(animation)
             case .easing:
@@ -328,7 +333,7 @@ struct ViewportState {
                     duration: gestureEasingDuration,
                     curve: gestureEasingCurve,
                     startTime: now,
-                    initialVelocity: velocity
+                    clock: animationClock
                 )
                 viewOffsetPixels = .animating(animation)
             }
@@ -388,7 +393,8 @@ struct ViewportState {
         gap: CGFloat,
         viewportWidth: CGFloat,
         preferredEdge: NiriRevealEdge? = nil,
-        animate: Bool = true
+        animate: Bool = true,
+        centerMode: CenterFocusedColumn = .never
     ) {
         guard !columns.isEmpty, columnIndex >= 0, columnIndex < columns.count else { return }
 
@@ -404,10 +410,37 @@ struct ViewportState {
 
         var targetOffset = currentOffset
 
-        if colLeft < viewLeft {
-            targetOffset = -colX
-        } else if colRight > viewRight {
-            targetOffset = viewportWidth - colRight
+        switch centerMode {
+        case .always:
+            targetOffset = computeCenteredOffset(
+                columnIndex: columnIndex,
+                columns: columns,
+                gap: gap,
+                viewportWidth: viewportWidth
+            )
+
+        case .onOverflow:
+            if colWidth > viewportWidth {
+                targetOffset = computeCenteredOffset(
+                    columnIndex: columnIndex,
+                    columns: columns,
+                    gap: gap,
+                    viewportWidth: viewportWidth
+                )
+            } else {
+                if colLeft < viewLeft {
+                    targetOffset = -colX
+                } else if colRight > viewRight {
+                    targetOffset = viewportWidth - colRight
+                }
+            }
+
+        case .never:
+            if colLeft < viewLeft {
+                targetOffset = -colX
+            } else if colRight > viewRight {
+                targetOffset = viewportWidth - colRight
+            }
         }
 
         let totalW = totalWidth(columns: columns, gap: gap)
@@ -422,7 +455,7 @@ struct ViewportState {
         }
 
         if animate && animationsEnabled {
-            let now = CACurrentMediaTime()
+            let now = animationClock?.now() ?? CACurrentMediaTime()
             switch columnRevealAnimationType {
             case .spring:
                 let animation = SpringAnimation(
@@ -430,7 +463,8 @@ struct ViewportState {
                     to: Double(targetOffset),
                     initialVelocity: 0,
                     startTime: now,
-                    config: columnRevealSpringConfig
+                    config: columnRevealSpringConfig,
+                    clock: animationClock
                 )
                 viewOffsetPixels = .spring(animation)
             case .easing:
@@ -439,7 +473,8 @@ struct ViewportState {
                     to: Double(targetOffset),
                     duration: columnRevealEasingDuration,
                     curve: columnRevealEasingCurve,
-                    startTime: now
+                    startTime: now,
+                    clock: animationClock
                 )
                 viewOffsetPixels = .animating(animation)
             }

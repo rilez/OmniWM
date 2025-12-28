@@ -22,6 +22,7 @@ final class SpringAnimation {
     private let initialVelocity: Double
     private let startTime: TimeInterval
     let config: SpringConfig
+    private let clock: AnimationClock?
 
     private let beta: Double
     private let omega0: Double
@@ -31,13 +32,17 @@ final class SpringAnimation {
         to: Double,
         initialVelocity: Double = 0,
         startTime: TimeInterval,
-        config: SpringConfig = .snappy
+        config: SpringConfig = .snappy,
+        clock: AnimationClock? = nil
     ) {
         self.from = from
         self.target = to
-        self.initialVelocity = initialVelocity
         self.startTime = startTime
         self.config = config
+        self.clock = clock
+
+        let scaledVelocity = initialVelocity / max(clock?.rate ?? 1.0, 0.001)
+        self.initialVelocity = scaledVelocity
 
         let mass = 1.0
         let damping = 2.0 * config.dampingRatio * sqrt(config.stiffness * mass)
@@ -46,12 +51,32 @@ final class SpringAnimation {
     }
 
     func value(at time: TimeInterval) -> Double {
-        let t = max(0, time - startTime)
-        return oscillate(t: t)
+        if clock?.shouldCompleteInstantly == true {
+            return target
+        }
+
+        let currentTime = clock?.now() ?? time
+        let t = max(0, currentTime - startTime)
+        let value = oscillate(t: t)
+
+        let range = (target - from) * 10.0
+        let a = from - range
+        let b = target + range
+
+        if from <= target {
+            return min(max(value, a), b)
+        } else {
+            return min(max(value, b), a)
+        }
     }
 
     func isComplete(at time: TimeInterval) -> Bool {
-        let t = max(0, time - startTime)
+        if clock?.shouldCompleteInstantly == true {
+            return true
+        }
+
+        let currentTime = clock?.now() ?? time
+        let t = max(0, currentTime - startTime)
         let position = oscillate(t: t)
         return abs(position - target) < config.epsilon
     }

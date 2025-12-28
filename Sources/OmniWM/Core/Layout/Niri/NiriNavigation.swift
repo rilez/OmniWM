@@ -155,7 +155,8 @@ extension NiriLayoutEngine {
             gap: gaps,
             viewportWidth: workingFrame.width,
             preferredEdge: edge,
-            animate: true
+            animate: true,
+            centerMode: centerFocusedColumn
         )
 
         state.activeColumnIndex = targetIdx

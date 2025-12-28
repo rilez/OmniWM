@@ -51,9 +51,14 @@ final class WMController {
     private var axEventHandler: AXEventHandler?
     private var layoutRefreshController: LayoutRefreshController?
 
+    let animationClock = AnimationClock()
+
     init(settings: SettingsStore) {
         self.settings = settings
         workspaceManager = WorkspaceManager(settings: settings)
+        workspaceManager.updateAnimationClock(animationClock)
+        animationClock.setRate(settings.animationClockRate)
+        workspaceManager.updateDecelerationRate(settings.decelerationRate)
         hotkeys.onCommand = { [weak self] command in
             self?.commandHandler?.handle(command)
         }
@@ -721,6 +726,14 @@ final class WMController {
             columnRevealEasingDuration: columnRevealEasingDuration
         )
         layoutRefreshController?.refreshWindowsAndLayout()
+    }
+
+    func updateAnimationClockRate(_ rate: Double) {
+        animationClock.setRate(rate)
+    }
+
+    func updateDecelerationRate(_ rate: Double) {
+        workspaceManager.updateDecelerationRate(rate)
     }
 
     func monitorForInteraction() -> Monitor? {

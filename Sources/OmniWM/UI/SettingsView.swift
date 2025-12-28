@@ -125,6 +125,22 @@ struct GeneralSettingsTab: View {
                         .frame(width: 56, alignment: .trailing)
                 }
 
+                Picker("Trackpad Gesture Fingers", selection: $settings.gestureFingerCount) {
+                    ForEach(GestureFingerCount.allCases, id: \.self) { count in
+                        Text(count.displayName).tag(count)
+                    }
+                }
+                .disabled(!settings.scrollGestureEnabled)
+
+                Toggle("Invert Direction (Natural)", isOn: $settings.gestureInvertDirection)
+                    .disabled(!settings.scrollGestureEnabled)
+
+                Text(settings.gestureInvertDirection ? "Swipe right = scroll right" : "Swipe right = scroll left")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Divider()
+
                 Picker("Mouse Scroll Modifier", selection: $settings.scrollModifierKey) {
                     ForEach(ScrollModifierKey.allCases, id: \.self) { key in
                         Text(key.displayName).tag(key)

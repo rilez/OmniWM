@@ -11,9 +11,20 @@ final class MouseEventHandler {
     private var mouseDraggedMonitor: Any?
     private var mouseUpMonitor: Any?
     private var scrollWheelMonitor: Any?
+    private var gestureMonitor: Any?
     private var currentHoveredEdges: ResizeEdge = []
     private var isResizing: Bool = false
     private var isMoving: Bool = false
+    private var gesturePhase: GesturePhase = .idle
+    private var gestureStartX: CGFloat = 0.0
+    private var gestureStartY: CGFloat = 0.0
+    private var gestureLastDeltaX: CGFloat = 0.0
+
+    private enum GesturePhase {
+        case idle
+        case armed
+        case committed
+    }
     private var lastFocusFollowsMouseTime: Date = .distantPast
     private var lastFocusFollowsMouseHandle: WindowHandle?
     private let focusFollowsMouseDebounce: TimeInterval = 0.1
@@ -59,6 +70,12 @@ final class MouseEventHandler {
                 self?.handleScrollWheel(event)
             }
         }
+
+        gestureMonitor = NSEvent.addGlobalMonitorForEvents(matching: .gesture) { [weak self] event in
+            Task { @MainActor in
+                self?.handleGestureEvent(event)
+            }
+        }
     }
 
     func cleanup() {
@@ -86,8 +103,13 @@ final class MouseEventHandler {
             NSEvent.removeMonitor(monitor)
             scrollWheelMonitor = nil
         }
+        if let monitor = gestureMonitor {
+            NSEvent.removeMonitor(monitor)
+            gestureMonitor = nil
+        }
         currentHoveredEdges = []
         isResizing = false
+        gesturePhase = .idle
     }
 
     private func handleMouseMoved() {
@@ -299,28 +321,24 @@ final class MouseEventHandler {
         guard !isResizing, !isMoving else { return }
         guard let engine = controller.internalNiriEngine, let wsId = controller.activeWorkspace()?.id else { return }
 
-        let deltaX: CGFloat
         let isTrackpad = event.momentumPhase != [] || event.phase != []
-
         if isTrackpad {
-            deltaX = event.scrollingDeltaX
-        } else if event.modifierFlags.contains(controller.internalSettings.scrollModifierKey.eventModifierFlag) {
-            if event.modifierFlags.contains(.shift) {
-                deltaX = event.scrollingDeltaX
-            } else {
-                deltaX = -event.scrollingDeltaY
-            }
-        } else {
             return
         }
 
-        if event.momentumPhase == .began || event.momentumPhase == .changed {
+        guard event.modifierFlags.contains(controller.internalSettings.scrollModifierKey.eventModifierFlag) else {
             return
+        }
+
+        let deltaX: CGFloat
+        if event.modifierFlags.contains(.shift) {
+            deltaX = event.scrollingDeltaX
+        } else {
+            deltaX = -event.scrollingDeltaY
         }
 
         guard abs(deltaX) > 0.5 else { return }
 
-        let gestureEnding = event.phase == .ended
         let timestamp = CACurrentMediaTime()
 
         var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
@@ -330,7 +348,7 @@ final class MouseEventHandler {
         }
 
         if !state.viewOffsetPixels.isGesture {
-            state.beginGesture(isTrackpad: isTrackpad)
+            state.beginGesture(isTrackpad: false)
         }
 
         guard let monitor = controller.monitorForInteraction() else { return }
@@ -374,16 +392,167 @@ final class MouseEventHandler {
         if let handle = targetWindowHandle {
             controller.focusWindow(handle)
         }
+    }
 
-        if gestureEnding, state.viewOffsetPixels.isGesture {
-            var endState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
-            endState.endGesture(
+    private func handleGestureEvent(_ event: NSEvent) {
+        guard let controller else { return }
+        guard controller.isEnabled, controller.internalSettings.scrollGestureEnabled else { return }
+        guard !isResizing, !isMoving else { return }
+        guard let engine = controller.internalNiriEngine, let wsId = controller.activeWorkspace()?.id else { return }
+
+        let requiredFingers = controller.internalSettings.gestureFingerCount.rawValue
+        let invertDirection = controller.internalSettings.gestureInvertDirection
+
+        let phase = event.phase
+        if phase == .ended || phase == .cancelled {
+            if gesturePhase == .committed {
+                guard let monitor = controller.monitorForInteraction() else {
+                    resetGestureState()
+                    return
+                }
+                let insetFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+                let columns = engine.columns(in: wsId)
+                let gap = CGFloat(controller.internalWorkspaceManager.gaps)
+
+                var endState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+                endState.endGesture(
+                    columns: columns,
+                    gap: gap,
+                    viewportWidth: insetFrame.width
+                )
+                controller.internalWorkspaceManager.updateNiriViewportState(endState, for: wsId)
+                controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
+            }
+            resetGestureState()
+            return
+        }
+
+        if phase == .began {
+            resetGestureState()
+        }
+
+        let touches = event.allTouches()
+        guard !touches.isEmpty else {
+            resetGestureState()
+            return
+        }
+
+        var sumX: CGFloat = 0.0
+        var sumY: CGFloat = 0.0
+        var touchCount = 0
+        var activeCount = 0
+        var tooManyTouches = false
+
+        for touch in touches {
+            let touchPhase = touch.phase
+            if touchPhase == .stationary {
+                continue
+            }
+
+            touchCount += 1
+            if touchCount > requiredFingers {
+                tooManyTouches = true
+                break
+            }
+
+            let isEnded = touchPhase == .ended || touchPhase == .cancelled
+            if !isEnded {
+                let pos = touch.normalizedPosition
+                sumX += pos.x
+                sumY += pos.y
+                activeCount += 1
+            }
+        }
+
+        if tooManyTouches || touchCount != requiredFingers || activeCount == 0 {
+            resetGestureState()
+            return
+        }
+
+        let avgX = sumX / CGFloat(activeCount)
+        let avgY = sumY / CGFloat(activeCount)
+
+        switch gesturePhase {
+        case .idle:
+            gestureStartX = avgX
+            gestureStartY = avgY
+            gestureLastDeltaX = 0.0
+            gesturePhase = .armed
+
+        case .armed, .committed:
+            let dx = avgX - gestureStartX
+            let currentDeltaX = dx
+            let deltaNorm = currentDeltaX - gestureLastDeltaX
+            gestureLastDeltaX = currentDeltaX
+
+            var deltaUnits = deltaNorm * CGFloat(controller.internalSettings.scrollSensitivity) * 500.0
+            if invertDirection {
+                deltaUnits = -deltaUnits
+            }
+
+            if abs(deltaUnits) < 0.5 {
+                gesturePhase = .committed
+                return
+            }
+
+            gesturePhase = .committed
+
+            var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+
+            if state.viewOffsetPixels.isAnimating {
+                state.cancelAnimation()
+            }
+
+            if !state.viewOffsetPixels.isGesture {
+                state.beginGesture(isTrackpad: true)
+            }
+
+            guard let monitor = controller.monitorForInteraction() else { return }
+            let insetFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+            let viewportWidth = insetFrame.width
+            let gap = CGFloat(controller.internalWorkspaceManager.gaps)
+            let columns = engine.columns(in: wsId)
+
+            let timestamp = CACurrentMediaTime()
+            var targetWindowHandle: WindowHandle?
+            if let steps = state.updateGesture(
+                deltaPixels: deltaUnits,
+                timestamp: timestamp,
                 columns: columns,
                 gap: gap,
                 viewportWidth: viewportWidth
-            )
-            controller.internalWorkspaceManager.updateNiriViewportState(endState, for: wsId)
-            controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
+            ) {
+                if let currentId = state.selectedNodeId,
+                   let currentNode = engine.findNode(by: currentId),
+                   let newNode = engine.moveSelectionByColumns(
+                       steps: steps,
+                       currentSelection: currentNode,
+                       in: wsId
+                   )
+                {
+                    state.selectedNodeId = newNode.id
+
+                    if let windowNode = newNode as? NiriWindow {
+                        controller.internalFocusedHandle = windowNode.handle
+                        engine.updateFocusTimestamp(for: windowNode.id)
+                        targetWindowHandle = windowNode.handle
+                    }
+                }
+            }
+
+            controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
+            controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
+
+            if let handle = targetWindowHandle {
+                controller.focusWindow(handle)
+            }
         }
+    }
+
+    private func resetGestureState() {
+        gesturePhase = .idle
+        gestureStartX = 0.0
+        gestureStartY = 0.0
+        gestureLastDeltaX = 0.0
     }
 }

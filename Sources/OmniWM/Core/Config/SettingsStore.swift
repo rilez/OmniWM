@@ -176,6 +176,14 @@ final class SettingsStore {
         didSet { defaults.set(scrollModifierKey.rawValue, forKey: Keys.scrollModifierKey) }
     }
 
+    var gestureFingerCount: GestureFingerCount {
+        didSet { defaults.set(gestureFingerCount.rawValue, forKey: Keys.gestureFingerCount) }
+    }
+
+    var gestureInvertDirection: Bool {
+        didSet { defaults.set(gestureInvertDirection, forKey: Keys.gestureInvertDirection) }
+    }
+
     var animationsEnabled: Bool {
         didSet { defaults.set(animationsEnabled, forKey: Keys.animationsEnabled) }
     }
@@ -233,11 +241,27 @@ final class SettingsStore {
     }
 
     var focusChangeEasingCurve: EasingCurve {
-        didSet { defaults.set(focusChangeEasingCurve.rawValue, forKey: Keys.focusChangeEasingCurve) }
+        didSet { saveEasingCurve(focusChangeEasingCurve, typeKey: Keys.focusChangeEasingCurve, prefix: "focusChange") }
     }
 
     var focusChangeEasingDuration: Double {
         didSet { defaults.set(focusChangeEasingDuration, forKey: Keys.focusChangeEasingDuration) }
+    }
+
+    var focusChangeBezierX1: Double {
+        didSet { defaults.set(focusChangeBezierX1, forKey: Keys.focusChangeBezierX1) }
+    }
+
+    var focusChangeBezierY1: Double {
+        didSet { defaults.set(focusChangeBezierY1, forKey: Keys.focusChangeBezierY1) }
+    }
+
+    var focusChangeBezierX2: Double {
+        didSet { defaults.set(focusChangeBezierX2, forKey: Keys.focusChangeBezierX2) }
+    }
+
+    var focusChangeBezierY2: Double {
+        didSet { defaults.set(focusChangeBezierY2, forKey: Keys.focusChangeBezierY2) }
     }
 
     var gestureAnimationType: AnimationType {
@@ -245,11 +269,27 @@ final class SettingsStore {
     }
 
     var gestureEasingCurve: EasingCurve {
-        didSet { defaults.set(gestureEasingCurve.rawValue, forKey: Keys.gestureEasingCurve) }
+        didSet { saveEasingCurve(gestureEasingCurve, typeKey: Keys.gestureEasingCurve, prefix: "gesture") }
     }
 
     var gestureEasingDuration: Double {
         didSet { defaults.set(gestureEasingDuration, forKey: Keys.gestureEasingDuration) }
+    }
+
+    var gestureBezierX1: Double {
+        didSet { defaults.set(gestureBezierX1, forKey: Keys.gestureBezierX1) }
+    }
+
+    var gestureBezierY1: Double {
+        didSet { defaults.set(gestureBezierY1, forKey: Keys.gestureBezierY1) }
+    }
+
+    var gestureBezierX2: Double {
+        didSet { defaults.set(gestureBezierX2, forKey: Keys.gestureBezierX2) }
+    }
+
+    var gestureBezierY2: Double {
+        didSet { defaults.set(gestureBezierY2, forKey: Keys.gestureBezierY2) }
     }
 
     var columnRevealAnimationType: AnimationType {
@@ -257,11 +297,35 @@ final class SettingsStore {
     }
 
     var columnRevealEasingCurve: EasingCurve {
-        didSet { defaults.set(columnRevealEasingCurve.rawValue, forKey: Keys.columnRevealEasingCurve) }
+        didSet { saveEasingCurve(columnRevealEasingCurve, typeKey: Keys.columnRevealEasingCurve, prefix: "columnReveal") }
     }
 
     var columnRevealEasingDuration: Double {
         didSet { defaults.set(columnRevealEasingDuration, forKey: Keys.columnRevealEasingDuration) }
+    }
+
+    var columnRevealBezierX1: Double {
+        didSet { defaults.set(columnRevealBezierX1, forKey: Keys.columnRevealBezierX1) }
+    }
+
+    var columnRevealBezierY1: Double {
+        didSet { defaults.set(columnRevealBezierY1, forKey: Keys.columnRevealBezierY1) }
+    }
+
+    var columnRevealBezierX2: Double {
+        didSet { defaults.set(columnRevealBezierX2, forKey: Keys.columnRevealBezierX2) }
+    }
+
+    var columnRevealBezierY2: Double {
+        didSet { defaults.set(columnRevealBezierY2, forKey: Keys.columnRevealBezierY2) }
+    }
+
+    var decelerationRate: Double {
+        didSet { defaults.set(decelerationRate, forKey: Keys.decelerationRate) }
+    }
+
+    var animationClockRate: Double {
+        didSet { defaults.set(animationClockRate, forKey: Keys.animationClockRate) }
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -321,6 +385,8 @@ final class SettingsStore {
         scrollSensitivity = defaults.object(forKey: Keys.scrollSensitivity) as? Double ?? 1.0
         scrollModifierKey = ScrollModifierKey(rawValue: defaults.string(forKey: Keys.scrollModifierKey) ?? "") ??
             .optionShift
+        gestureFingerCount = GestureFingerCount(rawValue: defaults.integer(forKey: Keys.gestureFingerCount)) ?? .three
+        gestureInvertDirection = defaults.object(forKey: Keys.gestureInvertDirection) as? Bool ?? true
 
         animationsEnabled = defaults.object(forKey: Keys.animationsEnabled) as? Bool ?? true
 
@@ -348,26 +414,111 @@ final class SettingsStore {
         focusChangeAnimationType = AnimationType(
             rawValue: defaults.string(forKey: Keys.focusChangeAnimationType) ?? ""
         ) ?? .spring
-        focusChangeEasingCurve = EasingCurve(
-            rawValue: defaults.string(forKey: Keys.focusChangeEasingCurve) ?? ""
-        ) ?? .easeOutCubic
+        let fcBezierX1 = defaults.object(forKey: Keys.focusChangeBezierX1) as? Double ?? 0.25
+        let fcBezierY1 = defaults.object(forKey: Keys.focusChangeBezierY1) as? Double ?? 0.1
+        let fcBezierX2 = defaults.object(forKey: Keys.focusChangeBezierX2) as? Double ?? 0.25
+        let fcBezierY2 = defaults.object(forKey: Keys.focusChangeBezierY2) as? Double ?? 1.0
+        focusChangeBezierX1 = fcBezierX1
+        focusChangeBezierY1 = fcBezierY1
+        focusChangeBezierX2 = fcBezierX2
+        focusChangeBezierY2 = fcBezierY2
+        focusChangeEasingCurve = Self.loadEasingCurve(
+            from: defaults,
+            typeKey: Keys.focusChangeEasingCurve,
+            x1: fcBezierX1,
+            y1: fcBezierY1,
+            x2: fcBezierX2,
+            y2: fcBezierY2
+        )
         focusChangeEasingDuration = defaults.object(forKey: Keys.focusChangeEasingDuration) as? Double ?? 0.3
 
         gestureAnimationType = AnimationType(
             rawValue: defaults.string(forKey: Keys.gestureAnimationType) ?? ""
         ) ?? .spring
-        gestureEasingCurve = EasingCurve(
-            rawValue: defaults.string(forKey: Keys.gestureEasingCurve) ?? ""
-        ) ?? .easeOutCubic
+        let gBezierX1 = defaults.object(forKey: Keys.gestureBezierX1) as? Double ?? 0.25
+        let gBezierY1 = defaults.object(forKey: Keys.gestureBezierY1) as? Double ?? 0.1
+        let gBezierX2 = defaults.object(forKey: Keys.gestureBezierX2) as? Double ?? 0.25
+        let gBezierY2 = defaults.object(forKey: Keys.gestureBezierY2) as? Double ?? 1.0
+        gestureBezierX1 = gBezierX1
+        gestureBezierY1 = gBezierY1
+        gestureBezierX2 = gBezierX2
+        gestureBezierY2 = gBezierY2
+        gestureEasingCurve = Self.loadEasingCurve(
+            from: defaults,
+            typeKey: Keys.gestureEasingCurve,
+            x1: gBezierX1,
+            y1: gBezierY1,
+            x2: gBezierX2,
+            y2: gBezierY2
+        )
         gestureEasingDuration = defaults.object(forKey: Keys.gestureEasingDuration) as? Double ?? 0.3
 
         columnRevealAnimationType = AnimationType(
             rawValue: defaults.string(forKey: Keys.columnRevealAnimationType) ?? ""
         ) ?? .spring
-        columnRevealEasingCurve = EasingCurve(
-            rawValue: defaults.string(forKey: Keys.columnRevealEasingCurve) ?? ""
-        ) ?? .easeOutCubic
+        let crBezierX1 = defaults.object(forKey: Keys.columnRevealBezierX1) as? Double ?? 0.25
+        let crBezierY1 = defaults.object(forKey: Keys.columnRevealBezierY1) as? Double ?? 0.1
+        let crBezierX2 = defaults.object(forKey: Keys.columnRevealBezierX2) as? Double ?? 0.25
+        let crBezierY2 = defaults.object(forKey: Keys.columnRevealBezierY2) as? Double ?? 1.0
+        columnRevealBezierX1 = crBezierX1
+        columnRevealBezierY1 = crBezierY1
+        columnRevealBezierX2 = crBezierX2
+        columnRevealBezierY2 = crBezierY2
+        columnRevealEasingCurve = Self.loadEasingCurve(
+            from: defaults,
+            typeKey: Keys.columnRevealEasingCurve,
+            x1: crBezierX1,
+            y1: crBezierY1,
+            x2: crBezierX2,
+            y2: crBezierY2
+        )
         columnRevealEasingDuration = defaults.object(forKey: Keys.columnRevealEasingDuration) as? Double ?? 0.3
+
+        decelerationRate = defaults.object(forKey: Keys.decelerationRate) as? Double ?? 0.997
+        animationClockRate = defaults.object(forKey: Keys.animationClockRate) as? Double ?? 1.0
+    }
+
+    private static func loadEasingCurve(
+        from defaults: UserDefaults,
+        typeKey: String,
+        x1: Double,
+        y1: Double,
+        x2: Double,
+        y2: Double
+    ) -> EasingCurve {
+        guard let typeString = defaults.string(forKey: typeKey) else {
+            return .easeOutCubic
+        }
+
+        switch typeString {
+        case "linear": return .linear
+        case "easeOutQuad": return .easeOutQuad
+        case "easeOutCubic": return .easeOutCubic
+        case "easeOutExpo": return .easeOutExpo
+        case "cubicBezier": return .cubicBezier(x1: x1, y1: y1, x2: x2, y2: y2)
+        case "easeInCubic", "easeInOutCubic", "easeInExpo", "easeInOutExpo":
+            return .easeOutCubic
+        default: return .easeOutCubic
+        }
+    }
+
+    private func saveEasingCurve(_ curve: EasingCurve, typeKey: String, prefix: String) {
+        switch curve {
+        case .linear:
+            defaults.set("linear", forKey: typeKey)
+        case .easeOutQuad:
+            defaults.set("easeOutQuad", forKey: typeKey)
+        case .easeOutCubic:
+            defaults.set("easeOutCubic", forKey: typeKey)
+        case .easeOutExpo:
+            defaults.set("easeOutExpo", forKey: typeKey)
+        case .cubicBezier(let x1, let y1, let x2, let y2):
+            defaults.set("cubicBezier", forKey: typeKey)
+            defaults.set(x1, forKey: "settings.\(prefix)BezierX1")
+            defaults.set(y1, forKey: "settings.\(prefix)BezierY1")
+            defaults.set(x2, forKey: "settings.\(prefix)BezierX2")
+            defaults.set(y2, forKey: "settings.\(prefix)BezierY2")
+        }
     }
 
     private static func loadBindings(from defaults: UserDefaults) -> [HotkeyBinding] {
@@ -695,6 +846,8 @@ private enum Keys {
     static let scrollGestureEnabled = "settings.scrollGestureEnabled"
     static let scrollSensitivity = "settings.scrollSensitivity"
     static let scrollModifierKey = "settings.scrollModifierKey"
+    static let gestureFingerCount = "settings.gestureFingerCount"
+    static let gestureInvertDirection = "settings.gestureInvertDirection"
 
     static let animationsEnabled = "settings.animationsEnabled"
     static let focusChangeSpringPreset = "settings.focusChangeSpringPreset"
@@ -713,12 +866,26 @@ private enum Keys {
     static let focusChangeAnimationType = "settings.focusChangeAnimationType"
     static let focusChangeEasingCurve = "settings.focusChangeEasingCurve"
     static let focusChangeEasingDuration = "settings.focusChangeEasingDuration"
+    static let focusChangeBezierX1 = "settings.focusChangeBezierX1"
+    static let focusChangeBezierY1 = "settings.focusChangeBezierY1"
+    static let focusChangeBezierX2 = "settings.focusChangeBezierX2"
+    static let focusChangeBezierY2 = "settings.focusChangeBezierY2"
     static let gestureAnimationType = "settings.gestureAnimationType"
     static let gestureEasingCurve = "settings.gestureEasingCurve"
     static let gestureEasingDuration = "settings.gestureEasingDuration"
+    static let gestureBezierX1 = "settings.gestureBezierX1"
+    static let gestureBezierY1 = "settings.gestureBezierY1"
+    static let gestureBezierX2 = "settings.gestureBezierX2"
+    static let gestureBezierY2 = "settings.gestureBezierY2"
     static let columnRevealAnimationType = "settings.columnRevealAnimationType"
     static let columnRevealEasingCurve = "settings.columnRevealEasingCurve"
     static let columnRevealEasingDuration = "settings.columnRevealEasingDuration"
+    static let columnRevealBezierX1 = "settings.columnRevealBezierX1"
+    static let columnRevealBezierY1 = "settings.columnRevealBezierY1"
+    static let columnRevealBezierX2 = "settings.columnRevealBezierX2"
+    static let columnRevealBezierY2 = "settings.columnRevealBezierY2"
+    static let decelerationRate = "settings.decelerationRate"
+    static let animationClockRate = "settings.animationClockRate"
 }
 
 enum ScrollModifierKey: String, CaseIterable, Codable {
@@ -729,6 +896,20 @@ enum ScrollModifierKey: String, CaseIterable, Codable {
         switch self {
         case .optionShift: "Option+Shift (⌥⇧)"
         case .controlShift: "Control+Shift (⌃⇧)"
+        }
+    }
+}
+
+enum GestureFingerCount: Int, CaseIterable, Codable {
+    case two = 2
+    case three = 3
+    case four = 4
+
+    var displayName: String {
+        switch self {
+        case .two: "2 Fingers"
+        case .three: "3 Fingers"
+        case .four: "4 Fingers"
         }
     }
 }
