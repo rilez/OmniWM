@@ -143,6 +143,8 @@ final class CommandHandler {
         isProcessingNavigation = true
         defer { isProcessingNavigation = false }
 
+        var animatingWorkspaceId: WorkspaceDescriptor.ID?
+
         controller.internalLayoutRefreshController?.runLightSession {
             guard let engine = controller.internalNiriEngine else { return }
             guard let wsId = controller.activeWorkspace()?.id else { return }
@@ -196,12 +198,23 @@ final class CommandHandler {
                 if let windowNode = newNode as? NiriWindow {
                     controller.focusWindow(windowNode.handle)
                 }
+
+                let updatedState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+                if updatedState.viewOffsetPixels.isAnimating {
+                    animatingWorkspaceId = wsId
+                }
             }
+        }
+
+        if let wsId = animatingWorkspaceId {
+            controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
         }
     }
 
     private func focusPreviousInNiri() {
         guard let controller else { return }
+
+        var animatingWorkspaceId: WorkspaceDescriptor.ID?
 
         controller.internalLayoutRefreshController?.runLightSession {
             guard let engine = controller.internalNiriEngine else { return }
@@ -234,6 +247,15 @@ final class CommandHandler {
 
             controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
             controller.focusWindow(previousWindow.handle)
+
+            let updatedState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+            if updatedState.viewOffsetPixels.isAnimating {
+                animatingWorkspaceId = wsId
+            }
+        }
+
+        if let wsId = animatingWorkspaceId {
+            controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
         }
     }
 
@@ -365,13 +387,24 @@ final class CommandHandler {
         if let windowNode = newNode as? NiriWindow {
             controller.internalFocusedHandle = windowNode.handle
             engine.updateFocusTimestamp(for: windowNode.id)
+        }
 
+        controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
+
+        if let windowNode = newNode as? NiriWindow {
             controller.focusWindow(windowNode.handle)
+        }
+
+        let updatedState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+        if updatedState.viewOffsetPixels.isAnimating {
+            controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
         }
     }
 
     private func moveWindowInNiri(direction: Direction) {
         guard let controller else { return }
+
+        var animatingWorkspaceId: WorkspaceDescriptor.ID?
 
         controller.internalLayoutRefreshController?.runLightSession {
             guard let engine = controller.internalNiriEngine else { return }
@@ -392,12 +425,23 @@ final class CommandHandler {
             if engine.moveWindow(windowNode, direction: direction, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps) {
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                 controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
+
+                let updatedState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+                if updatedState.viewOffsetPixels.isAnimating {
+                    animatingWorkspaceId = wsId
+                }
             }
+        }
+
+        if let wsId = animatingWorkspaceId {
+            controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
         }
     }
 
     private func swapWindowInNiri(direction: Direction) {
         guard let controller else { return }
+
+        var animatingWorkspaceId: WorkspaceDescriptor.ID?
 
         controller.internalLayoutRefreshController?.runLightSession {
             guard let engine = controller.internalNiriEngine else { return }
@@ -418,7 +462,16 @@ final class CommandHandler {
             if engine.swapWindow(windowNode, direction: direction, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps) {
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                 controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
+
+                let updatedState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+                if updatedState.viewOffsetPixels.isAnimating {
+                    animatingWorkspaceId = wsId
+                }
             }
+        }
+
+        if let wsId = animatingWorkspaceId {
+            controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
         }
     }
 
@@ -558,6 +611,8 @@ final class CommandHandler {
     private func moveColumnInNiri(direction: Direction) {
         guard let controller else { return }
 
+        var animatingWorkspaceId: WorkspaceDescriptor.ID?
+
         controller.internalLayoutRefreshController?.runLightSession {
             guard let engine = controller.internalNiriEngine else { return }
             guard let wsId = controller.activeWorkspace()?.id else { return }
@@ -578,12 +633,23 @@ final class CommandHandler {
             if engine.moveColumn(column, direction: direction, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps) {
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                 controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
+
+                let updatedState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+                if updatedState.viewOffsetPixels.isAnimating {
+                    animatingWorkspaceId = wsId
+                }
             }
+        }
+
+        if let wsId = animatingWorkspaceId {
+            controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
         }
     }
 
     private func consumeWindowInNiri(direction: Direction) {
         guard let controller else { return }
+
+        var animatingWorkspaceId: WorkspaceDescriptor.ID?
 
         controller.internalLayoutRefreshController?.runLightSession {
             guard let engine = controller.internalNiriEngine else { return }
@@ -604,12 +670,23 @@ final class CommandHandler {
             if engine.consumeWindow(into: windowNode, from: direction, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps) {
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                 controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
+
+                let updatedState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+                if updatedState.viewOffsetPixels.isAnimating {
+                    animatingWorkspaceId = wsId
+                }
             }
+        }
+
+        if let wsId = animatingWorkspaceId {
+            controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
         }
     }
 
     private func expelWindowInNiri(direction: Direction) {
         guard let controller else { return }
+
+        var animatingWorkspaceId: WorkspaceDescriptor.ID?
 
         controller.internalLayoutRefreshController?.runLightSession {
             guard let engine = controller.internalNiriEngine else { return }
@@ -630,7 +707,16 @@ final class CommandHandler {
             if engine.expelWindow(windowNode, to: direction, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps) {
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                 controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
+
+                let updatedState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+                if updatedState.viewOffsetPixels.isAnimating {
+                    animatingWorkspaceId = wsId
+                }
             }
+        }
+
+        if let wsId = animatingWorkspaceId {
+            controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
         }
     }
 

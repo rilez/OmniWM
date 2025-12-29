@@ -25,7 +25,7 @@ final class AXEventHandler {
         case let .focused(ref, pid, winId):
             handleFocused(ref: ref, pid: pid, winId: winId)
         case .changed:
-            controller?.internalLayoutRefreshController?.refreshWindowsAndLayout()
+            controller?.internalLayoutRefreshController?.scheduleRefreshSession(.axWindowChanged)
         }
     }
 
@@ -45,7 +45,7 @@ final class AXEventHandler {
         _ = controller.internalWorkspaceManager.addWindow(ref, pid: pid, windowId: winId, to: workspaceId)
         controller.updateWorkspaceBar()
 
-        controller.internalLayoutRefreshController?.refreshWindowsAndLayout()
+        controller.internalLayoutRefreshController?.scheduleRefreshSession(.axWindowCreated)
     }
 
     private func handleRemoved(pid: pid_t, winId: Int) {
@@ -113,7 +113,7 @@ final class AXEventHandler {
                         }
                         controller.internalActiveMonitorId = monitor.id
                         _ = controller.internalWorkspaceManager.setActiveWorkspace(ws.id, on: monitor.id)
-                        controller.internalLayoutRefreshController?.refreshWindowsAndLayout()
+                        controller.internalLayoutRefreshController?.scheduleRefreshSession(.axWindowFocused)
                     }
 
                     controller.internalFocusedHandle = entry.handle
@@ -202,7 +202,7 @@ final class AXEventHandler {
                 }
             }
         }
-        controller.internalLayoutRefreshController?.refreshWindowsAndLayout()
+        controller.internalLayoutRefreshController?.scheduleRefreshSession(.appHidden)
     }
 
     func handleAppUnhidden(pid: pid_t) {
@@ -218,7 +218,7 @@ final class AXEventHandler {
                 }
             }
         }
-        controller.internalLayoutRefreshController?.refreshWindowsAndLayout()
+        controller.internalLayoutRefreshController?.scheduleRefreshSession(.appUnhidden)
     }
 
     func focusWindow(_ handle: WindowHandle) {

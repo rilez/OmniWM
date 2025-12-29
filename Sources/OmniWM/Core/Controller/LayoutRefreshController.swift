@@ -71,16 +71,49 @@ final class LayoutRefreshController {
     }
 
     func refreshWindowsAndLayout() {
+        scheduleRefreshSession(.timerRefresh)
+    }
+
+    func scheduleRefreshSession(_ event: RefreshSessionEvent) {
         guard !isInLightSession else { return }
         activeRefreshTask?.cancel()
         activeRefreshTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                let debounce = event.debounceInterval
+                if debounce > 0 {
+                    try await Task.sleep(nanoseconds: debounce)
+                }
                 try Task.checkCancellation()
-                try await executeLayoutRefresh()
+                if event.requiresFullEnumeration {
+                    try await executeFullRefresh()
+                } else {
+                    executeIncrementalRefresh()
+                }
             } catch {
                 return
             }
+        }
+    }
+
+    private func executeIncrementalRefresh() {
+        guard let controller else { return }
+
+        if controller.internalLockScreenObserver.isFrontmostAppLockScreen() || controller.internalIsLockScreenActive {
+            return
+        }
+
+        var activeWorkspaceIds: Set<WorkspaceDescriptor.ID> = []
+        for monitor in controller.internalWorkspaceManager.monitors {
+            if let workspace = controller.internalWorkspaceManager.activeWorkspaceOrFirst(on: monitor.id) {
+                activeWorkspaceIds.insert(workspace.id)
+            }
+        }
+
+        layoutWithNiriEngine(activeWorkspaces: activeWorkspaceIds, useScrollAnimationPath: false)
+
+        if let focusedWorkspaceId = controller.activeWorkspace()?.id {
+            controller.ensureFocusedHandleValid(in: focusedWorkspaceId)
         }
     }
 
@@ -133,7 +166,7 @@ final class LayoutRefreshController {
         stopScrollAnimation()
     }
 
-    private func executeLayoutRefresh() async throws {
+    private func executeFullRefresh() async throws {
         guard let controller else { return }
         let interval = signpostInterval("executeLayoutRefresh")
         defer { interval.end() }

@@ -86,9 +86,9 @@ struct ViewportState {
     var viewOffsetToRestore: CGFloat?
 
     var animationsEnabled: Bool = true
-    var focusChangeSpringConfig: SpringConfig = .snappy
-    var gestureSpringConfig: SpringConfig = .snappy
-    var columnRevealSpringConfig: SpringConfig = .snappy
+    var focusChangeSpringConfig: SpringConfig = .appleNavigation
+    var gestureSpringConfig: SpringConfig = .appleNavigation
+    var columnRevealSpringConfig: SpringConfig = .appleNavigation
 
     var focusChangeAnimationType: AnimationType = .spring
     var focusChangeEasingCurve: EasingCurve = .easeOutCubic

@@ -18,6 +18,7 @@ struct SpringConfig {
     static let smooth = SpringConfig(duration: 0.50, bounce: 0.0)
     static let bouncy = SpringConfig(duration: 0.45, bounce: 0.25)
     static let responsive = SpringConfig(duration: 0.25, bounce: -0.1)
+    static let appleNavigation = SpringConfig(duration: 0.22, bounce: 0.0, epsilon: 0.3, velocityEpsilon: 25.0)
 
     var appleSpring: Spring {
         Spring(duration: duration, bounce: bounce)

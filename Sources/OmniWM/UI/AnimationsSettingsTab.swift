@@ -78,7 +78,7 @@ struct AnimationsSettingsTab: View {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 Text("Animation Speed")
-                                Slider(value: $settings.animationClockRate, in: 0.25 ... 2.0, step: 0.25)
+                                Slider(value: $settings.animationClockRate, in: 0.25 ... 10.0, step: 0.25)
                                 Text(String(format: "%.2fx", settings.animationClockRate))
                                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                                     .frame(width: 50, alignment: .trailing)
@@ -303,6 +303,7 @@ private struct SpringOptionsView: View {
     @ViewBuilder
     private func springPresetDescription(for preset: AnimationSpringPreset) -> some View {
         let (desc, details): (String, String) = switch preset {
+        case .appleNavigation: ("Ultra-fast Apple-style, tighter thresholds", "Duration: 0.22s · Bounce: 0.0 · ε: 0.3")
         case .snappy: ("Fast and precise, no overshoot", "Duration: 0.30s · Bounce: 0.0")
         case .smooth: ("Relaxed motion, no overshoot", "Duration: 0.50s · Bounce: 0.0")
         case .bouncy: ("Energetic with slight overshoot", "Duration: 0.45s · Bounce: 0.25")

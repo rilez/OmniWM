@@ -392,7 +392,7 @@ final class SettingsStore {
 
         focusChangeSpringPreset = AnimationSpringPreset(
             rawValue: defaults.string(forKey: Keys.focusChangeSpringPreset) ?? ""
-        ) ?? .snappy
+        ) ?? .appleNavigation
         focusChangeUseCustom = defaults.object(forKey: Keys.focusChangeUseCustom) as? Bool ?? false
         focusChangeCustomDuration = defaults.object(forKey: Keys.focusChangeCustomDuration) as? Double
             ?? Self.migrateToDuration(stiffness: defaults.object(forKey: Keys.focusChangeCustomStiffness) as? Double ?? 800)
@@ -401,7 +401,7 @@ final class SettingsStore {
 
         gestureSpringPreset = AnimationSpringPreset(
             rawValue: defaults.string(forKey: Keys.gestureSpringPreset) ?? ""
-        ) ?? .snappy
+        ) ?? .appleNavigation
         gestureUseCustom = defaults.object(forKey: Keys.gestureUseCustom) as? Bool ?? false
         gestureCustomDuration = defaults.object(forKey: Keys.gestureCustomDuration) as? Double
             ?? Self.migrateToDuration(stiffness: defaults.object(forKey: Keys.gestureCustomStiffness) as? Double ?? 800)
@@ -410,7 +410,7 @@ final class SettingsStore {
 
         columnRevealSpringPreset = AnimationSpringPreset(
             rawValue: defaults.string(forKey: Keys.columnRevealSpringPreset) ?? ""
-        ) ?? .snappy
+        ) ?? .appleNavigation
         columnRevealUseCustom = defaults.object(forKey: Keys.columnRevealUseCustom) as? Bool ?? false
         columnRevealCustomDuration = defaults.object(forKey: Keys.columnRevealCustomDuration) as? Double
             ?? Self.migrateToDuration(stiffness: defaults.object(forKey: Keys.columnRevealCustomStiffness) as? Double ?? 800)
@@ -941,6 +941,7 @@ enum GestureFingerCount: Int, CaseIterable, Codable {
 }
 
 enum AnimationSpringPreset: String, CaseIterable, Codable {
+    case appleNavigation
     case snappy
     case smooth
     case bouncy
@@ -948,6 +949,7 @@ enum AnimationSpringPreset: String, CaseIterable, Codable {
 
     var displayName: String {
         switch self {
+        case .appleNavigation: "Apple Navigation"
         case .snappy: "Snappy"
         case .smooth: "Smooth"
         case .bouncy: "Bouncy"
@@ -957,6 +959,7 @@ enum AnimationSpringPreset: String, CaseIterable, Codable {
 
     var config: SpringConfig {
         switch self {
+        case .appleNavigation: .appleNavigation
         case .snappy: .snappy
         case .smooth: .smooth
         case .bouncy: .bouncy
