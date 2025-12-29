@@ -196,12 +196,12 @@ final class SettingsStore {
         didSet { defaults.set(focusChangeUseCustom, forKey: Keys.focusChangeUseCustom) }
     }
 
-    var focusChangeCustomStiffness: Double {
-        didSet { defaults.set(focusChangeCustomStiffness, forKey: Keys.focusChangeCustomStiffness) }
+    var focusChangeCustomDuration: Double {
+        didSet { defaults.set(focusChangeCustomDuration, forKey: Keys.focusChangeCustomDuration) }
     }
 
-    var focusChangeCustomDamping: Double {
-        didSet { defaults.set(focusChangeCustomDamping, forKey: Keys.focusChangeCustomDamping) }
+    var focusChangeCustomBounce: Double {
+        didSet { defaults.set(focusChangeCustomBounce, forKey: Keys.focusChangeCustomBounce) }
     }
 
     var gestureSpringPreset: AnimationSpringPreset {
@@ -212,12 +212,12 @@ final class SettingsStore {
         didSet { defaults.set(gestureUseCustom, forKey: Keys.gestureUseCustom) }
     }
 
-    var gestureCustomStiffness: Double {
-        didSet { defaults.set(gestureCustomStiffness, forKey: Keys.gestureCustomStiffness) }
+    var gestureCustomDuration: Double {
+        didSet { defaults.set(gestureCustomDuration, forKey: Keys.gestureCustomDuration) }
     }
 
-    var gestureCustomDamping: Double {
-        didSet { defaults.set(gestureCustomDamping, forKey: Keys.gestureCustomDamping) }
+    var gestureCustomBounce: Double {
+        didSet { defaults.set(gestureCustomBounce, forKey: Keys.gestureCustomBounce) }
     }
 
     var columnRevealSpringPreset: AnimationSpringPreset {
@@ -228,12 +228,12 @@ final class SettingsStore {
         didSet { defaults.set(columnRevealUseCustom, forKey: Keys.columnRevealUseCustom) }
     }
 
-    var columnRevealCustomStiffness: Double {
-        didSet { defaults.set(columnRevealCustomStiffness, forKey: Keys.columnRevealCustomStiffness) }
+    var columnRevealCustomDuration: Double {
+        didSet { defaults.set(columnRevealCustomDuration, forKey: Keys.columnRevealCustomDuration) }
     }
 
-    var columnRevealCustomDamping: Double {
-        didSet { defaults.set(columnRevealCustomDamping, forKey: Keys.columnRevealCustomDamping) }
+    var columnRevealCustomBounce: Double {
+        didSet { defaults.set(columnRevealCustomBounce, forKey: Keys.columnRevealCustomBounce) }
     }
 
     var focusChangeAnimationType: AnimationType {
@@ -394,22 +394,28 @@ final class SettingsStore {
             rawValue: defaults.string(forKey: Keys.focusChangeSpringPreset) ?? ""
         ) ?? .snappy
         focusChangeUseCustom = defaults.object(forKey: Keys.focusChangeUseCustom) as? Bool ?? false
-        focusChangeCustomStiffness = defaults.object(forKey: Keys.focusChangeCustomStiffness) as? Double ?? 800
-        focusChangeCustomDamping = defaults.object(forKey: Keys.focusChangeCustomDamping) as? Double ?? 1.0
+        focusChangeCustomDuration = defaults.object(forKey: Keys.focusChangeCustomDuration) as? Double
+            ?? Self.migrateToDuration(stiffness: defaults.object(forKey: Keys.focusChangeCustomStiffness) as? Double ?? 800)
+        focusChangeCustomBounce = defaults.object(forKey: Keys.focusChangeCustomBounce) as? Double
+            ?? Self.migrateToBounce(dampingRatio: defaults.object(forKey: Keys.focusChangeCustomDamping) as? Double ?? 1.0)
 
         gestureSpringPreset = AnimationSpringPreset(
             rawValue: defaults.string(forKey: Keys.gestureSpringPreset) ?? ""
         ) ?? .snappy
         gestureUseCustom = defaults.object(forKey: Keys.gestureUseCustom) as? Bool ?? false
-        gestureCustomStiffness = defaults.object(forKey: Keys.gestureCustomStiffness) as? Double ?? 800
-        gestureCustomDamping = defaults.object(forKey: Keys.gestureCustomDamping) as? Double ?? 1.0
+        gestureCustomDuration = defaults.object(forKey: Keys.gestureCustomDuration) as? Double
+            ?? Self.migrateToDuration(stiffness: defaults.object(forKey: Keys.gestureCustomStiffness) as? Double ?? 800)
+        gestureCustomBounce = defaults.object(forKey: Keys.gestureCustomBounce) as? Double
+            ?? Self.migrateToBounce(dampingRatio: defaults.object(forKey: Keys.gestureCustomDamping) as? Double ?? 1.0)
 
         columnRevealSpringPreset = AnimationSpringPreset(
             rawValue: defaults.string(forKey: Keys.columnRevealSpringPreset) ?? ""
         ) ?? .snappy
         columnRevealUseCustom = defaults.object(forKey: Keys.columnRevealUseCustom) as? Bool ?? false
-        columnRevealCustomStiffness = defaults.object(forKey: Keys.columnRevealCustomStiffness) as? Double ?? 800
-        columnRevealCustomDamping = defaults.object(forKey: Keys.columnRevealCustomDamping) as? Double ?? 1.0
+        columnRevealCustomDuration = defaults.object(forKey: Keys.columnRevealCustomDuration) as? Double
+            ?? Self.migrateToDuration(stiffness: defaults.object(forKey: Keys.columnRevealCustomStiffness) as? Double ?? 800)
+        columnRevealCustomBounce = defaults.object(forKey: Keys.columnRevealCustomBounce) as? Double
+            ?? Self.migrateToBounce(dampingRatio: defaults.object(forKey: Keys.columnRevealCustomDamping) as? Double ?? 1.0)
 
         focusChangeAnimationType = AnimationType(
             rawValue: defaults.string(forKey: Keys.focusChangeAnimationType) ?? ""
@@ -518,6 +524,20 @@ final class SettingsStore {
             defaults.set(y1, forKey: "settings.\(prefix)BezierY1")
             defaults.set(x2, forKey: "settings.\(prefix)BezierX2")
             defaults.set(y2, forKey: "settings.\(prefix)BezierY2")
+        }
+    }
+
+    private static func migrateToDuration(stiffness: Double) -> Double {
+        let omega = sqrt(stiffness)
+        let period = 2.0 * .pi / omega
+        return min(max(period, 0.15), 1.0)
+    }
+
+    private static func migrateToBounce(dampingRatio: Double) -> Double {
+        if dampingRatio >= 1.0 {
+            return -(dampingRatio - 1.0).clamped(to: 0 ... 0.5)
+        } else {
+            return (1.0 - dampingRatio).clamped(to: 0 ... 0.5)
         }
     }
 
@@ -852,14 +872,20 @@ private enum Keys {
     static let animationsEnabled = "settings.animationsEnabled"
     static let focusChangeSpringPreset = "settings.focusChangeSpringPreset"
     static let focusChangeUseCustom = "settings.focusChangeUseCustom"
+    static let focusChangeCustomDuration = "settings.focusChangeCustomDuration"
+    static let focusChangeCustomBounce = "settings.focusChangeCustomBounce"
     static let focusChangeCustomStiffness = "settings.focusChangeCustomStiffness"
     static let focusChangeCustomDamping = "settings.focusChangeCustomDamping"
     static let gestureSpringPreset = "settings.gestureSpringPreset"
     static let gestureUseCustom = "settings.gestureUseCustom"
+    static let gestureCustomDuration = "settings.gestureCustomDuration"
+    static let gestureCustomBounce = "settings.gestureCustomBounce"
     static let gestureCustomStiffness = "settings.gestureCustomStiffness"
     static let gestureCustomDamping = "settings.gestureCustomDamping"
     static let columnRevealSpringPreset = "settings.columnRevealSpringPreset"
     static let columnRevealUseCustom = "settings.columnRevealUseCustom"
+    static let columnRevealCustomDuration = "settings.columnRevealCustomDuration"
+    static let columnRevealCustomBounce = "settings.columnRevealCustomBounce"
     static let columnRevealCustomStiffness = "settings.columnRevealCustomStiffness"
     static let columnRevealCustomDamping = "settings.columnRevealCustomDamping"
 
@@ -918,12 +944,14 @@ enum AnimationSpringPreset: String, CaseIterable, Codable {
     case snappy
     case smooth
     case bouncy
+    case responsive
 
     var displayName: String {
         switch self {
         case .snappy: "Snappy"
         case .smooth: "Smooth"
         case .bouncy: "Bouncy"
+        case .responsive: "Responsive"
         }
     }
 
@@ -932,6 +960,7 @@ enum AnimationSpringPreset: String, CaseIterable, Codable {
         case .snappy: .snappy
         case .smooth: .smooth
         case .bouncy: .bouncy
+        case .responsive: .responsive
         }
     }
 }

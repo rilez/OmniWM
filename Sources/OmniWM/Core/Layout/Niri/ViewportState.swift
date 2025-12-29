@@ -57,6 +57,21 @@ enum ViewOffset {
         if case let .gesture(g) = self { return g }
         return nil
     }
+
+    func currentVelocity(at time: TimeInterval = CACurrentMediaTime()) -> Double {
+        switch self {
+        case .static:
+            return 0
+        case .gesture(let g):
+            return g.tracker.velocity()
+        case .animating:
+            return 0
+        case .decelerating(let anim):
+            return anim.velocityAt(time)
+        case .spring(let anim):
+            return anim.velocity(at: time)
+        }
+    }
 }
 
 struct ViewportState {
@@ -139,6 +154,7 @@ struct ViewportState {
         let offsetDelta = oldActiveColX - newActiveColX
         let currentOffset = viewOffsetPixels.current()
         let newOffset = currentOffset + offsetDelta
+        let currentVelocity = viewOffsetPixels.currentVelocity()
 
         activeColumnIndex = clampedIndex
 
@@ -156,7 +172,7 @@ struct ViewportState {
                 let animation = SpringAnimation(
                     from: newOffset,
                     to: targetOffset,
-                    initialVelocity: 0,
+                    initialVelocity: currentVelocity,
                     startTime: now,
                     config: focusChangeSpringConfig,
                     clock: animationClock
@@ -456,12 +472,13 @@ struct ViewportState {
 
         if animate && animationsEnabled {
             let now = animationClock?.now() ?? CACurrentMediaTime()
+            let currentVelocity = viewOffsetPixels.currentVelocity()
             switch columnRevealAnimationType {
             case .spring:
                 let animation = SpringAnimation(
                     from: Double(currentOffset),
                     to: Double(targetOffset),
-                    initialVelocity: 0,
+                    initialVelocity: currentVelocity,
                     startTime: now,
                     config: columnRevealSpringConfig,
                     clock: animationClock

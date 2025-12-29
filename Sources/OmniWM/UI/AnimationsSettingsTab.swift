@@ -29,8 +29,8 @@ struct AnimationsSettingsTab: View {
                         animationType: $settings.focusChangeAnimationType,
                         springPreset: $settings.focusChangeSpringPreset,
                         springUseCustom: $settings.focusChangeUseCustom,
-                        springStiffness: $settings.focusChangeCustomStiffness,
-                        springDamping: $settings.focusChangeCustomDamping,
+                        springDuration: $settings.focusChangeCustomDuration,
+                        springBounce: $settings.focusChangeCustomBounce,
                         easingCurve: $settings.focusChangeEasingCurve,
                         easingDuration: $settings.focusChangeEasingDuration,
                         bezierX1: $settings.focusChangeBezierX1,
@@ -46,8 +46,8 @@ struct AnimationsSettingsTab: View {
                         animationType: $settings.gestureAnimationType,
                         springPreset: $settings.gestureSpringPreset,
                         springUseCustom: $settings.gestureUseCustom,
-                        springStiffness: $settings.gestureCustomStiffness,
-                        springDamping: $settings.gestureCustomDamping,
+                        springDuration: $settings.gestureCustomDuration,
+                        springBounce: $settings.gestureCustomBounce,
                         easingCurve: $settings.gestureEasingCurve,
                         easingDuration: $settings.gestureEasingDuration,
                         bezierX1: $settings.gestureBezierX1,
@@ -63,8 +63,8 @@ struct AnimationsSettingsTab: View {
                         animationType: $settings.columnRevealAnimationType,
                         springPreset: $settings.columnRevealSpringPreset,
                         springUseCustom: $settings.columnRevealUseCustom,
-                        springStiffness: $settings.columnRevealCustomStiffness,
-                        springDamping: $settings.columnRevealCustomDamping,
+                        springDuration: $settings.columnRevealCustomDuration,
+                        springBounce: $settings.columnRevealCustomBounce,
                         easingCurve: $settings.columnRevealEasingCurve,
                         easingDuration: $settings.columnRevealEasingDuration,
                         bezierX1: $settings.columnRevealBezierX1,
@@ -113,7 +113,7 @@ struct AnimationsSettingsTab: View {
 
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Spring: Physics-based animations with natural, velocity-aware motion. Higher stiffness = faster. Lower damping = more bounce.")
+                        Text("Spring: Physics-based animations with natural, velocity-aware motion. Duration controls speed. Bounce controls overshoot (0 = none, positive = bouncy).")
                             .font(.footnote)
                             .foregroundColor(.secondary)
                         Text("Easing: Time-based animations with predictable duration. Choose curve shape to control acceleration.")
@@ -130,7 +130,7 @@ struct AnimationsSettingsTab: View {
 
     private func updateFocusChangeConfig() {
         let springConfig = settings.focusChangeUseCustom
-            ? SpringConfig(stiffness: settings.focusChangeCustomStiffness, dampingRatio: settings.focusChangeCustomDamping)
+            ? SpringConfig(duration: settings.focusChangeCustomDuration, bounce: settings.focusChangeCustomBounce)
             : settings.focusChangeSpringPreset.config
         controller.updateNiriConfig(
             focusChangeSpringConfig: springConfig,
@@ -142,7 +142,7 @@ struct AnimationsSettingsTab: View {
 
     private func updateGestureConfig() {
         let springConfig = settings.gestureUseCustom
-            ? SpringConfig(stiffness: settings.gestureCustomStiffness, dampingRatio: settings.gestureCustomDamping)
+            ? SpringConfig(duration: settings.gestureCustomDuration, bounce: settings.gestureCustomBounce)
             : settings.gestureSpringPreset.config
         controller.updateNiriConfig(
             gestureSpringConfig: springConfig,
@@ -154,7 +154,7 @@ struct AnimationsSettingsTab: View {
 
     private func updateColumnRevealConfig() {
         let springConfig = settings.columnRevealUseCustom
-            ? SpringConfig(stiffness: settings.columnRevealCustomStiffness, dampingRatio: settings.columnRevealCustomDamping)
+            ? SpringConfig(duration: settings.columnRevealCustomDuration, bounce: settings.columnRevealCustomBounce)
             : settings.columnRevealSpringPreset.config
         controller.updateNiriConfig(
             columnRevealSpringConfig: springConfig,
@@ -181,8 +181,8 @@ private struct AnimationContextSection: View {
     @Binding var animationType: AnimationType
     @Binding var springPreset: AnimationSpringPreset
     @Binding var springUseCustom: Bool
-    @Binding var springStiffness: Double
-    @Binding var springDamping: Double
+    @Binding var springDuration: Double
+    @Binding var springBounce: Double
     @Binding var easingCurve: EasingCurve
     @Binding var easingDuration: Double
     @Binding var bezierX1: Double
@@ -211,8 +211,8 @@ private struct AnimationContextSection: View {
                     SpringOptionsView(
                         preset: $springPreset,
                         useCustom: $springUseCustom,
-                        stiffness: $springStiffness,
-                        damping: $springDamping,
+                        duration: $springDuration,
+                        bounce: $springBounce,
                         onUpdate: onUpdate
                     )
                 case .easing:
@@ -236,8 +236,8 @@ private struct AnimationContextSection: View {
 private struct SpringOptionsView: View {
     @Binding var preset: AnimationSpringPreset
     @Binding var useCustom: Bool
-    @Binding var stiffness: Double
-    @Binding var damping: Double
+    @Binding var duration: Double
+    @Binding var bounce: Double
     let onUpdate: () -> Void
 
     var body: some View {
@@ -248,26 +248,24 @@ private struct SpringOptionsView: View {
             if useCustom {
                 VStack(spacing: 8) {
                     HStack {
-                        Text("Stiffness")
-                        Slider(value: $stiffness, in: 100 ... 2000, step: 50)
-                        Text("\(Int(stiffness))")
+                        Text("Duration")
+                        Slider(value: $duration, in: 0.15 ... 1.0, step: 0.05)
+                        Text(String(format: "%.2fs", duration))
                             .font(.system(size: 12, weight: .medium, design: .monospaced))
                             .frame(width: 50, alignment: .trailing)
                     }
-                    .onChange(of: stiffness) { _, _ in onUpdate() }
+                    .onChange(of: duration) { _, _ in onUpdate() }
 
                     HStack {
-                        Text("Damping")
-                        Slider(value: $damping, in: 0.3 ... 1.5, step: 0.05)
-                        Text(String(format: "%.2f", damping))
+                        Text("Bounce")
+                        Slider(value: $bounce, in: -0.5 ... 0.5, step: 0.05)
+                        Text(String(format: "%.2f", bounce))
                             .font(.system(size: 12, weight: .medium, design: .monospaced))
                             .frame(width: 50, alignment: .trailing)
                     }
-                    .onChange(of: damping) { _, _ in onUpdate() }
+                    .onChange(of: bounce) { _, _ in onUpdate() }
 
-                    Text(damping < 1.0 ? "Bouncy" : (damping == 1.0 ? "Critically damped" : "Overdamped"))
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                    bounceDescription(for: bounce)
                 }
             } else {
                 Picker("Preset", selection: $preset) {
@@ -284,11 +282,31 @@ private struct SpringOptionsView: View {
     }
 
     @ViewBuilder
+    private func bounceDescription(for bounce: Double) -> some View {
+        let desc: String = if bounce > 0.15 {
+            "Very bouncy - visible overshoot"
+        } else if bounce > 0 {
+            "Slight bounce - subtle overshoot"
+        } else if bounce == 0 {
+            "Critically damped - no overshoot"
+        } else if bounce > -0.25 {
+            "Slightly overdamped - gentle approach"
+        } else {
+            "Very overdamped - slow, flat approach"
+        }
+
+        Text(desc)
+            .font(.caption2)
+            .foregroundColor(.secondary)
+    }
+
+    @ViewBuilder
     private func springPresetDescription(for preset: AnimationSpringPreset) -> some View {
         let (desc, details): (String, String) = switch preset {
-        case .snappy: ("Fast and responsive, no bounce", "Stiffness: 800 · Damping: 1.0")
-        case .smooth: ("Slower, more relaxed motion", "Stiffness: 400 · Damping: 1.0")
-        case .bouncy: ("Slight overshoot before settling", "Stiffness: 600 · Damping: 0.7")
+        case .snappy: ("Fast and precise, no overshoot", "Duration: 0.30s · Bounce: 0.0")
+        case .smooth: ("Relaxed motion, no overshoot", "Duration: 0.50s · Bounce: 0.0")
+        case .bouncy: ("Energetic with slight overshoot", "Duration: 0.45s · Bounce: 0.25")
+        case .responsive: ("Ultra-fast, slightly flat", "Duration: 0.25s · Bounce: -0.1")
         }
 
         VStack(alignment: .leading, spacing: 2) {

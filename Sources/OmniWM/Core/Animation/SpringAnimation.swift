@@ -2,24 +2,25 @@ import Foundation
 import SwiftUI
 
 struct SpringConfig {
-    var stiffness: Double
-    var dampingRatio: Double
+    var duration: Double
+    var bounce: Double
     var epsilon: Double
+    var velocityEpsilon: Double
 
-    init(stiffness: Double = 800, dampingRatio: Double = 1.0, epsilon: Double = 0.0001) {
-        self.stiffness = max(0, stiffness)
-        self.dampingRatio = max(0, dampingRatio)
+    init(duration: Double = 0.35, bounce: Double = 0.0, epsilon: Double = 0.5, velocityEpsilon: Double = 50.0) {
+        self.duration = max(0.1, duration)
+        self.bounce = min(max(bounce, -1.0), 1.0)
         self.epsilon = max(0, epsilon)
+        self.velocityEpsilon = max(0, velocityEpsilon)
     }
 
-    static let snappy = SpringConfig(stiffness: 800, dampingRatio: 1.0)
-    static let smooth = SpringConfig(stiffness: 400, dampingRatio: 1.0)
-    static let bouncy = SpringConfig(stiffness: 600, dampingRatio: 0.7)
+    static let snappy = SpringConfig(duration: 0.30, bounce: 0.0)
+    static let smooth = SpringConfig(duration: 0.50, bounce: 0.0)
+    static let bouncy = SpringConfig(duration: 0.45, bounce: 0.25)
+    static let responsive = SpringConfig(duration: 0.25, bounce: -0.1)
 
     var appleSpring: Spring {
-        let mass = 1.0
-        let absoluteDamping = 2.0 * dampingRatio * sqrt(stiffness * mass)
-        return Spring(mass: mass, stiffness: stiffness, damping: absoluteDamping)
+        Spring(duration: duration, bounce: bounce)
     }
 }
 
@@ -78,7 +79,12 @@ final class SpringAnimation {
         }
 
         let position = value(at: time)
-        return abs(position - target) < config.epsilon
+        let currentVelocity = velocity(at: time)
+
+        let positionSettled = abs(position - target) < config.epsilon
+        let velocitySettled = abs(currentVelocity) < config.velocityEpsilon
+
+        return positionSettled && velocitySettled
     }
 
     func duration() -> TimeInterval {

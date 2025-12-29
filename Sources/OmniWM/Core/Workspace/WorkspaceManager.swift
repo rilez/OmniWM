@@ -120,7 +120,7 @@ final class WorkspaceManager {
         currentAnimationSettings.animationsEnabled = settings.animationsEnabled
 
         let focusSpringConfig = settings.focusChangeUseCustom
-            ? SpringConfig(stiffness: settings.focusChangeCustomStiffness, dampingRatio: settings.focusChangeCustomDamping)
+            ? SpringConfig(duration: settings.focusChangeCustomDuration, bounce: settings.focusChangeCustomBounce)
             : settings.focusChangeSpringPreset.config
         currentAnimationSettings.focusChangeSpringConfig = focusSpringConfig
         currentAnimationSettings.focusChangeAnimationType = settings.focusChangeAnimationType
@@ -128,7 +128,7 @@ final class WorkspaceManager {
         currentAnimationSettings.focusChangeEasingDuration = settings.focusChangeEasingDuration
 
         let gestureSpringConfig = settings.gestureUseCustom
-            ? SpringConfig(stiffness: settings.gestureCustomStiffness, dampingRatio: settings.gestureCustomDamping)
+            ? SpringConfig(duration: settings.gestureCustomDuration, bounce: settings.gestureCustomBounce)
             : settings.gestureSpringPreset.config
         currentAnimationSettings.gestureSpringConfig = gestureSpringConfig
         currentAnimationSettings.gestureAnimationType = settings.gestureAnimationType
@@ -136,7 +136,7 @@ final class WorkspaceManager {
         currentAnimationSettings.gestureEasingDuration = settings.gestureEasingDuration
 
         let columnRevealSpringConfig = settings.columnRevealUseCustom
-            ? SpringConfig(stiffness: settings.columnRevealCustomStiffness, dampingRatio: settings.columnRevealCustomDamping)
+            ? SpringConfig(duration: settings.columnRevealCustomDuration, bounce: settings.columnRevealCustomBounce)
             : settings.columnRevealSpringPreset.config
         currentAnimationSettings.columnRevealSpringConfig = columnRevealSpringConfig
         currentAnimationSettings.columnRevealAnimationType = settings.columnRevealAnimationType
