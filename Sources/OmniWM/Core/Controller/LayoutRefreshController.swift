@@ -194,6 +194,18 @@ final class LayoutRefreshController {
         activeRefreshTask?.cancel()
         activeRefreshTask = nil
         isInLightSession = true
+
+        if let controller = controller, let engine = controller.internalNiriEngine {
+            let focused = controller.internalFocusedHandle
+            for monitor in controller.internalWorkspaceManager.monitors {
+                if let ws = controller.internalWorkspaceManager.activeWorkspaceOrFirst(on: monitor.id) {
+                    let handles = controller.internalWorkspaceManager.entries(in: ws.id).map(\.handle)
+                    let selection = controller.internalWorkspaceManager.niriViewportState(for: ws.id).selectedNodeId
+                    _ = engine.syncWindows(handles, in: ws.id, selectedNodeId: selection, focusedHandle: focused)
+                }
+            }
+        }
+
         body()
         isInLightSession = false
         refreshWindowsAndLayout()
@@ -328,7 +340,7 @@ final class LayoutRefreshController {
 
             let windowHandles = workspaceManager.entries(in: wsId).map(\.handle)
             let currentSelection = workspaceManager.niriViewportState(for: wsId).selectedNodeId
-            _ = engine.syncWindows(windowHandles, in: wsId, selectedNodeId: currentSelection)
+            _ = engine.syncWindows(windowHandles, in: wsId, selectedNodeId: currentSelection, focusedHandle: controller.internalFocusedHandle)
 
             for entry in workspaceManager.entries(in: wsId) {
                 let currentSize = (try? AXWindowService.frame(entry.axRef))?.size

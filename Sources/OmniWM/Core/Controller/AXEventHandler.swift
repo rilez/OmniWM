@@ -45,6 +45,12 @@ final class AXEventHandler {
         _ = controller.internalWorkspaceManager.addWindow(ref, pid: pid, windowId: winId, to: workspaceId)
         controller.updateWorkspaceBar()
 
+        Task { @MainActor in
+            if let app = NSRunningApplication(processIdentifier: pid) {
+                _ = await controller.internalAXManager.windowsForApp(app)
+            }
+        }
+
         controller.internalLayoutRefreshController?.scheduleRefreshSession(.axWindowCreated)
     }
 

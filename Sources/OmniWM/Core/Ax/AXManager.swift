@@ -7,12 +7,15 @@ private let perAppTimeout: TimeInterval = 0.5
 @MainActor
 final class AXManager {
     private var appTerminationObserver: NSObjectProtocol?
+    private var appLaunchObserver: NSObjectProtocol?
     var onWindowEvent: ((AXEvent) -> Void)?
+    var onAppLaunched: ((NSRunningApplication) -> Void)?
     private let pollIntervalNanos: UInt64 = 250_000_000
     private let pollTimeout: TimeInterval = 30
 
     init() {
         setupTerminationObserver()
+        setupLaunchObserver()
 
         AppAXContext.onAXEvent = { [weak self] event in
             self?.onWindowEvent?(event)
@@ -36,10 +39,28 @@ final class AXManager {
         }
     }
 
+    private func setupLaunchObserver() {
+        appLaunchObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didLaunchApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            else { return }
+            Task { @MainActor in
+                self?.onAppLaunched?(app)
+            }
+        }
+    }
+
     func cleanup() {
         if let observer = appTerminationObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             appTerminationObserver = nil
+        }
+        if let observer = appLaunchObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            appLaunchObserver = nil
         }
 
         Task { @MainActor in
@@ -47,6 +68,20 @@ final class AXManager {
                 await context.destroy()
             }
         }
+    }
+
+    func windowsForApp(_ app: NSRunningApplication) async -> [(AXWindowRef, pid_t, Int)] {
+        guard shouldTrack(app) else { return [] }
+        do {
+            guard let context = try await AppAXContext.getOrCreate(app) else { return [] }
+            let appWindows = try await withTimeoutOrNil(seconds: perAppTimeout) {
+                try await context.getWindowsAsync()
+            }
+            if let windows = appWindows {
+                return windows.map { ($0.0, app.processIdentifier, $0.1) }
+            }
+        } catch {}
+        return []
     }
 
     func ensurePermission() async -> Bool {

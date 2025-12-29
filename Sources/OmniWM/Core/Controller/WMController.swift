@@ -450,6 +450,13 @@ final class WMController {
                 self?.axEventHandler?.handleEvent(event)
             }
         }
+        axManager.onAppLaunched = { [weak self] app in
+            guard let self else { return }
+            Task { @MainActor in
+                _ = await self.axManager.windowsForApp(app)
+                self.layoutRefreshController?.scheduleRefreshSession(.axWindowCreated)
+            }
+        }
         setupWorkspaceObservation()
         mouseEventHandler?.setup()
         setupDisplayObserver()

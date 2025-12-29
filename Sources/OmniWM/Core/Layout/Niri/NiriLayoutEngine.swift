@@ -336,7 +336,8 @@ final class NiriLayoutEngine {
     func addWindow(
         handle: WindowHandle,
         to workspaceId: WorkspaceDescriptor.ID,
-        afterSelection selectedNodeId: NodeId?
+        afterSelection selectedNodeId: NodeId?,
+        focusedHandle: WindowHandle? = nil
     ) -> NiriWindow {
         let root = ensureRoot(for: workspaceId)
 
@@ -351,6 +352,11 @@ final class NiriLayoutEngine {
         let referenceColumn: NiriContainer? = if let selId = selectedNodeId,
                                                  let selNode = root.findNode(by: selId),
                                                  let col = column(of: selNode)
+        {
+            col
+        } else if let focused = focusedHandle,
+                  let focusedNode = handleToNode[focused],
+                  let col = column(of: focusedNode)
         {
             col
         } else {
@@ -417,7 +423,8 @@ final class NiriLayoutEngine {
     func syncWindows(
         _ handles: [WindowHandle],
         in workspaceId: WorkspaceDescriptor.ID,
-        selectedNodeId: NodeId?
+        selectedNodeId: NodeId?,
+        focusedHandle: WindowHandle? = nil
     ) -> Set<WindowHandle> {
         let root = ensureRoot(for: workspaceId)
         let existing = Set(root.allWindows.map(\.handle.id))
@@ -434,7 +441,7 @@ final class NiriLayoutEngine {
 
         for handle in handles {
             if !existing.contains(handle.id) {
-                _ = addWindow(handle: handle, to: workspaceId, afterSelection: selectedNodeId)
+                _ = addWindow(handle: handle, to: workspaceId, afterSelection: selectedNodeId, focusedHandle: focusedHandle)
             }
         }
 
