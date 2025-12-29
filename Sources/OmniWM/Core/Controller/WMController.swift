@@ -457,6 +457,14 @@ final class WMController {
                 self.layoutRefreshController?.scheduleRefreshSession(.axWindowCreated)
             }
         }
+        axManager.onAppTerminated = { [weak self] pid in
+            guard let self else { return }
+            self.workspaceManager.removeWindowsForApp(pid: pid)
+            self.layoutRefreshController?.refreshWindowsAndLayout()
+        }
+        axManager.onWindowDestroyedUnknown = { [weak self] in
+            self?.layoutRefreshController?.refreshWindowsAndLayout()
+        }
         setupWorkspaceObservation()
         mouseEventHandler?.setup()
         setupDisplayObserver()

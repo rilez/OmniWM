@@ -21,6 +21,7 @@ final class AppAXContext: @unchecked Sendable {
     @MainActor private static var focusJob: RunLoopJob?
 
     @MainActor static var onAXEvent: ((AXEvent) -> Void)?
+    @MainActor static var onDestroyedUnknown: (() -> Void)?
 
     @MainActor static var contexts: [pid_t: AppAXContext] = [:]
     @MainActor private static var wipPids: Set<pid_t> = []
@@ -291,10 +292,26 @@ private func axObserverCallback(
 
     var pid: pid_t = 0
     let pidResult = AXUIElementGetPid(element, &pid)
-    guard pidResult == .success else { return }
 
     var windowId = 0
     _ = _AXUIElementGetWindow(element, &windowId)
+
+    if notif == kAXUIElementDestroyedNotification as String {
+        let capturedPid = pid
+        let capturedWindowId = windowId
+        let success = pidResult == .success && windowId != 0
+        Task { @MainActor in
+            if success {
+                let axRef = AXWindowRef(id: UUID(), element: AXUIElementCreateSystemWide())
+                AppAXContext.onAXEvent?(.removed(axRef, capturedPid, capturedWindowId))
+            } else {
+                AppAXContext.onDestroyedUnknown?()
+            }
+        }
+        return
+    }
+
+    guard pidResult == .success else { return }
 
     let axRef = AXWindowRef(id: UUID(), element: element)
 
@@ -303,8 +320,6 @@ private func axObserverCallback(
         switch notif {
         case kAXWindowCreatedNotification:
             event = .created(axRef, pid, windowId)
-        case kAXUIElementDestroyedNotification:
-            event = .removed(axRef, pid, windowId)
         case kAXMovedNotification, kAXResizedNotification:
             event = .changed(axRef, pid, windowId)
         case kAXFocusedWindowChangedNotification:

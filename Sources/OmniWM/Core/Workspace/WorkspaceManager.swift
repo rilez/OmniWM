@@ -187,6 +187,15 @@ final class WorkspaceManager {
         windows.removeWindow(key: .init(pid: pid, windowId: windowId))
     }
 
+    func removeWindowsForApp(pid: pid_t) {
+        for ws in workspaces {
+            let entriesToRemove = entries(in: ws.id).filter { $0.handle.pid == pid }
+            for entry in entriesToRemove {
+                removeWindow(pid: pid, windowId: entry.windowId)
+            }
+        }
+    }
+
     func setWorkspace(for handle: WindowHandle, to workspace: WorkspaceDescriptor.ID) {
         windows.updateWorkspace(for: handle, workspace: workspace)
     }

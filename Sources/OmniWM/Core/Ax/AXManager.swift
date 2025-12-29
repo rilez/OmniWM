@@ -10,6 +10,8 @@ final class AXManager {
     private var appLaunchObserver: NSObjectProtocol?
     var onWindowEvent: ((AXEvent) -> Void)?
     var onAppLaunched: ((NSRunningApplication) -> Void)?
+    var onAppTerminated: ((pid_t) -> Void)?
+    var onWindowDestroyedUnknown: (() -> Void)?
     private let pollIntervalNanos: UInt64 = 250_000_000
     private let pollTimeout: TimeInterval = 30
 
@@ -20,6 +22,9 @@ final class AXManager {
         AppAXContext.onAXEvent = { [weak self] event in
             self?.onWindowEvent?(event)
         }
+        AppAXContext.onDestroyedUnknown = { [weak self] in
+            self?.onWindowDestroyedUnknown?()
+        }
     }
 
     private func setupTerminationObserver() {
@@ -27,11 +32,12 @@ final class AXManager {
             forName: NSWorkspace.didTerminateApplicationNotification,
             object: nil,
             queue: .main
-        ) { notification in
+        ) { [weak self] notification in
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             else { return }
             let pid = app.processIdentifier
             Task { @MainActor in
+                self?.onAppTerminated?(pid)
                 if let context = AppAXContext.contexts[pid] {
                     await context.destroy()
                 }
