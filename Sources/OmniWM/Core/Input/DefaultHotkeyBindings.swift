@@ -117,10 +117,26 @@ enum DefaultHotkeyBindings {
         ])
 
         bindings.append(contentsOf: [
-            HotkeyBinding(id: "swap.left", command: .swap(.left), binding: .unassigned),
-            HotkeyBinding(id: "swap.right", command: .swap(.right), binding: .unassigned),
-            HotkeyBinding(id: "swap.up", command: .swap(.up), binding: .unassigned),
-            HotkeyBinding(id: "swap.down", command: .swap(.down), binding: .unassigned)
+            HotkeyBinding(
+                id: "swap.left",
+                command: .swap(.left),
+                binding: KeyBinding(keyCode: UInt32(kVK_ANSI_H), modifiers: UInt32(optionKey | controlKey))
+            ),
+            HotkeyBinding(
+                id: "swap.right",
+                command: .swap(.right),
+                binding: KeyBinding(keyCode: UInt32(kVK_ANSI_L), modifiers: UInt32(optionKey | controlKey))
+            ),
+            HotkeyBinding(
+                id: "swap.up",
+                command: .swap(.up),
+                binding: KeyBinding(keyCode: UInt32(kVK_ANSI_K), modifiers: UInt32(optionKey | controlKey))
+            ),
+            HotkeyBinding(
+                id: "swap.down",
+                command: .swap(.down),
+                binding: KeyBinding(keyCode: UInt32(kVK_ANSI_J), modifiers: UInt32(optionKey | controlKey))
+            )
         ])
 
         bindings.append(contentsOf: [

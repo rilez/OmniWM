@@ -640,12 +640,17 @@ final class CommandHandler {
             let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
             let gaps = CGFloat(controller.internalWorkspaceManager.gaps)
 
+            let oldFrames = engine.captureWindowFrames(in: wsId)
+
             if engine.moveColumn(column, direction: direction, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps) {
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                 controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
 
+                let newFrames = engine.captureWindowFrames(in: wsId)
+                _ = engine.triggerMoveAnimations(in: wsId, oldFrames: oldFrames, newFrames: newFrames)
+
                 let updatedState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
-                if updatedState.viewOffsetPixels.isAnimating {
+                if updatedState.viewOffsetPixels.isAnimating || engine.hasAnyWindowAnimationsRunning(in: wsId) {
                     animatingWorkspaceId = wsId
                 }
             }
