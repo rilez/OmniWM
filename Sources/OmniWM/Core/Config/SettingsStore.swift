@@ -20,10 +20,6 @@ final class SettingsStore {
         didSet { defaults.set(gapSize, forKey: Keys.gapSize) }
     }
 
-    var fullscreenIgnoresGaps: Bool {
-        didSet { defaults.set(fullscreenIgnoresGaps, forKey: Keys.fullscreenIgnoresGaps) }
-    }
-
     var outerGapLeft: Double {
         didSet { defaults.set(outerGapLeft, forKey: Keys.outerGapLeft) }
     }
@@ -210,7 +206,6 @@ final class SettingsStore {
         focusFollowsMouse = defaults.object(forKey: Keys.focusFollowsMouse) as? Bool ?? false
         moveMouseToFocusedWindow = defaults.object(forKey: Keys.moveMouseToFocusedWindow) as? Bool ?? false
         gapSize = defaults.object(forKey: Keys.gapSize) as? Double ?? 8
-        fullscreenIgnoresGaps = defaults.object(forKey: Keys.fullscreenIgnoresGaps) as? Bool ?? true
 
         outerGapLeft = defaults.object(forKey: Keys.outerGapLeft) as? Double ?? 0
         outerGapRight = defaults.object(forKey: Keys.outerGapRight) as? Double ?? 0
@@ -562,7 +557,6 @@ private enum Keys {
     static let focusFollowsMouse = "settings.focusFollowsMouse"
     static let moveMouseToFocusedWindow = "settings.moveMouseToFocusedWindow"
     static let gapSize = "settings.gapSize"
-    static let fullscreenIgnoresGaps = "settings.fullscreenIgnoresGaps"
 
     static let outerGapLeft = "settings.outerGapLeft"
     static let outerGapRight = "settings.outerGapRight"

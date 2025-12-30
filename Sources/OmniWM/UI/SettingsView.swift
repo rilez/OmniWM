@@ -63,7 +63,6 @@ struct GeneralSettingsTab: View {
                 .onChange(of: settings.gapSize) { _, newValue in
                     controller.setGapSize(newValue)
                 }
-                Toggle("Fullscreen ignores gaps", isOn: $settings.fullscreenIgnoresGaps)
 
                 Divider()
                 Text("Outer Margins").font(.subheadline).foregroundColor(.secondary)
