@@ -139,7 +139,8 @@ extension NiriLayoutEngine {
         edge: NiriRevealEdge = .left,
         workingFrame: CGRect,
         gaps: CGFloat,
-        animationConfig: SpringConfig? = nil
+        animationConfig: SpringConfig? = nil,
+        fromColumnIndex: Int? = nil
     ) {
         let cols = columns(in: workspaceId)
         guard !cols.isEmpty else { return }
@@ -158,7 +159,8 @@ extension NiriLayoutEngine {
             preferredEdge: edge,
             animate: true,
             centerMode: centerFocusedColumn,
-            animationConfig: animationConfig
+            animationConfig: animationConfig,
+            fromColumnIndex: fromColumnIndex
         )
 
         state.activeColumnIndex = targetIdx

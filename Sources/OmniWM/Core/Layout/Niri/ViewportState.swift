@@ -350,7 +350,8 @@ struct ViewportState {
         preferredEdge: NiriRevealEdge? = nil,
         animate: Bool = true,
         centerMode: CenterFocusedColumn = .never,
-        animationConfig: SpringConfig? = nil
+        animationConfig: SpringConfig? = nil,
+        fromColumnIndex: Int? = nil
     ) {
         guard !columns.isEmpty, columnIndex >= 0, columnIndex < columns.count else { return }
 
@@ -383,6 +384,44 @@ struct ViewportState {
                     gap: gap,
                     viewportWidth: viewportWidth
                 )
+            } else if let fromIdx = fromColumnIndex, fromIdx != columnIndex {
+                let sourceIdx = fromIdx > columnIndex
+                    ? min(columnIndex + 1, columns.count - 1)
+                    : max(columnIndex - 1, 0)
+
+                guard sourceIdx >= 0, sourceIdx < columns.count else {
+                    if colLeft < viewLeft {
+                        targetOffset = -colX
+                    } else if colRight > viewRight {
+                        targetOffset = viewportWidth - colRight
+                    }
+                    break
+                }
+
+                let sourceColX = columnX(at: sourceIdx, columns: columns, gap: gap)
+                let sourceColWidth = columns[sourceIdx].cachedWidth
+
+                let totalWidth: CGFloat
+                if sourceColX < colX {
+                    totalWidth = colX - sourceColX + colWidth + gap * 2
+                } else {
+                    totalWidth = sourceColX - colX + sourceColWidth + gap * 2
+                }
+
+                if totalWidth <= viewportWidth {
+                    if colLeft < viewLeft {
+                        targetOffset = -colX
+                    } else if colRight > viewRight {
+                        targetOffset = viewportWidth - colRight
+                    }
+                } else {
+                    targetOffset = computeCenteredOffset(
+                        columnIndex: columnIndex,
+                        columns: columns,
+                        gap: gap,
+                        viewportWidth: viewportWidth
+                    )
+                }
             } else {
                 if colLeft < viewLeft {
                     targetOffset = -colX
