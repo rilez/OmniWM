@@ -337,6 +337,11 @@ struct ViewportState {
         selectedNodeId = nil
     }
 
+    mutating func offsetViewport(by delta: CGFloat) {
+        let current = viewOffsetPixels.current()
+        viewOffsetPixels = .static(current + delta)
+    }
+
     mutating func ensureColumnVisible(
         columnIndex: Int,
         columns: [NiriContainer],
@@ -344,7 +349,8 @@ struct ViewportState {
         viewportWidth: CGFloat,
         preferredEdge: NiriRevealEdge? = nil,
         animate: Bool = true,
-        centerMode: CenterFocusedColumn = .never
+        centerMode: CenterFocusedColumn = .never,
+        animationConfig: SpringConfig? = nil
     ) {
         guard !columns.isEmpty, columnIndex >= 0, columnIndex < columns.count else { return }
 
@@ -407,12 +413,13 @@ struct ViewportState {
         if animate && animationsEnabled {
             let now = animationClock?.now() ?? CACurrentMediaTime()
             let currentVelocity = viewOffsetPixels.currentVelocity()
+            let config = animationConfig ?? springConfig
             let animation = SpringAnimation(
                 from: Double(currentOffset),
                 to: Double(targetOffset),
                 initialVelocity: currentVelocity,
                 startTime: now,
-                config: springConfig,
+                config: config,
                 clock: animationClock,
                 displayRefreshRate: displayRefreshRate
             )

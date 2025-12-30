@@ -953,6 +953,8 @@ final class NiriLayoutEngine {
         let cols = columns(in: workspaceId)
         guard let currentIdx = columnIndex(of: column, in: workspaceId) else { return false }
 
+        let currentColX = state.columnX(at: currentIdx, columns: cols, gap: gaps)
+
         let step = (direction == .right) ? 1 : -1
         let targetIdx: Int
 
@@ -971,8 +973,13 @@ final class NiriLayoutEngine {
         guard let root = roots[workspaceId] else { return false }
         root.swapChildren(column, targetColumn)
 
+        let newCols = columns(in: workspaceId)
+        let newColX = state.columnX(at: targetIdx, columns: newCols, gap: gaps)
+        let viewOffsetDelta = currentColX - newColX
+        state.offsetViewport(by: viewOffsetDelta)
+
         let edge: NiriRevealEdge = direction == .right ? .right : .left
-        ensureColumnVisible(column, in: workspaceId, state: &state, edge: edge, workingFrame: workingFrame, gaps: gaps)
+        ensureColumnVisible(column, in: workspaceId, state: &state, edge: edge, workingFrame: workingFrame, gaps: gaps, animationConfig: windowMovementAnimationConfig)
 
         return true
     }
@@ -1114,10 +1121,11 @@ final class NiriLayoutEngine {
         state: inout ViewportState,
         edge: NiriRevealEdge,
         workingFrame: CGRect,
-        gaps: CGFloat
+        gaps: CGFloat,
+        animationConfig: SpringConfig? = nil
     ) {
         if let firstWindow = column.windowNodes.first {
-            ensureSelectionVisible(node: firstWindow, in: workspaceId, state: &state, edge: edge, workingFrame: workingFrame, gaps: gaps)
+            ensureSelectionVisible(node: firstWindow, in: workspaceId, state: &state, edge: edge, workingFrame: workingFrame, gaps: gaps, animationConfig: animationConfig)
         }
     }
 
