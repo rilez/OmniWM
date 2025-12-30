@@ -18,6 +18,7 @@ final class LayoutRefreshController {
     private var cachedWindowSizes: [Int: CGSize] = [:]
     private var refreshRateByDisplay: [CGDirectDisplayID: Double] = [:]
     private var screenChangeObserver: NSObjectProtocol?
+    private var hasCompletedInitialRefresh: Bool = false
 
     init(controller: WMController) {
         self.controller = controller
@@ -321,6 +322,8 @@ final class LayoutRefreshController {
         if let focusedWorkspaceId {
             controller.ensureFocusedHandleValid(in: focusedWorkspaceId)
         }
+
+        hasCompletedInitialRefresh = true
     }
 
     func layoutWithNiriEngine(activeWorkspaces: Set<WorkspaceDescriptor.ID>, useScrollAnimationPath: Bool = false) {
@@ -414,7 +417,8 @@ final class LayoutRefreshController {
                 workingArea: area
             )
 
-            if let newHandle = newHandles.last,
+            if hasCompletedInitialRefresh,
+               let newHandle = newHandles.last,
                let newNode = engine.findNode(for: newHandle),
                wsId == controller.activeWorkspace()?.id
             {
