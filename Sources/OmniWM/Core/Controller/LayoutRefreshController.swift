@@ -20,6 +20,10 @@ final class LayoutRefreshController {
     private var screenChangeObserver: NSObjectProtocol?
     private var hasCompletedInitialRefresh: Bool = false
 
+    private var activeSnapshot: AnimationSnapshot?
+    private var layoutDirtyFlag: Bool = false
+    private var sizesAppliedForAnimation: Bool = false
+
     init(controller: WMController) {
         self.controller = controller
         setupDisplayLinks()
@@ -83,9 +87,14 @@ final class LayoutRefreshController {
     }
 
     func startScrollAnimation(for workspaceId: WorkspaceDescriptor.ID) {
+        if scrollAnimationWorkspaceId != workspaceId {
+            activeSnapshot = nil
+            sizesAppliedForAnimation = false
+        }
         scrollAnimationWorkspaceId = workspaceId
         if isScrollAnimationRunning { return }
         isScrollAnimationRunning = true
+        layoutDirtyFlag = false
 
         guard let controller,
               let monitor = controller.internalWorkspaceManager.monitor(for: workspaceId) else {
@@ -135,11 +144,85 @@ final class LayoutRefreshController {
         let windowAnimationsRunning = engine.tickAllWindowAnimations(in: wsId, at: targetTime)
 
         controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
-        executeLayoutRefreshImmediate()
+
+        if let snapshot = activeSnapshot, snapshot.workspaceId == wsId, !layoutDirtyFlag {
+            executeAnimationTickFast(snapshot: snapshot, state: state, engine: engine, time: targetTime)
+        } else {
+            executeLayoutRefreshImmediate()
+        }
 
         if !viewportAnimationRunning && !windowAnimationsRunning {
+            finalizeAnimation()
             stopScrollAnimation()
         }
+    }
+
+    private func executeAnimationTickFast(
+        snapshot: AnimationSnapshot,
+        state: ViewportState,
+        engine: NiriLayoutEngine,
+        time: TimeInterval
+    ) {
+        guard let controller else { return }
+
+        let currentViewportOffset = state.viewOffsetPixels.current()
+        var positionUpdates: [(windowId: Int, origin: CGPoint)] = []
+        var frameUpdates: [(pid: pid_t, windowId: Int, frame: CGRect)] = []
+
+        for (handle, _) in snapshot.targetFrames {
+            guard snapshot.isWindowVisible(handle) else { continue }
+            guard let entry = controller.internalWorkspaceManager.entry(for: handle) else { continue }
+
+            let window = engine.findNode(for: handle)
+            let moveOffset = window?.renderOffset(at: time) ?? .zero
+
+            guard let frame = snapshot.interpolatedFrame(
+                for: handle,
+                currentViewportOffset: currentViewportOffset,
+                moveOffset: moveOffset
+            ) else { continue }
+
+            if sizesAppliedForAnimation {
+                positionUpdates.append((entry.windowId, frame.origin))
+            } else {
+                frameUpdates.append((handle.pid, entry.windowId, frame))
+                cachedWindowSizes[entry.windowId] = frame.size
+            }
+        }
+
+        if sizesAppliedForAnimation {
+            controller.internalAXManager.applyPositionsViaSkyLight(positionUpdates)
+        } else {
+            controller.internalAXManager.applyFramesParallel(frameUpdates)
+            sizesAppliedForAnimation = true
+        }
+
+        if let focusedHandle = controller.internalFocusedHandle,
+           snapshot.isWindowVisible(focusedHandle),
+           let entry = controller.internalWorkspaceManager.entry(for: focusedHandle)
+        {
+            let window = engine.findNode(for: focusedHandle)
+            let moveOffset = window?.renderOffset(at: time) ?? .zero
+            if let frame = snapshot.interpolatedFrame(
+                for: focusedHandle,
+                currentViewportOffset: currentViewportOffset,
+                moveOffset: moveOffset
+            ) {
+                controller.updateBorderIfAllowed(handle: focusedHandle, frame: frame, windowId: entry.windowId)
+            }
+        } else if let focusedHandle = controller.internalFocusedHandle, !snapshot.isWindowVisible(focusedHandle) {
+            controller.internalBorderManager.hideBorder()
+        }
+    }
+
+    private func finalizeAnimation() {
+        activeSnapshot = nil
+        layoutDirtyFlag = false
+        sizesAppliedForAnimation = false
+    }
+
+    func invalidateLayout() {
+        layoutDirtyFlag = true
     }
 
     func refreshWindowsAndLayout() {
@@ -450,6 +533,19 @@ final class LayoutRefreshController {
 
             let hiddenHandles = engine.hiddenWindowHandles(in: wsId, state: state, workingFrame: insetFrame)
             let corner = cornersByMonitor[monitor.id] ?? .bottomRightCorner
+
+            if useScrollAnimationPath && activeSnapshot == nil {
+                let orientation = engine.monitor(for: monitor.id)?.orientation ?? monitor.autoOrientation
+                activeSnapshot = AnimationSnapshot(
+                    workspaceId: wsId,
+                    targetFrames: frames,
+                    targetViewportOffset: state.viewOffsetPixels.current(),
+                    workingFrame: insetFrame,
+                    hiddenHandles: hiddenHandles,
+                    orientation: orientation
+                )
+                sizesAppliedForAnimation = false
+            }
 
             for entry in workspaceManager.entries(in: wsId) {
                 if hiddenHandles.contains(entry.handle) {

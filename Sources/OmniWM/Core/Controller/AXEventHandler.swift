@@ -72,6 +72,7 @@ final class AXEventHandler {
             }
         }
 
+        controller.internalLayoutRefreshController?.invalidateLayout()
         controller.internalLayoutRefreshController?.scheduleRefreshSession(.axWindowCreated)
     }
 
@@ -93,6 +94,7 @@ final class AXEventHandler {
         controller.internalWorkspaceManager.removeWindow(pid: pid, windowId: winId)
 
         if let wsId = affectedWorkspaceId {
+            controller.internalLayoutRefreshController?.invalidateLayout()
             controller.internalLayoutRefreshController?.layoutWithNiriEngine(activeWorkspaces: [wsId])
 
             if let removed = removedHandle, removed.id == controller.internalFocusedHandle?.id {

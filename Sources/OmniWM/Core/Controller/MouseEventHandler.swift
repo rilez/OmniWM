@@ -225,6 +225,7 @@ final class MouseEventHandler {
                 in: wsId
             ) {
                 isResizing = true
+                controller.internalLayoutRefreshController?.invalidateLayout()
 
                 hitResult.edges.cursor.set()
             }
