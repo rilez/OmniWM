@@ -68,6 +68,7 @@ final class BorderManager {
     func hideBorder() {
         pendingUpdate?.cancel()
         pendingUpdate = nil
+        borderWindow?.stopEffect()
         borderWindow?.orderOut(nil)
         lastFrame = .zero
     }
@@ -96,6 +97,7 @@ final class BorderManager {
             config: config,
             targetWid: targetWid
         )
+        borderWindow?.startEffect()
     }
 }
 
