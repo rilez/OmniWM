@@ -93,15 +93,13 @@ final class AXEventHandler {
         controller.internalWorkspaceManager.removeWindow(pid: pid, windowId: winId)
 
         if let wsId = affectedWorkspaceId {
-            controller.internalLayoutRefreshController?.invalidateLayout()
-            controller.internalLayoutRefreshController?.layoutWithNiriEngine(activeWorkspaces: [wsId])
+            controller.internalLayoutRefreshController?.layoutWithNiriEngine(activeWorkspaces: [wsId], useScrollAnimationPath: true)
 
             if let engine = controller.internalNiriEngine {
                 let newFrames = engine.captureWindowFrames(in: wsId)
                 let animationsTriggered = engine.triggerMoveAnimations(in: wsId, oldFrames: oldFrames, newFrames: newFrames)
 
-                let state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
-                if animationsTriggered || state.viewOffsetPixels.isAnimating || engine.hasAnyWindowAnimationsRunning(in: wsId) {
+                if animationsTriggered || engine.hasAnyWindowAnimationsRunning(in: wsId) {
                     controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
                 }
             }
