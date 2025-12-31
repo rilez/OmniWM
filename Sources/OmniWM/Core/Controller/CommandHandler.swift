@@ -130,71 +130,63 @@ final class CommandHandler {
         isProcessingNavigation = true
         defer { isProcessingNavigation = false }
 
-        var animatingWorkspaceId: WorkspaceDescriptor.ID?
+        guard let engine = controller.internalNiriEngine else { return }
+        guard let wsId = controller.activeWorkspace()?.id else { return }
+        var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
 
-        controller.internalLayoutRefreshController?.runLightSession {
-            guard let engine = controller.internalNiriEngine else { return }
-            guard let wsId = controller.activeWorkspace()?.id else { return }
-            var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
-
-            guard let currentId = state.selectedNodeId,
-                  let currentNode = engine.findNode(by: currentId)
-            else {
-                if let lastFocused = controller.internalLastFocusedByWorkspace[wsId],
-                   let lastNode = engine.findNode(for: lastFocused)
-                {
-                    state.selectedNodeId = lastNode.id
-                    controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
-                    controller.internalFocusedHandle = lastFocused
-                    engine.updateFocusTimestamp(for: lastNode.id)
-                    controller.focusWindow(lastFocused)
-                } else if let firstHandle = controller.internalWorkspaceManager.entries(in: wsId).first?.handle,
-                          let firstNode = engine.findNode(for: firstHandle)
-                {
-                    state.selectedNodeId = firstNode.id
-                    controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
-                    controller.internalFocusedHandle = firstHandle
-                    engine.updateFocusTimestamp(for: firstNode.id)
-                    controller.focusWindow(firstHandle)
-                }
-                return
-            }
-
-            guard let monitor = controller.internalWorkspaceManager.monitor(for: wsId) else { return }
-            let gap = CGFloat(controller.internalWorkspaceManager.gaps)
-            let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
-
-            if let newNode = engine.focusTarget(
-                direction: direction,
-                currentSelection: currentNode,
-                in: wsId,
-                state: &state,
-                workingFrame: workingFrame,
-                gaps: gap
-            ) {
-                state.selectedNodeId = newNode.id
+        guard let currentId = state.selectedNodeId,
+              let currentNode = engine.findNode(by: currentId)
+        else {
+            if let lastFocused = controller.internalLastFocusedByWorkspace[wsId],
+               let lastNode = engine.findNode(for: lastFocused)
+            {
+                state.selectedNodeId = lastNode.id
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
-
-                if let windowNode = newNode as? NiriWindow {
-                    controller.internalFocusedHandle = windowNode.handle
-                    engine.updateFocusTimestamp(for: windowNode.id)
-                }
-
-                controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
-
-                if let windowNode = newNode as? NiriWindow {
-                    controller.focusWindow(windowNode.handle)
-                }
-
-                let updatedState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
-                if updatedState.viewOffsetPixels.isAnimating {
-                    animatingWorkspaceId = wsId
-                }
+                controller.internalFocusedHandle = lastFocused
+                engine.updateFocusTimestamp(for: lastNode.id)
+                controller.focusWindow(lastFocused)
+            } else if let firstHandle = controller.internalWorkspaceManager.entries(in: wsId).first?.handle,
+                      let firstNode = engine.findNode(for: firstHandle)
+            {
+                state.selectedNodeId = firstNode.id
+                controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
+                controller.internalFocusedHandle = firstHandle
+                engine.updateFocusTimestamp(for: firstNode.id)
+                controller.focusWindow(firstHandle)
             }
+            return
         }
 
-        if let wsId = animatingWorkspaceId {
-            controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
+        guard let monitor = controller.internalWorkspaceManager.monitor(for: wsId) else { return }
+        let gap = CGFloat(controller.internalWorkspaceManager.gaps)
+        let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+
+        if let newNode = engine.focusTarget(
+            direction: direction,
+            currentSelection: currentNode,
+            in: wsId,
+            state: &state,
+            workingFrame: workingFrame,
+            gaps: gap
+        ) {
+            state.selectedNodeId = newNode.id
+            controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
+
+            if let windowNode = newNode as? NiriWindow {
+                controller.internalFocusedHandle = windowNode.handle
+                engine.updateFocusTimestamp(for: windowNode.id)
+            }
+
+            controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
+
+            if let windowNode = newNode as? NiriWindow {
+                controller.focusWindow(windowNode.handle)
+            }
+
+            let updatedState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+            if updatedState.viewOffsetPixels.isAnimating {
+                controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
+            }
         }
     }
 
