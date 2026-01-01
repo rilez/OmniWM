@@ -1,6 +1,6 @@
 import AppKit
-import SwiftUI
 import ApplicationServices
+import SwiftUI
 
 @MainActor
 final class MenuPaletteController: ObservableObject {
@@ -12,10 +12,12 @@ final class MenuPaletteController: ObservableObject {
             updateSelectionAfterFilterChange()
         }
     }
+
     @Published var selectedItemId: UUID?
     @Published var menuItems: [MenuItemModel] = [] {
         didSet { updateSelectionAfterFilterChange() }
     }
+
     @Published var isLoading = false
 
     var showShortcuts = true
@@ -36,9 +38,19 @@ final class MenuPaletteController: ObservableObject {
             return
         }
 
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
-        AXUIElementSetAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, window)
-        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        guard let windowId = getWindowId(from: window) else {
+            app.activate()
+            return
+        }
+
+        SkyLight.shared.orderWindow(UInt32(windowId), relativeTo: 0, order: .above)
+
+        var psn = ProcessSerialNumber()
+        if GetProcessForPID(app.processIdentifier, &psn) == noErr {
+            _ = _SLPSSetFrontProcessWithOptions(&psn, UInt32(windowId), kCPSUserGenerated)
+            makeKeyWindow(psn: &psn, windowId: UInt32(windowId))
+        }
+
         app.activate()
     }
 
@@ -175,7 +187,6 @@ final class MenuPaletteController: ObservableObject {
         searchText = ""
         selectedItemId = nil
         menuItems = []
-        fetcher.invalidateCache()
     }
 
     func selectCurrent() {

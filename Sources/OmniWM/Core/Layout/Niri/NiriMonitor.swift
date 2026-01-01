@@ -31,7 +31,7 @@ final class NiriMonitor {
 
     var animationClock: AnimationClock?
 
-    var workspaceSwitchConfig: SpringConfig = SpringConfig(duration: 0.3, bounce: 0.0)
+    var workspaceSwitchConfig: SpringConfig = .init(duration: 0.3, bounce: 0.0)
 
     var resolvedSettings: ResolvedNiriSettings?
 
@@ -156,7 +156,7 @@ extension NiriMonitor {
     func activateWorkspaceAnimated(_ workspaceId: WorkspaceDescriptor.ID) {
         guard let targetIdx = workspaceOrder.firstIndex(of: workspaceId) else { return }
 
-        if targetIdx == activeWorkspaceIdx && workspaceSwitch == nil {
+        if targetIdx == activeWorkspaceIdx, workspaceSwitch == nil {
             return
         }
 

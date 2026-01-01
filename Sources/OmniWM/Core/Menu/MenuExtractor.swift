@@ -5,7 +5,7 @@ import ObjectiveC
 final class MenuExtractor: @unchecked Sendable {
     private static let itemAttributeKeys = [
         "AXTitle", "AXRole", "AXRoleDescription", "AXEnabled",
-        "AXMenuItemMarkChar", "AXMenuItemCmdChar", "AXMenuItemCmdModifiers", "AXChildren",
+        "AXMenuItemMarkChar", "AXMenuItemCmdChar", "AXMenuItemCmdModifiers", "AXChildren"
     ]
 
     private let boldFont = NSFontManager.shared.convert(
@@ -21,13 +21,13 @@ final class MenuExtractor: @unchecked Sendable {
     }
 
     func buildMenu(from element: AXUIElement, target: AnyObject?, action: Selector?) -> [NSMenuItem] {
-        return autoreleasepool {
+        autoreleasepool {
             buildMenuItems(from: element, target: target, action: action, isSubmenu: false)
         }
     }
 
     func buildSubmenu(from element: AXUIElement, target: AnyObject?, action: Selector?) -> [NSMenuItem] {
-        return autoreleasepool {
+        autoreleasepool {
             buildMenuItems(from: element, target: target, action: action, isSubmenu: true)
         }
     }
@@ -38,7 +38,7 @@ final class MenuExtractor: @unchecked Sendable {
         target: AnyObject?,
         action: Selector?
     ) -> [NSMenuItem] {
-        return buildMenuItems(
+        buildMenuItems(
             children: children,
             itemsData: itemsData,
             target: target,
@@ -47,9 +47,19 @@ final class MenuExtractor: @unchecked Sendable {
         )
     }
 
-    func flattenMenuItems(from menuBar: AXUIElement, appName: String? = nil, excludeAppleMenu: Bool = false) -> [MenuItemModel] {
+    func flattenMenuItems(
+        from menuBar: AXUIElement,
+        appName _: String? = nil,
+        excludeAppleMenu: Bool = false
+    ) -> [MenuItemModel] {
         var items: [MenuItemModel] = []
-        flattenMenuItemsRecursive(from: menuBar, parentPath: [], depth: 0, excludeAppleMenu: excludeAppleMenu, into: &items)
+        flattenMenuItemsRecursive(
+            from: menuBar,
+            parentPath: [],
+            depth: 0,
+            excludeAppleMenu: excludeAppleMenu,
+            into: &items
+        )
         return items
     }
 
@@ -73,7 +83,7 @@ final class MenuExtractor: @unchecked Sendable {
 
                 let isEnabled = itemData["AXEnabled"] as? Bool ?? true
 
-                var shortcut: String? = nil
+                var shortcut: String?
                 if let cmd = itemData["AXMenuItemCmdChar"] as? String, !cmd.isEmpty {
                     let flags = NSEvent.ModifierFlags.fromAXModifiers(itemData["AXMenuItemCmdModifiers"] as? Int)
                     shortcut = formatKeyboardShortcut(cmd, modifiers: flags)
@@ -85,11 +95,17 @@ final class MenuExtractor: @unchecked Sendable {
                    let subRole = firstSub.getAttribute("AXRole") as? String,
                    subRole == "AXMenu"
                 {
-                    if excludeAppleMenu && depth == 0 && isAppleMenuItem(title: title, itemData: itemData) {
+                    if excludeAppleMenu, depth == 0, isAppleMenuItem(title: title, itemData: itemData) {
                         return
                     }
                     let newPath = parentPath + [title]
-                    flattenMenuItemsRecursive(from: firstSub, parentPath: newPath, depth: depth + 1, excludeAppleMenu: excludeAppleMenu, into: &items)
+                    flattenMenuItemsRecursive(
+                        from: firstSub,
+                        parentPath: newPath,
+                        depth: depth + 1,
+                        excludeAppleMenu: excludeAppleMenu,
+                        into: &items
+                    )
                 } else if isEnabled {
                     let fullPath = (parentPath + [title]).joined(separator: " > ")
                     let item = MenuItemModel(
@@ -191,7 +207,7 @@ final class MenuExtractor: @unchecked Sendable {
         }
 
         if let apple = appleItem {
-            if !items.isEmpty, items.last?.isSeparatorItem == false {
+            if !items.isEmpty, !(items.last?.isSeparatorItem ?? true) {
                 items.append(.separator())
             }
             items.append(apple)
@@ -259,7 +275,7 @@ final class MenuExtractor: @unchecked Sendable {
         for item: NSMenuItem,
         from values: [String: Any],
         target: AnyObject?,
-        action: Selector?
+        action _: Selector?
     ) -> Bool {
         guard let subChildren = values["AXChildren"] as? [AXUIElement],
               !subChildren.isEmpty,
@@ -280,7 +296,7 @@ final class MenuExtractor: @unchecked Sendable {
     }
 
     private func isAppleMenuItem(title: String?, itemData: [String: Any]) -> Bool {
-        return title == "Apple" || (itemData["AXRoleDescription"] as? String) == "Apple menu"
+        title == "Apple" || (itemData["AXRoleDescription"] as? String) == "Apple menu"
     }
 }
 
@@ -304,7 +320,7 @@ extension NSMenu {
 
     var isPopulatingAsynchronously: Bool {
         get {
-            return (objc_getAssociatedObject(self, &kIsPopulatingAssociatedKey) as? NSNumber)?
+            (objc_getAssociatedObject(self, &kIsPopulatingAssociatedKey) as? NSNumber)?
                 .boolValue ?? false
         }
         set {
@@ -318,7 +334,7 @@ extension NSMenu {
 
 extension AXUIElement {
     func getAttribute(_ name: String) -> Any? {
-        return autoreleasepool {
+        autoreleasepool {
             var value: AnyObject?
             return AXUIElementCopyAttributeValue(self, name as CFString, &value) == .success
                 ? value : nil
@@ -326,7 +342,7 @@ extension AXUIElement {
     }
 
     func getChildren() -> [AXUIElement]? {
-        return autoreleasepool {
+        autoreleasepool {
             var value: AnyObject?
             guard AXUIElementCopyAttributeValue(self, "AXChildren" as CFString, &value) == .success,
                   let children = value as? [AXUIElement], !children.isEmpty
@@ -338,7 +354,7 @@ extension AXUIElement {
     }
 
     func getMultipleAttributes(_ names: [String]) -> [String: Any]? {
-        return autoreleasepool {
+        autoreleasepool {
             let attrs = names as CFArray
             var values: CFArray?
             let options = AXCopyMultipleAttributeOptions(rawValue: 0)
@@ -350,7 +366,7 @@ extension AXUIElement {
             var dict: [String: Any] = [:]
             dict.reserveCapacity(names.count)
 
-            for i in 0..<names.count {
+            for i in 0 ..< names.count {
                 let value = results[i]
                 if !(value is NSNull) {
                     dict[names[i]] = value

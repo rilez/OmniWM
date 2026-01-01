@@ -19,6 +19,7 @@ final class WindowModel {
     private(set) var entries: [WindowHandle: Entry] = [:]
     private var keyToHandle: [WindowKey: WindowHandle] = [:]
     private var handlesByWorkspace: [WorkspaceDescriptor.ID: Set<WindowHandle>] = [:]
+    private var windowIdToHandle: [Int: WindowHandle] = [:]
 
     struct WindowKey: Hashable {
         let pid: pid_t
@@ -29,6 +30,7 @@ final class WindowModel {
         entries.removeAll()
         keyToHandle.removeAll()
         handlesByWorkspace.removeAll()
+        windowIdToHandle.removeAll()
     }
 
     func upsert(window: AXWindowRef, pid: pid_t, windowId: Int, workspace: WorkspaceDescriptor.ID) -> WindowHandle {
@@ -49,6 +51,7 @@ final class WindowModel {
             entries[handle] = entry
             keyToHandle[key] = handle
             handlesByWorkspace[workspace, default: []].insert(handle)
+            windowIdToHandle[windowId] = handle
             return handle
         }
     }
@@ -89,6 +92,15 @@ final class WindowModel {
 
     func entries(forPid pid: pid_t) -> [Entry] {
         entries.values.filter { $0.handle.pid == pid }
+    }
+
+    func entry(forWindowId windowId: Int) -> Entry? {
+        guard let handle = windowIdToHandle[windowId] else { return nil }
+        return entries[handle]
+    }
+
+    func allEntries() -> [Entry] {
+        Array(entries.values)
     }
 
     func hiddenProportionalPosition(for handle: WindowHandle) -> CGPoint? {
@@ -153,8 +165,9 @@ final class WindowModel {
         let toRemove = keyToHandle.keys.filter { !activeKeys.contains($0) }
         for key in toRemove {
             if let handle = keyToHandle[key] {
-                if let workspaceId = entries[handle]?.workspaceId {
-                    handlesByWorkspace[workspaceId]?.remove(handle)
+                if let entry = entries[handle] {
+                    handlesByWorkspace[entry.workspaceId]?.remove(handle)
+                    windowIdToHandle.removeValue(forKey: entry.windowId)
                 }
                 entries.removeValue(forKey: handle)
                 keyToHandle.removeValue(forKey: key)
@@ -164,8 +177,9 @@ final class WindowModel {
 
     func removeWindow(key: WindowKey) {
         if let handle = keyToHandle[key] {
-            if let workspaceId = entries[handle]?.workspaceId {
-                handlesByWorkspace[workspaceId]?.remove(handle)
+            if let entry = entries[handle] {
+                handlesByWorkspace[entry.workspaceId]?.remove(handle)
+                windowIdToHandle.removeValue(forKey: entry.windowId)
             }
             entries.removeValue(forKey: handle)
             keyToHandle.removeValue(forKey: key)

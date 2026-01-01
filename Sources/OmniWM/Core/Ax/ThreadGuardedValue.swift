@@ -26,6 +26,11 @@ final class ThreadGuardedValue<Value>: Sendable {
         }
     }
 
+    var valueIfExists: Value? {
+        threadToken.checkEquals(appThreadToken)
+        return _value
+    }
+
     func destroy() {
         threadToken.checkEquals(appThreadToken)
         _value = nil

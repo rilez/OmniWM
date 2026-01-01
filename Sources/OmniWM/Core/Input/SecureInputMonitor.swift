@@ -36,7 +36,7 @@ final class SecureInputMonitor {
     private func setupEventTap() {
         let eventMask: CGEventMask = 1 << CGEventType.keyDown.rawValue
 
-        let callback: CGEventTapCallBack = { proxy, type, event, refcon in
+        let callback: CGEventTapCallBack = { _, type, event, _ in
             switch type {
             case .tapDisabledByUserInput:
                 Task { @MainActor in
@@ -50,7 +50,7 @@ final class SecureInputMonitor {
                     CGEvent.tapEnable(tap: tap, enable: true)
                 }
             default:
-                if SecureInputMonitor.sharedMonitor?.isSecureInputActive == true {
+                if SecureInputMonitor.sharedMonitor?.isSecureInputActive ?? false {
                     Task { @MainActor in
                         SecureInputMonitor.sharedMonitor?.checkSecureInputEnded()
                     }

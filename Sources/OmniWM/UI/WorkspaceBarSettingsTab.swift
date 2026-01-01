@@ -74,7 +74,6 @@ struct WorkspaceBarSettingsTab: View {
     }
 }
 
-
 private struct GlobalBarSettingsSection: View {
     @Bindable var settings: SettingsStore
     @Bindable var controller: WMController
@@ -397,4 +396,3 @@ private struct MonitorBarSettingsSection: View {
         }
     }
 }
-

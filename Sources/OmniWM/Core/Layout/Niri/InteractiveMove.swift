@@ -30,11 +30,6 @@ enum HorizontalSide: Equatable {
     case right
 }
 
-struct MoveHitTestResult {
-    let target: MoveHoverTarget
-    let targetFrame: CGRect
-}
-
 struct MoveConfiguration {
     var edgeDropZone: CGFloat = 50.0
     var showPreview: Bool = true
@@ -42,3 +37,4 @@ struct MoveConfiguration {
 
     static let `default` = MoveConfiguration()
 }
+

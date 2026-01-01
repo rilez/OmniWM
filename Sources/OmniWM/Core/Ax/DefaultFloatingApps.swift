@@ -8,7 +8,7 @@ enum DefaultFloatingApps {
         "com.apple.PhotoBooth",
         "com.apple.calculator",
         "com.apple.ScreenSharing",
-        "com.apple.remotedesktop",
+        "com.apple.remotedesktop"
     ]
 
     static func shouldFloat(_ bundleId: String?) -> Bool {

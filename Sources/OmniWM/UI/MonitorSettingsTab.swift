@@ -28,7 +28,8 @@ struct MonitorSettingsTab: View {
             }
 
             if let monitorName = selectedMonitor,
-               let monitor = connectedMonitors.first(where: { $0.name == monitorName }) {
+               let monitor = connectedMonitors.first(where: { $0.name == monitorName })
+            {
                 MonitorOrientationSection(
                     settings: settings,
                     controller: controller,
@@ -105,9 +106,11 @@ private struct MonitorOrientationSection: View {
                 }
             }
 
-            Text("Override the auto-detected orientation for this monitor. Vertical monitors scroll windows top-to-bottom instead of left-to-right.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            Text(
+                "Override the auto-detected orientation for this monitor. Vertical monitors scroll windows top-to-bottom instead of left-to-right."
+            )
+            .font(.caption)
+            .foregroundColor(.secondary)
         }
     }
 

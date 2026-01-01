@@ -5,12 +5,9 @@ import Foundation
 final class BorderManager {
     private var borderWindow: BorderWindow?
     private var config: BorderConfig
-    private var lastFrame: CGRect = .zero
     private var currentWindowId: Int?
-
-    private var pendingUpdate: Task<Void, Never>?
-    private var lastUpdateTime: Date = .distantPast
-    private let debounceInterval: TimeInterval = 0.016
+    private var lastAppliedFrame: CGRect?
+    private var lastAppliedWindowId: Int?
 
     init(config: BorderConfig = BorderConfig()) {
         self.config = config
@@ -18,8 +15,7 @@ final class BorderManager {
 
     func setEnabled(_ enabled: Bool) {
         config.enabled = enabled
-        if enabled {
-        } else {
+        if !enabled {
             hideBorder()
         }
     }
@@ -42,35 +38,41 @@ final class BorderManager {
             return
         }
 
-        currentWindowId = windowId
-
-        if lastFrame.equalTo(frame, tolerance: 0.5) {
+        if let last = lastAppliedFrame,
+           let lastWid = lastAppliedWindowId,
+           lastWid == windowId,
+           abs(frame.origin.x - last.origin.x) < 0.5,
+           abs(frame.origin.y - last.origin.y) < 0.5,
+           abs(frame.width - last.width) < 0.5,
+           abs(frame.height - last.height) < 0.5 {
             return
         }
 
-        pendingUpdate?.cancel()
-
-        let now = Date()
-        let timeSinceLastUpdate = now.timeIntervalSince(lastUpdateTime)
-
-        if timeSinceLastUpdate >= debounceInterval {
-            performUpdate(frame: frame)
-        } else {
-            let delay = debounceInterval - timeSinceLastUpdate
-            pendingUpdate = Task { @MainActor in
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                guard !Task.isCancelled else { return }
-                self.performUpdate(frame: frame)
-            }
+        if borderWindow == nil {
+            borderWindow = BorderWindow(config: config)
         }
+
+        guard let windowId else {
+            borderWindow?.orderOut(nil)
+            lastAppliedFrame = nil
+            lastAppliedWindowId = nil
+            return
+        }
+
+        let cornerRadius = cornerRadius(for: windowId)
+        let targetWid = UInt32(windowId)
+
+        borderWindow?.update(frame: frame, windowCornerRadius: cornerRadius, targetWid: targetWid)
+        borderWindow?.orderFront(nil)
+        currentWindowId = windowId
+        lastAppliedFrame = frame
+        lastAppliedWindowId = windowId
     }
 
     func hideBorder() {
-        pendingUpdate?.cancel()
-        pendingUpdate = nil
-        borderWindow?.stopEffect()
         borderWindow?.orderOut(nil)
-        lastFrame = .zero
+        lastAppliedFrame = nil
+        lastAppliedWindowId = nil
     }
 
     func cleanup() {
@@ -79,33 +81,7 @@ final class BorderManager {
         borderWindow = nil
     }
 
-    private func performUpdate(frame: CGRect) {
-        lastUpdateTime = Date()
-        lastFrame = frame
-
-        if borderWindow == nil {
-            borderWindow = BorderWindow(config: config)
-        }
-
-        let cornerRadius = currentWindowId.flatMap { SkyLight.shared.cornerRadius(forWindowId: $0) } ?? 9
-        let targetWid = currentWindowId.map { UInt32($0) }
-
-        borderWindow?.orderFront(nil)
-        borderWindow?.update(
-            frame: frame,
-            cornerRadius: cornerRadius,
-            config: config,
-            targetWid: targetWid
-        )
-        borderWindow?.startEffect()
-    }
-}
-
-private extension CGRect {
-    func equalTo(_ other: CGRect, tolerance: CGFloat) -> Bool {
-        abs(origin.x - other.origin.x) < tolerance &&
-            abs(origin.y - other.origin.y) < tolerance &&
-            abs(size.width - other.size.width) < tolerance &&
-            abs(size.height - other.size.height) < tolerance
+    private func cornerRadius(for windowId: Int) -> CornerRadius {
+        SkyLight.shared.cornerRadii(forWindowId: windowId) ?? CornerRadius(uniform: 9)
     }
 }

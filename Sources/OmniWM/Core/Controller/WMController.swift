@@ -15,7 +15,6 @@ final class WMController {
     private let secureInputMonitor = SecureInputMonitor()
     private var wasHotkeysEnabledBeforeSecureInput = true
     private let lockScreenObserver = LockScreenObserver()
-    private let windowStateCache = WindowStateCache()
     private var isLockScreenActive: Bool = false
     private let axManager = AXManager()
     private var focusedHandle: WindowHandle?
@@ -43,13 +42,13 @@ final class WMController {
     private var hiddenAppPIDs: Set<pid_t> = []
 
     private var appRulesByBundleId: [String: AppRule] = [:]
-    private let appInfoCache = AppInfoCache()
 
     private var mouseEventHandler: MouseEventHandler?
     private var commandHandler: CommandHandler?
     private var workspaceNavigationHandler: WorkspaceNavigationHandler?
     private var axEventHandler: AXEventHandler?
     private var layoutRefreshController: LayoutRefreshController?
+    private var hasStartedServices = false
 
     let animationClock = AnimationClock()
 
@@ -151,7 +150,7 @@ final class WMController {
             let entries = workspaceManager.entries(in: workspace.id)
             let orderMap = workspaceBarOrderMap(for: workspace.id)
             let orderedEntries = sortWorkspaceBarEntries(entries, orderMap: orderMap)
-            let useLayoutOrder = orderMap?.isEmpty == false
+            let useLayoutOrder = !(orderMap?.isEmpty ?? true)
             let windows: [WorkspaceBarWindowItem] = if deduplicate {
                 createDedupedWindowItems(entries: orderedEntries, useLayoutOrder: useLayoutOrder)
             } else {
@@ -221,7 +220,8 @@ final class WMController {
             var orderedAppNames: [String] = []
 
             for entry in entries {
-                let appName = appInfoCache.name(for: entry.handle.pid)
+                let app = NSRunningApplication(processIdentifier: entry.handle.pid)
+                let appName = app?.localizedName ?? "Unknown"
 
                 if groupedByApp[appName] == nil {
                     groupedByApp[appName] = []
@@ -233,7 +233,7 @@ final class WMController {
 
             return orderedAppNames.compactMap { appName in
                 guard let appEntries = groupedByApp[appName], let firstEntry = appEntries.first else { return nil }
-                let appInfo = appInfoCache.info(for: firstEntry.handle.pid)
+                let app = NSRunningApplication(processIdentifier: firstEntry.handle.pid)
                 let anyFocused = appEntries.contains { $0.handle.id == focusedHandle?.id }
 
                 let windowInfos = appEntries.map { entry -> WorkspaceBarWindowInfo in
@@ -249,7 +249,7 @@ final class WMController {
                     id: firstEntry.handle.id,
                     windowId: firstEntry.windowId,
                     appName: appName,
-                    icon: appInfo.icon,
+                    icon: app?.icon,
                     isFocused: anyFocused,
                     windowCount: appEntries.count,
                     allWindows: windowInfos
@@ -258,12 +258,12 @@ final class WMController {
         }
 
         let groupedByApp = Dictionary(grouping: entries) { entry -> String in
-            appInfoCache.name(for: entry.handle.pid)
+            NSRunningApplication(processIdentifier: entry.handle.pid)?.localizedName ?? "Unknown"
         }
 
         return groupedByApp.map { appName, appEntries -> WorkspaceBarWindowItem in
             let firstEntry = appEntries.first!
-            let appInfo = appInfoCache.info(for: firstEntry.handle.pid)
+            let app = NSRunningApplication(processIdentifier: firstEntry.handle.pid)
             let anyFocused = appEntries.contains { $0.handle.id == focusedHandle?.id }
 
             let windowInfos = appEntries.map { entry -> WorkspaceBarWindowInfo in
@@ -279,7 +279,7 @@ final class WMController {
                 id: firstEntry.handle.id,
                 windowId: firstEntry.windowId,
                 appName: appName,
-                icon: appInfo.icon,
+                icon: app?.icon,
                 isFocused: anyFocused,
                 windowCount: appEntries.count,
                 allWindows: windowInfos
@@ -289,14 +289,15 @@ final class WMController {
 
     private func createIndividualWindowItems(entries: [WindowModel.Entry]) -> [WorkspaceBarWindowItem] {
         entries.map { entry in
-            let appInfo = appInfoCache.info(for: entry.handle.pid)
-            let title = getWindowTitle(for: entry) ?? appInfo.name
+            let app = NSRunningApplication(processIdentifier: entry.handle.pid)
+            let appName = app?.localizedName ?? "Unknown"
+            let title = getWindowTitle(for: entry) ?? appName
 
             return WorkspaceBarWindowItem(
                 id: entry.handle.id,
                 windowId: entry.windowId,
-                appName: appInfo.name,
-                icon: appInfo.icon,
+                appName: appName,
+                icon: app?.icon,
                 isFocused: entry.handle.id == focusedHandle?.id,
                 windowCount: 1,
                 allWindows: [
@@ -312,7 +313,8 @@ final class WMController {
     }
 
     private func getWindowTitle(for entry: WindowModel.Entry) -> String? {
-        guard let title = try? AXWindowService.title(entry.axRef), !title.isEmpty else { return nil }
+        guard let title = AXWindowService.titlePreferFast(windowId: UInt32(entry.windowId)),
+              !title.isEmpty else { return nil }
         return title
     }
 
@@ -400,15 +402,18 @@ final class WMController {
         moveMouseToFocusedWindowEnabled = enabled
     }
 
-    func insetWorkingFrame(from frame: CGRect) -> CGRect {
+    func insetWorkingFrame(from frame: CGRect, scale: CGFloat = 2.0) -> CGRect {
         let outer = workspaceManager.outerGaps
-        let newWidth = max(0, frame.width - outer.left - outer.right)
-        let newHeight = max(0, frame.height - outer.top - outer.bottom)
-        return CGRect(
-            x: frame.origin.x + outer.left,
-            y: frame.origin.y + outer.bottom,
-            width: newWidth,
-            height: newHeight
+        let struts = Struts(
+            left: outer.left,
+            right: outer.right,
+            top: outer.top,
+            bottom: outer.bottom
+        )
+        return computeWorkingArea(
+            parentArea: frame,
+            scale: scale,
+            struts: struts
         )
     }
 
@@ -454,6 +459,10 @@ final class WMController {
     }
 
     private func startServices() {
+        guard !hasStartedServices else {
+            return
+        }
+        hasStartedServices = true
         layoutRefreshController = LayoutRefreshController(controller: self)
         axEventHandler = AXEventHandler(controller: self)
         mouseEventHandler = MouseEventHandler(controller: self)
@@ -462,11 +471,6 @@ final class WMController {
 
         if hotkeysEnabled {
             hotkeys.start()
-        }
-        axManager.onWindowEvent = { [weak self] event in
-            Task { @MainActor in
-                self?.axEventHandler?.handleEvent(event)
-            }
         }
         axManager.onAppLaunched = { [weak self] app in
             guard let self else { return }
@@ -477,11 +481,18 @@ final class WMController {
         }
         axManager.onAppTerminated = { [weak self] pid in
             guard let self else { return }
-            self.workspaceManager.removeWindowsForApp(pid: pid)
-            self.layoutRefreshController?.refreshWindowsAndLayout()
+            workspaceManager.removeWindowsForApp(pid: pid)
+            layoutRefreshController?.refreshWindowsAndLayout()
         }
-        axManager.onWindowDestroyedUnknown = { [weak self] in
+        AppAXContext.onWindowDestroyed = { [weak self] pid, windowId in
+            guard let self else { return }
+            axEventHandler?.handleRemoved(pid: pid, winId: windowId)
+        }
+        AppAXContext.onWindowDestroyedUnknown = { [weak self] in
             self?.layoutRefreshController?.refreshWindowsAndLayout()
+        }
+        AppAXContext.onFocusedWindowChanged = { [weak self] pid in
+            self?.axEventHandler?.handleAppActivation(pid: pid)
         }
         setupWorkspaceObservation()
         mouseEventHandler?.setup()
@@ -493,7 +504,6 @@ final class WMController {
         }
 
         layoutRefreshController?.refreshWindowsAndLayout()
-        layoutRefreshController?.startRefreshTimer()
         startSecureInputMonitor()
         startLockScreenObserver()
     }
@@ -510,10 +520,6 @@ final class WMController {
 
     private func handleLockScreenDetected() {
         isLockScreenActive = true
-        windowStateCache.captureState(
-            workspaceManager: workspaceManager,
-            niriEngine: niriEngine
-        )
     }
 
     private func handleLockScreenEnded() {
@@ -629,11 +635,10 @@ final class WMController {
     }
 
     func stop() {
-        commandHandler?.cleanup()
+        hasStartedServices = false
         commandHandler = nil
 
         layoutRefreshController?.resetState()
-        layoutRefreshController?.stopRefreshTimer()
         layoutRefreshController = nil
 
         mouseEventHandler?.cleanup()
@@ -745,7 +750,7 @@ final class WMController {
         pid: pid_t,
         fallbackWorkspaceId: WorkspaceDescriptor.ID?
     ) -> WorkspaceDescriptor.ID {
-        if let bundleId = appInfoCache.bundleId(for: pid),
+        if let bundleId = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
            let rule = appRulesByBundleId[bundleId],
            let wsName = rule.assignToWorkspace,
            let wsId = workspaceManager.workspaceId(for: wsName, createIfMissing: true)
@@ -753,7 +758,7 @@ final class WMController {
             return wsId
         }
 
-        if let frame = try? AXWindowService.frame(axRef) {
+        if let frame = AXWindowService.framePreferFast(axRef) {
             let center = CGPoint(x: frame.midX, y: frame.midY)
             if let monitor = workspaceManager.monitors.first(where: { $0.visibleFrame.contains(center) }),
                let workspace = workspaceManager.activeWorkspaceOrFirst(on: monitor.id)
@@ -796,9 +801,9 @@ final class WMController {
         for entry in entries {
             guard entry.layoutReason == .standard else { continue }
 
-            let title = (try? AXWindowService.title(entry.axRef)) ?? ""
+            let title = AXWindowService.titlePreferFast(windowId: UInt32(entry.windowId)) ?? ""
 
-            let appInfo = appInfoCache.info(for: entry.handle.pid)
+            let app = NSRunningApplication(processIdentifier: entry.handle.pid)
 
             let workspaceName = workspaceManager.descriptor(for: entry.workspaceId)?.name ?? "?"
 
@@ -806,8 +811,8 @@ final class WMController {
                 id: entry.handle.id,
                 handle: entry.handle,
                 title: title,
-                appName: appInfo.name,
-                appIcon: appInfo.icon,
+                appName: app?.localizedName ?? "Unknown",
+                appIcon: app?.icon,
                 workspaceName: workspaceName,
                 workspaceId: entry.workspaceId
             ))
@@ -858,13 +863,26 @@ final class WMController {
     func raiseAllFloatingWindows() {
         guard let monitor = monitorForInteraction() else { return }
 
+        let allWindows = SkyLight.shared.queryAllVisibleWindows()
+
+        let windowsOnMonitor = allWindows.filter { info in
+            let center = CGPoint(x: info.frame.midX, y: info.frame.midY)
+            return monitor.visibleFrame.contains(center)
+        }
+
+        let windowsByPid = Dictionary(grouping: windowsOnMonitor) { $0.pid }
+        let windowIdSet = Set(windowsOnMonitor.map(\.id))
+
         var lastRaisedApp: NSRunningApplication?
-        var lastRaisedWindow: AXUIElement?
+        var lastRaisedWindowId: UInt32?
         var ownAppHasFloatingWindows = false
         let ownPid = ProcessInfo.processInfo.processIdentifier
 
-        for app in NSWorkspace.shared.runningApplications where app.activationPolicy != .prohibited {
-            let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        for (pid, _) in windowsByPid {
+            guard let app = NSRunningApplication(processIdentifier: pid),
+                  app.activationPolicy != .prohibited else { continue }
+
+            let axApp = AXUIElementCreateApplication(pid)
             var windowsRef: CFTypeRef?
             guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
                   let windows = windowsRef as? [AXUIElement] else { continue }
@@ -872,30 +890,35 @@ final class WMController {
             for window in windows {
                 let axRef = AXWindowRef(id: UUID(), element: window)
 
-                guard let windowFrame = try? AXWindowService.frame(axRef) else { continue }
-                let windowCenter = CGPoint(x: windowFrame.midX, y: windowFrame.midY)
-                guard monitor.visibleFrame.contains(windowCenter) else { continue }
+                guard let windowId = try? AXWindowService.windowId(axRef),
+                      windowIdSet.contains(UInt32(windowId)) else { continue }
 
                 let hasAlwaysFloatRule = app.bundleIdentifier.flatMap { appRulesByBundleId[$0]?.alwaysFloat } == true
-
-                let windowType = AXWindowService.windowType(axRef, appPolicy: app.activationPolicy, bundleId: app.bundleIdentifier)
+                let windowType = AXWindowService.windowType(
+                    axRef,
+                    appPolicy: app.activationPolicy,
+                    bundleId: app.bundleIdentifier
+                )
                 guard windowType == .floating || hasAlwaysFloatRule else { continue }
 
-                _ = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+                SkyLight.shared.orderWindow(UInt32(windowId), relativeTo: 0, order: .above)
 
-                if app.processIdentifier == ownPid {
+                if pid == ownPid {
                     ownAppHasFloatingWindows = true
                 } else {
                     lastRaisedApp = app
-                    lastRaisedWindow = window
+                    lastRaisedWindowId = UInt32(windowId)
                 }
             }
         }
 
-        if let app = lastRaisedApp, let window = lastRaisedWindow {
+        if let app = lastRaisedApp, let windowId = lastRaisedWindowId {
             app.activate()
-            let axApp = AXUIElementCreateApplication(app.processIdentifier)
-            _ = AXUIElementSetAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, window)
+            var psn = ProcessSerialNumber()
+            if GetProcessForPID(app.processIdentifier, &psn) == noErr {
+                _ = _SLPSSetFrontProcessWithOptions(&psn, windowId, kCPSUserGenerated)
+                makeKeyWindow(psn: &psn, windowId: windowId)
+            }
         }
 
         if ownAppHasFloatingWindows {
@@ -957,11 +980,17 @@ final class WMController {
             let state = workspaceManager.niriViewportState(for: wsId)
             let workingFrame = insetWorkingFrame(from: monitor.visibleFrame)
             let gaps = CGFloat(workspaceManager.gaps)
-            guard let targetFrame = engine.targetFrameForWindow(handle, in: wsId, state: state, workingFrame: workingFrame, gaps: gaps) else {
+            guard let targetFrame = engine.targetFrameForWindow(
+                handle,
+                in: wsId,
+                state: state,
+                workingFrame: workingFrame,
+                gaps: gaps
+            ) else {
                 return
             }
             frame = targetFrame
-        } else if let axFrame = try? AXWindowService.frame(entry.axRef) {
+        } else if let axFrame = AXWindowService.framePreferFast(entry.axRef) {
             frame = axFrame
         } else {
             return
@@ -983,18 +1012,18 @@ final class WMController {
         for entry in workspaceManager.allEntries() {
             guard entry.layoutReason == .standard else { continue }
 
-            let appInfo = appInfoCache.info(for: entry.handle.pid)
-            guard let bundleId = appInfo.bundleId else { continue }
+            let app = NSRunningApplication(processIdentifier: entry.handle.pid)
+            guard let bundleId = app?.bundleIdentifier else { continue }
 
             if appInfoMap[bundleId] != nil { continue }
 
-            let frame = (try? AXWindowService.frame(entry.axRef)) ?? .zero
+            let frame = (AXWindowService.framePreferFast(entry.axRef)) ?? .zero
 
             appInfoMap[bundleId] = RunningAppInfo(
                 id: bundleId,
                 bundleId: bundleId,
-                appName: appInfo.name,
-                icon: appInfo.icon,
+                appName: app?.localizedName ?? "Unknown",
+                icon: app?.icon,
                 windowSize: frame.size
             )
         }
@@ -1010,10 +1039,8 @@ extension WMController {
     var internalAXManager: AXManager { axManager }
     var internalBorderManager: BorderManager { borderManager }
     var internalTabbedOverlayManager: TabbedColumnOverlayManager { tabbedOverlayManager }
-    var internalWindowStateCache: WindowStateCache { windowStateCache }
     var internalLockScreenObserver: LockScreenObserver { lockScreenObserver }
     var internalAppRulesByBundleId: [String: AppRule] { appRulesByBundleId }
-    var internalAppInfoCache: AppInfoCache { appInfoCache }
 
     var internalFocusedHandle: WindowHandle? {
         get { focusedHandle }
@@ -1058,4 +1085,5 @@ extension WMController {
 
     var internalLayoutRefreshController: LayoutRefreshController? { layoutRefreshController }
     var internalWorkspaceNavigationHandler: WorkspaceNavigationHandler? { workspaceNavigationHandler }
+    var internalAXEventHandler: AXEventHandler? { axEventHandler }
 }

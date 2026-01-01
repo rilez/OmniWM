@@ -29,6 +29,17 @@ enum AXWindowService {
         return title
     }
 
+    @MainActor
+    static func titlePreferFast(windowId: UInt32) -> String? {
+        SkyLight.shared.getWindowTitle(windowId)
+    }
+
+    @MainActor
+    static func titlePreferFast(_ window: AXWindowRef) -> String? {
+        guard let wid = try? windowId(window) else { return nil }
+        return SkyLight.shared.getWindowTitle(UInt32(wid))
+    }
+
     static func windowId(_ window: AXWindowRef) throws(AXErrorWrapper) -> Int {
         var value: CGWindowID = 0
 
@@ -55,6 +66,22 @@ enum AXWindowService {
         return convertFromAX(CGRect(origin: pos, size: size))
     }
 
+    @MainActor
+    static func fastFrame(windowId: UInt32) -> CGRect? {
+        SkyLight.shared.getWindowBounds(windowId)
+    }
+
+    @MainActor
+    static func fastFrame(_ window: AXWindowRef) -> CGRect? {
+        guard let windowId = try? windowId(window) else { return nil }
+        return SkyLight.shared.getWindowBounds(UInt32(windowId))
+    }
+
+    @MainActor
+    static func framePreferFast(_ window: AXWindowRef) -> CGRect? {
+        fastFrame(window)
+    }
+
     static func setFrame(_ window: AXWindowRef, frame: CGRect) throws(AXErrorWrapper) {
         let axFrame = convertToAX(frame)
         var position = CGPoint(x: axFrame.origin.x, y: axFrame.origin.y)
@@ -66,21 +93,10 @@ enum AXWindowService {
         guard err1 == .success, err2 == .success else { throw .cannotSetFrame }
     }
 
-    nonisolated(unsafe) private static var _cachedGlobalFrame: CGRect?
-
-    static func invalidateGlobalFrameCache() {
-        _cachedGlobalFrame = nil
-    }
-
     private static var globalFrame: CGRect {
-        if let cached = _cachedGlobalFrame {
-            return cached
-        }
-        let frame = NSScreen.screens.reduce(into: CGRect.null) { result, screen in
+        NSScreen.screens.reduce(into: CGRect.null) { result, screen in
             result = result.union(screen.frame)
         }
-        _cachedGlobalFrame = frame
-        return frame
     }
 
     private static func convertFromAX(_ rect: CGRect) -> CGRect {
@@ -137,9 +153,9 @@ enum AXWindowService {
         }
 
         let hasAnyButton = hasButton(window, button: kAXCloseButtonAttribute as CFString) ||
-                           hasButton(window, button: kAXFullScreenButtonAttribute as CFString) ||
-                           hasButton(window, button: kAXZoomButtonAttribute as CFString) ||
-                           hasButton(window, button: kAXMinimizeButtonAttribute as CFString)
+            hasButton(window, button: kAXFullScreenButtonAttribute as CFString) ||
+            hasButton(window, button: kAXZoomButtonAttribute as CFString) ||
+            hasButton(window, button: kAXMinimizeButtonAttribute as CFString)
 
         if !hasAnyButton {
             let sub = subrole(window)
@@ -193,6 +209,12 @@ enum AXWindowService {
         )
         guard result == .success, let boolValue = value as? Bool else { return false }
         return boolValue
+    }
+
+    @MainActor
+    static func isMinimizedPreferFast(_ window: AXWindowRef) -> Bool {
+        guard let wid = try? windowId(window) else { return false }
+        return !SkyLight.shared.isWindowOrderedIn(UInt32(wid))
     }
 
     static func setMinimized(_ window: AXWindowRef, minimized: Bool) -> Bool {
@@ -273,26 +295,13 @@ enum AXWindowService {
     }
 
     static func sizeConstraints(_ window: AXWindowRef, currentSize: CGSize? = nil) -> WindowSizeConstraints {
-        if let cached = constraintsCache[window.id] {
-            return cached
-        }
-
-        let constraints = fetchSizeConstraintsBatched(window, currentSize: currentSize)
-        constraintsCache[window.id] = constraints
-        return constraints
+        fetchSizeConstraintsBatched(window, currentSize: currentSize)
     }
 
-    static func invalidateConstraintsCache(for windowId: UUID) {
-        constraintsCache.removeValue(forKey: windowId)
-    }
-
-    static func invalidateAllConstraintsCaches() {
-        constraintsCache.removeAll()
-    }
-
-    nonisolated(unsafe) private static var constraintsCache: [UUID: WindowSizeConstraints] = [:]
-
-    private static func fetchSizeConstraintsBatched(_ window: AXWindowRef, currentSize: CGSize? = nil) -> WindowSizeConstraints {
+    private static func fetchSizeConstraintsBatched(
+        _ window: AXWindowRef,
+        currentSize: CGSize? = nil
+    ) -> WindowSizeConstraints {
         let attributes: [CFString] = [
             "AXGrowArea" as CFString,
             kAXZoomButtonAttribute as CFString,
@@ -317,7 +326,7 @@ enum AXWindowService {
         var maxSize = CGSize.zero
 
         if result == .success, let valuesArray = values as? [Any?] {
-            if valuesArray.count > 0, valuesArray[0] != nil, !(valuesArray[0] is NSError) {
+            if !valuesArray.isEmpty, valuesArray[0] != nil, !(valuesArray[0] is NSError) {
                 hasGrowArea = true
             }
             if valuesArray.count > 1, valuesArray[1] != nil, !(valuesArray[1] is NSError) {
@@ -326,13 +335,17 @@ enum AXWindowService {
             if valuesArray.count > 2, let subrole = valuesArray[2] as? String {
                 subroleValue = subrole
             }
-            if valuesArray.count > 3, let minValue = valuesArray[3], CFGetTypeID(minValue as CFTypeRef) == AXValueGetTypeID() {
+            if valuesArray.count > 3, let minValue = valuesArray[3],
+               CFGetTypeID(minValue as CFTypeRef) == AXValueGetTypeID()
+            {
                 var size = CGSize.zero
                 if AXValueGetValue(minValue as! AXValue, .cgSize, &size) {
                     minSize = size
                 }
             }
-            if valuesArray.count > 4, let maxValue = valuesArray[4], CFGetTypeID(maxValue as CFTypeRef) == AXValueGetTypeID() {
+            if valuesArray.count > 4, let maxValue = valuesArray[4],
+               CFGetTypeID(maxValue as CFTypeRef) == AXValueGetTypeID()
+            {
                 var size = CGSize.zero
                 if AXValueGetValue(maxValue as! AXValue, .cgSize, &size) {
                     maxSize = size
@@ -357,6 +370,29 @@ enum AXWindowService {
             maxSize: maxSize,
             isFixed: false
         )
+    }
+
+    static func axWindowRef(for windowId: UInt32, pid: pid_t) -> AXWindowRef? {
+        let appElement = AXUIElementCreateApplication(pid)
+        var windowsRef: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(
+            appElement,
+            kAXWindowsAttribute as CFString,
+            &windowsRef
+        )
+
+        guard result == .success, let windows = windowsRef as? [AXUIElement] else {
+            return nil
+        }
+
+        for window in windows {
+            var winId: CGWindowID = 0
+            if _AXUIElementGetWindow(window, &winId) == .success, winId == windowId {
+                return AXWindowRef(id: UUID(), element: window)
+            }
+        }
+
+        return nil
     }
 }
 

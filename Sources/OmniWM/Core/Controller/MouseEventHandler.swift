@@ -1,6 +1,12 @@
 import AppKit
 import Foundation
 
+private enum GesturePhase {
+    case idle
+    case armed
+    case committed
+}
+
 @MainActor
 final class MouseEventHandler {
     private weak var controller: WMController?
@@ -11,22 +17,17 @@ final class MouseEventHandler {
     private var currentHoveredEdges: ResizeEdge = []
     private var isResizing: Bool = false
     private var isMoving: Bool = false
-    private var gesturePhase: GesturePhase = .idle
-    private var gestureStartX: CGFloat = 0.0
-    private var gestureStartY: CGFloat = 0.0
-    private var gestureLastDeltaX: CGFloat = 0.0
 
-    private enum GesturePhase {
-        case idle
-        case armed
-        case committed
-    }
     private var lastFocusFollowsMouseTime: Date = .distantPast
     private var lastFocusFollowsMouseHandle: WindowHandle?
     private let focusFollowsMouseDebounce: TimeInterval = 0.1
 
     private static var sharedHandler: MouseEventHandler?
-    private var cachedScrollEvent: (deltaX: CGFloat, deltaY: CGFloat, momentumPhase: UInt32, phase: UInt32, modifiers: CGEventFlags)?
+
+    private var gesturePhase: GesturePhase = .idle
+    private var gestureStartX: CGFloat = 0.0
+    private var gestureStartY: CGFloat = 0.0
+    private var gestureLastDeltaX: CGFloat = 0.0
 
     init(controller: WMController) {
         self.controller = controller
@@ -42,7 +43,7 @@ final class MouseEventHandler {
             (1 << CGEventType.leftMouseUp.rawValue) |
             (1 << CGEventType.scrollWheel.rawValue)
 
-        let callback: CGEventTapCallBack = { proxy, type, event, refcon in
+        let callback: CGEventTapCallBack = { _, type, event, _ in
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                 if let tap = MouseEventHandler.sharedHandler?.eventTap {
                     CGEvent.tapEnable(tap: tap, enable: true)
@@ -270,7 +271,13 @@ final class MouseEventHandler {
                 var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
                 let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
                 let gaps = CGFloat(controller.internalWorkspaceManager.gaps)
-                if engine.interactiveMoveEnd(at: location, in: wsId, state: &state, workingFrame: workingFrame, gaps: gaps) {
+                if engine.interactiveMoveEnd(
+                    at: location,
+                    in: wsId,
+                    state: &state,
+                    workingFrame: workingFrame,
+                    gaps: gaps
+                ) {
                     controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                     controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
                 }
@@ -301,7 +308,13 @@ final class MouseEventHandler {
         }
     }
 
-    private func handleScrollWheelFromTap(deltaX: CGFloat, deltaY: CGFloat, momentumPhase: UInt32, phase: UInt32, modifiers: CGEventFlags) {
+    private func handleScrollWheelFromTap(
+        deltaX _: CGFloat,
+        deltaY: CGFloat,
+        momentumPhase: UInt32,
+        phase: UInt32,
+        modifiers: CGEventFlags
+    ) {
         guard let controller else { return }
         guard controller.isEnabled, controller.internalSettings.scrollGestureEnabled else { return }
         guard !isResizing, !isMoving else { return }
@@ -316,11 +329,10 @@ final class MouseEventHandler {
             return
         }
 
-        let scrollDeltaX: CGFloat
-        if modifiers.contains(.maskShift) {
-            scrollDeltaX = deltaY
+        let scrollDeltaX: CGFloat = if modifiers.contains(.maskShift) {
+            deltaY
         } else {
-            scrollDeltaX = -deltaY
+            -deltaY
         }
 
         guard abs(scrollDeltaX) > 0.5 else { return }

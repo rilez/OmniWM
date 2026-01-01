@@ -12,6 +12,14 @@ extension Thread {
         return job
     }
 
+    func runInLoopSync(_ body: @Sendable @escaping () -> Void) {
+        let job = RunLoopJob()
+        let action = RunLoopAction(job: job, autoCheckCancelled: false) { _ in
+            body()
+        }
+        action.perform(#selector(action.action), on: self, with: nil, waitUntilDone: true)
+    }
+
     func runInLoop<T>(_ body: @Sendable @escaping (RunLoopJob) throws -> T) async throws -> T {
         try Task.checkCancellation()
         let job = RunLoopJob()

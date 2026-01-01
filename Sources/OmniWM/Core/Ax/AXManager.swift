@@ -14,23 +14,14 @@ final class AXManager {
 
     private var appTerminationObserver: NSObjectProtocol?
     private var appLaunchObserver: NSObjectProtocol?
-    var onWindowEvent: ((AXEvent) -> Void)?
     var onAppLaunched: ((NSRunningApplication) -> Void)?
     var onAppTerminated: ((pid_t) -> Void)?
-    var onWindowDestroyedUnknown: (() -> Void)?
     private let pollIntervalNanos: UInt64 = 250_000_000
     private let pollTimeout: TimeInterval = 30
 
     init() {
         setupTerminationObserver()
         setupLaunchObserver()
-
-        AppAXContext.onAXEvent = { [weak self] event in
-            self?.onWindowEvent?(event)
-        }
-        AppAXContext.onDestroyedUnknown = { [weak self] in
-            self?.onWindowDestroyedUnknown?()
-        }
     }
 
     private func setupTerminationObserver() {
@@ -111,9 +102,6 @@ final class AXManager {
     }
 
     func currentWindowsAsync() async -> [(AXWindowRef, pid_t, Int)] {
-        let interval = signpostInterval("currentWindowsAsync")
-        defer { interval.end() }
-
         await AppAXContext.garbageCollect()
 
         let apps = NSWorkspace.shared.runningApplications.filter { shouldTrack($0) }
@@ -122,7 +110,9 @@ final class AXManager {
             for app in apps {
                 group.addTask {
                     do {
-                        guard let context = try await AppAXContext.getOrCreate(app) else { return [] }
+                        guard let context = try await AppAXContext.getOrCreate(app) else {
+                            return []
+                        }
 
                         let appWindows = try await self.withTimeoutOrNil(seconds: perAppTimeout) {
                             try await context.getWindowsAsync()
@@ -131,7 +121,8 @@ final class AXManager {
                         if let windows = appWindows {
                             return windows.map { ($0.0, app.processIdentifier, $0.1) }
                         }
-                    } catch {}
+                    } catch {
+                    }
                     return []
                 }
             }
@@ -145,34 +136,23 @@ final class AXManager {
     }
 
     func applyFramesParallel(_ frames: [(pid: pid_t, windowId: Int, frame: CGRect)]) {
-        let interval = signpostInterval("applyFramesParallel", "frames: \(frames.count)")
-        defer { interval.end() }
-
         var framesByPid: [pid_t: [(windowId: Int, frame: CGRect)]] = [:]
 
         for (pid, windowId, frame) in frames {
             framesByPid[pid, default: []].append((windowId, frame))
         }
 
-        SkyLight.shared.disableUpdates()
-        defer { SkyLight.shared.reenableUpdates() }
-
         for (pid, appFrames) in framesByPid {
-            guard let context = AppAXContext.contexts[pid] else { continue }
-            context.setFramesBatch(appFrames)
+            guard let context = AppAXContext.contexts[pid] else {
+                continue
+            }
+            context.setFramesBatchSync(appFrames)
         }
     }
 
     func applyPositionsViaSkyLight(_ positions: [(windowId: Int, origin: CGPoint)]) {
-        let interval = signpostInterval("applyPositionsViaSkyLight", "positions: \(positions.count)")
-        defer { interval.end() }
-
-        SkyLight.shared.disableUpdates()
-        defer { SkyLight.shared.reenableUpdates() }
-
-        for (windowId, origin) in positions {
-            _ = SkyLight.shared.moveWindow(UInt32(windowId), to: origin)
-        }
+        let batchPositions = positions.map { (windowId: UInt32($0.windowId), origin: $0.origin) }
+        SkyLight.shared.batchMoveWindows(batchPositions)
     }
 
     private func withTimeoutOrNil<T: Sendable>(
@@ -205,11 +185,4 @@ final class AXManager {
 
         return true
     }
-}
-
-enum AXEvent {
-    case created(AXWindowRef, pid_t, Int)
-    case removed(AXWindowRef, pid_t, Int)
-    case changed(AXWindowRef, pid_t, Int)
-    case focused(AXWindowRef, pid_t, Int)
 }

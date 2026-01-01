@@ -112,7 +112,7 @@ struct WorkspaceConfiguration: Codable, Identifiable, Equatable {
     var isPersistent: Bool
 
     var effectiveDisplayName: String {
-        displayName?.isEmpty == false ? displayName! : name
+        displayName.flatMap { $0.isEmpty ? nil : $0 } ?? name
     }
 
     init(

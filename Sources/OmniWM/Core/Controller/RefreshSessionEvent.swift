@@ -14,21 +14,21 @@ enum RefreshSessionEvent {
 
     var requiresFullEnumeration: Bool {
         switch self {
-        case .timerRefresh, .startup, .displayConfigChanged:
-            return true
+        case .displayConfigChanged, .startup, .timerRefresh:
+            true
         default:
-            return false
+            false
         }
     }
 
     var debounceInterval: UInt64 {
         switch self {
         case .axWindowChanged:
-            return 8_000_000
+            8_000_000
         case .axWindowCreated, .axWindowFocused:
-            return 4_000_000
+            4_000_000
         default:
-            return 0
+            0
         }
     }
 }

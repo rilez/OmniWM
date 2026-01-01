@@ -37,7 +37,7 @@ struct HotkeyBinding: Codable, Identifiable {
             .workspace
         case .focus, .focusColumn, .focusColumnFirst, .focusColumnLast,
              .focusDownOrLeft, .focusPrevious, .focusUpOrRight, .focusWindowBottom, .focusWindowTop,
-             .openWindowFinder, .openMenuAnywhere, .openMenuPalette:
+             .openMenuAnywhere, .openMenuPalette, .openWindowFinder:
             .focus
         case .move, .swap:
             .move

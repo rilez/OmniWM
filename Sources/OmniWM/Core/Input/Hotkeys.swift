@@ -91,7 +91,6 @@ final class HotkeyCenter {
                 idToCommand[nextId] = binding.command
             } else {
                 registrationFailures.insert(binding.command)
-                NSLog("HotkeyCenter: Failed to register hotkey for \(binding.command.displayName) (status: \(status))")
             }
             nextId += 1
         }

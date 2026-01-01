@@ -2,16 +2,15 @@ import AppKit
 import QuartzCore
 
 final class BorderWindow: NSWindow {
-    private let borderLayer: CAShapeLayer
+    private var edgeLayers: [CAShapeLayer] = []
+    private var cornerLayers: [CAShapeLayer] = []
     private var config: BorderConfig
-    private var currentCornerRadius: CGFloat = 9
-    private var snakeLayer1: CAShapeLayer?
-    private var snakeLayer2: CAShapeLayer?
-    private var effectRunning = false
+    private var lastTargetWid: UInt32?
+    private var currentGeometry: BorderGeometry?
+    private var currentCornerRadius: CornerRadius = .zero
 
     init(config: BorderConfig) {
         self.config = config
-        borderLayer = CAShapeLayer()
 
         super.init(
             contentRect: .zero,
@@ -20,11 +19,6 @@ final class BorderWindow: NSWindow {
             defer: false
         )
 
-        setupWindow()
-        setupLayer()
-    }
-
-    private func setupWindow() {
         isOpaque = false
         backgroundColor = .clear
         level = .floating
@@ -32,222 +26,252 @@ final class BorderWindow: NSWindow {
         hasShadow = false
         collectionBehavior = [.canJoinAllSpaces, .stationary]
 
-        contentView?.wantsLayer = true
-        contentView?.layer?.addSublayer(borderLayer)
-    }
+        let rootLayer = CALayer()
+        rootLayer.masksToBounds = false
 
-    private func setupLayer() {
-        borderLayer.fillColor = nil
-        borderLayer.strokeColor = config.color.cgColor
-        borderLayer.lineWidth = config.width
+        for _ in 0..<4 {
+            let layer = CAShapeLayer()
+            layer.fillColor = config.color.cgColor
+            layer.strokeColor = nil
+            layer.lineWidth = 0
+            edgeLayers.append(layer)
+            rootLayer.addSublayer(layer)
+        }
+
+        for _ in 0..<4 {
+            let layer = CAShapeLayer()
+            layer.fillColor = config.color.cgColor
+            layer.strokeColor = nil
+            layer.lineWidth = 0
+            cornerLayers.append(layer)
+            rootLayer.addSublayer(layer)
+        }
+
+        contentView?.layer = rootLayer
+        contentView?.wantsLayer = true
     }
 
     private var wid: UInt32 { UInt32(windowNumber) }
 
-    func update(frame targetFrame: CGRect, cornerRadius: CGFloat, config: BorderConfig, targetWid: UInt32? = nil) {
-        self.config = config
-        currentCornerRadius = cornerRadius
+    func update(frame targetFrame: CGRect, windowCornerRadius: CornerRadius, targetWid: UInt32? = nil) {
+        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
 
-        let expansion = config.width / 2
-        let borderFrame = targetFrame.insetBy(dx: -expansion, dy: -expansion)
+        let geometry = calculateBorderGeometry(
+            windowSize: targetFrame.size,
+            borderWidth: config.width,
+            windowCornerRadius: windowCornerRadius,
+            scale: scale
+        )
 
-        SkyLight.shared.disableUpdates()
-        defer { SkyLight.shared.reenableUpdates() }
+        currentGeometry = geometry
+        currentCornerRadius = windowCornerRadius
+
+        let borderFrame = CGRect(
+            x: targetFrame.origin.x - config.width,
+            y: targetFrame.origin.y - config.width,
+            width: targetFrame.width + config.width * 2,
+            height: targetFrame.height + config.width * 2
+        )
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
 
         setFrame(borderFrame, display: false)
+        updateEdgeLayers(geometry: geometry)
+        updateCornerLayers(geometry: geometry, scale: scale)
 
-        borderLayer.frame = CGRect(origin: .zero, size: borderFrame.size)
-        borderLayer.strokeColor = config.color.cgColor
-        borderLayer.lineWidth = config.width
-
-        let pathRect = CGRect(origin: .zero, size: borderFrame.size).insetBy(
-            dx: config.width / 2,
-            dy: config.width / 2
-        )
-
-        let adjustedRadius = max(0, cornerRadius + config.width / 2)
-        let path = CGPath(
-            roundedRect: pathRect,
-            cornerWidth: adjustedRadius,
-            cornerHeight: adjustedRadius,
-            transform: nil
-        )
-        borderLayer.path = path
+        CATransaction.commit()
 
         if let targetWid {
-            SkyLight.shared.orderWindow(wid, relativeTo: targetWid, order: .below)
+            lastTargetWid = targetWid
+            SkyLight.shared.moveAndOrderWindow(wid, to: borderFrame.origin, relativeTo: targetWid, order: .below)
         }
     }
 
-    func updateConfig(_ config: BorderConfig) {
-        let effectChanged = self.config.effectType != config.effectType ||
-            self.config.pulseSpeed != config.pulseSpeed ||
-            self.config.snakeSpeed != config.snakeSpeed ||
-            self.config.snakeSecondaryColor != config.snakeSecondaryColor ||
-            self.config.color != config.color
+    private func updateEdgeLayers(geometry: BorderGeometry) {
+        for i in 0..<4 {
+            let size = geometry.sizes[i]
+            let location = geometry.locations[i]
 
-        self.config = config
-        borderLayer.strokeColor = config.color.cgColor
-        borderLayer.lineWidth = config.width
-
-        if frame.size != .zero {
-            let windowBounds = CGRect(origin: .zero, size: frame.size)
-            let pathRect = windowBounds.insetBy(dx: config.width / 2, dy: config.width / 2)
-            let adjustedRadius = max(0, currentCornerRadius + config.width / 2)
-            let path = CGPath(
-                roundedRect: pathRect,
-                cornerWidth: adjustedRadius,
-                cornerHeight: adjustedRadius,
-                transform: nil
+            let localOrigin = CGPoint(
+                x: location.x + config.width,
+                y: location.y + config.width
             )
-            borderLayer.path = path
-            updateSnakePaths(path)
-        }
 
-        if effectChanged {
-            stopEffect()
-            startEffect()
+            edgeLayers[i].frame = CGRect(origin: localOrigin, size: size)
+            edgeLayers[i].path = CGPath(rect: CGRect(origin: .zero, size: size), transform: nil)
         }
     }
 
-    func startEffect() {
-        guard !effectRunning else { return }
-        effectRunning = true
+    private func updateCornerLayers(geometry: BorderGeometry, scale: CGFloat) {
+        let corners: [BorderPiece] = [
+            .topLeftCorner,
+            .topRightCorner,
+            .bottomRightCorner,
+            .bottomLeftCorner
+        ]
 
-        switch config.effectType {
-        case .none:
-            borderLayer.isHidden = false
-            stopEffect()
-        case .pulse:
-            borderLayer.isHidden = false
-            startPulseAnimation()
-        case .snake:
-            borderLayer.isHidden = true
-            setupSnakeLayers()
-            startSnakeAnimation()
+        for (index, piece) in corners.enumerated() {
+            let size = geometry.sizes[piece.rawValue]
+            let location = geometry.locations[piece.rawValue]
+
+            let localOrigin = CGPoint(
+                x: location.x + config.width,
+                y: location.y + config.width
+            )
+
+            cornerLayers[index].frame = CGRect(origin: localOrigin, size: size)
+
+            let path = createCornerPath(
+                cornerSize: size,
+                geometry: geometry,
+                corner: piece,
+                thickenCorners: config.thickenCorners
+            )
+            cornerLayers[index].path = path
         }
     }
 
-    func stopEffect() {
-        effectRunning = false
-        borderLayer.removeAllAnimations()
-        borderLayer.opacity = 1.0
-        borderLayer.strokeColor = config.color.cgColor
+    private func createCornerPath(
+        cornerSize: CGSize,
+        geometry: BorderGeometry,
+        corner: BorderPiece,
+        thickenCorners: Bool
+    ) -> CGPath {
+        let path = CGMutablePath()
+        let extra: CGFloat = thickenCorners ? 0.5 : 0
 
-        snakeLayer1?.removeAllAnimations()
-        snakeLayer1?.removeFromSuperlayer()
-        snakeLayer1 = nil
+        let (outerR, rawInnerR): (CGFloat, CGFloat) = {
+            switch corner {
+            case .topLeftCorner:
+                return (geometry.outerCornerRadius.topLeft, geometry.innerCornerRadius.topLeft)
+            case .topRightCorner:
+                return (geometry.outerCornerRadius.topRight, geometry.innerCornerRadius.topRight)
+            case .bottomRightCorner:
+                return (geometry.outerCornerRadius.bottomRight, geometry.innerCornerRadius.bottomRight)
+            case .bottomLeftCorner:
+                return (geometry.outerCornerRadius.bottomLeft, geometry.innerCornerRadius.bottomLeft)
+            default:
+                return (0, 0)
+            }
+        }()
 
-        snakeLayer2?.removeAllAnimations()
-        snakeLayer2?.removeFromSuperlayer()
-        snakeLayer2 = nil
+        let innerR = max(0, rawInnerR - extra)
+
+        if outerR <= 0 {
+            path.addRect(CGRect(origin: .zero, size: cornerSize))
+            return path
+        }
+
+        switch corner {
+        case .topLeftCorner:
+            path.move(to: CGPoint(x: 0, y: outerR))
+            path.addArc(
+                center: CGPoint(x: outerR, y: outerR),
+                radius: outerR,
+                startAngle: .pi,
+                endAngle: -.pi / 2,
+                clockwise: false
+            )
+            if innerR > 0 {
+                path.addLine(to: CGPoint(x: outerR, y: outerR - innerR))
+                path.addArc(
+                    center: CGPoint(x: outerR, y: outerR),
+                    radius: innerR,
+                    startAngle: -.pi / 2,
+                    endAngle: .pi,
+                    clockwise: true
+                )
+            } else {
+                path.addLine(to: CGPoint(x: outerR, y: outerR))
+            }
+            path.closeSubpath()
+
+        case .topRightCorner:
+            path.move(to: CGPoint(x: outerR, y: outerR))
+            path.addArc(
+                center: CGPoint(x: 0, y: outerR),
+                radius: outerR,
+                startAngle: 0,
+                endAngle: -.pi / 2,
+                clockwise: true
+            )
+            if innerR > 0 {
+                path.addLine(to: CGPoint(x: 0, y: outerR - innerR))
+                path.addArc(
+                    center: CGPoint(x: 0, y: outerR),
+                    radius: innerR,
+                    startAngle: -.pi / 2,
+                    endAngle: 0,
+                    clockwise: false
+                )
+            } else {
+                path.addLine(to: CGPoint(x: 0, y: outerR))
+            }
+            path.closeSubpath()
+
+        case .bottomRightCorner:
+            path.move(to: CGPoint(x: 0, y: outerR))
+            path.addArc(
+                center: CGPoint(x: 0, y: 0),
+                radius: outerR,
+                startAngle: .pi / 2,
+                endAngle: 0,
+                clockwise: true
+            )
+            if innerR > 0 {
+                path.addLine(to: CGPoint(x: innerR, y: 0))
+                path.addArc(
+                    center: CGPoint(x: 0, y: 0),
+                    radius: innerR,
+                    startAngle: 0,
+                    endAngle: .pi / 2,
+                    clockwise: false
+                )
+            } else {
+                path.addLine(to: CGPoint(x: 0, y: 0))
+            }
+            path.closeSubpath()
+
+        case .bottomLeftCorner:
+            path.move(to: CGPoint(x: 0, y: 0))
+            path.addArc(
+                center: CGPoint(x: outerR, y: 0),
+                radius: outerR,
+                startAngle: .pi,
+                endAngle: .pi / 2,
+                clockwise: false
+            )
+            if innerR > 0 {
+                path.addLine(to: CGPoint(x: outerR, y: innerR))
+                path.addArc(
+                    center: CGPoint(x: outerR, y: 0),
+                    radius: innerR,
+                    startAngle: .pi / 2,
+                    endAngle: .pi,
+                    clockwise: true
+                )
+            } else {
+                path.addLine(to: CGPoint(x: outerR, y: 0))
+            }
+            path.closeSubpath()
+
+        default:
+            path.addRect(CGRect(origin: .zero, size: cornerSize))
+        }
+
+        return path
     }
 
-    private func startPulseAnimation() {
-        let opacityAnim = CABasicAnimation(keyPath: "opacity")
-        opacityAnim.fromValue = 1.0
-        opacityAnim.toValue = 0.4
-        opacityAnim.duration = 1.0 / Double(config.pulseSpeed)
-        opacityAnim.autoreverses = true
-        opacityAnim.repeatCount = .infinity
-        opacityAnim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+    func updateConfig(_ newConfig: BorderConfig) {
+        config = newConfig
+        let cgColor = config.color.cgColor
 
-        let brightenedColor = brightenColor(config.color)
-        let colorAnim = CABasicAnimation(keyPath: "strokeColor")
-        colorAnim.fromValue = config.color.cgColor
-        colorAnim.toValue = brightenedColor.cgColor
-        colorAnim.duration = 1.0 / Double(config.pulseSpeed)
-        colorAnim.autoreverses = true
-        colorAnim.repeatCount = .infinity
-        colorAnim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-
-        borderLayer.add(opacityAnim, forKey: "pulseOpacity")
-        borderLayer.add(colorAnim, forKey: "pulseBrightness")
-    }
-
-    private func brightenColor(_ color: NSColor) -> NSColor {
-        guard let rgb = color.usingColorSpace(.deviceRGB) else { return color }
-        return NSColor(
-            hue: rgb.hueComponent,
-            saturation: max(0, rgb.saturationComponent - 0.2),
-            brightness: min(1.0, rgb.brightnessComponent + 0.3),
-            alpha: rgb.alphaComponent
-        )
-    }
-
-    private func setupSnakeLayers() {
-        snakeLayer1?.removeFromSuperlayer()
-        snakeLayer2?.removeFromSuperlayer()
-
-        guard let path = borderLayer.path else { return }
-        let perimeter = calculatePerimeter()
-
-        let layer1 = CAShapeLayer()
-        layer1.path = path
-        layer1.fillColor = nil
-        layer1.strokeColor = config.color.cgColor
-        layer1.lineWidth = config.width
-        layer1.lineDashPattern = [NSNumber(value: perimeter / 2), NSNumber(value: perimeter / 2)]
-        layer1.frame = CGRect(origin: .zero, size: frame.size)
-
-        let layer2 = CAShapeLayer()
-        layer2.path = path
-        layer2.fillColor = nil
-        layer2.strokeColor = config.snakeSecondaryColor.cgColor
-        layer2.lineWidth = config.width
-        layer2.lineDashPattern = [NSNumber(value: perimeter / 2), NSNumber(value: perimeter / 2)]
-        layer2.lineDashPhase = CGFloat(perimeter / 2)
-        layer2.frame = CGRect(origin: .zero, size: frame.size)
-
-        contentView?.layer?.addSublayer(layer1)
-        contentView?.layer?.addSublayer(layer2)
-
-        snakeLayer1 = layer1
-        snakeLayer2 = layer2
-    }
-
-    private func calculatePerimeter() -> Double {
-        let rect = CGRect(origin: .zero, size: frame.size).insetBy(
-            dx: config.width / 2, dy: config.width / 2
-        )
-        let adjustedRadius = max(0, currentCornerRadius + config.width / 2)
-        let straightParts = 2 * (rect.width - 2 * adjustedRadius) + 2 * (rect.height - 2 * adjustedRadius)
-        let cornerParts = 2 * .pi * adjustedRadius
-        return Double(max(straightParts + cornerParts, 1))
-    }
-
-    private func updateSnakePaths(_ path: CGPath) {
-        guard snakeLayer1 != nil else { return }
-        let perimeter = calculatePerimeter()
-
-        snakeLayer1?.path = path
-        snakeLayer1?.lineDashPattern = [NSNumber(value: perimeter / 2), NSNumber(value: perimeter / 2)]
-        snakeLayer1?.frame = CGRect(origin: .zero, size: frame.size)
-
-        snakeLayer2?.path = path
-        snakeLayer2?.lineDashPattern = [NSNumber(value: perimeter / 2), NSNumber(value: perimeter / 2)]
-        snakeLayer2?.frame = CGRect(origin: .zero, size: frame.size)
-    }
-
-    private func startSnakeAnimation() {
-        let perimeter = calculatePerimeter()
-        let duration = 1.0 / Double(config.snakeSpeed)
-
-        let anim1 = CABasicAnimation(keyPath: "lineDashPhase")
-        anim1.fromValue = 0
-        anim1.toValue = perimeter
-        anim1.duration = duration
-        anim1.repeatCount = .infinity
-        anim1.timingFunction = CAMediaTimingFunction(name: .linear)
-
-        let anim2 = CABasicAnimation(keyPath: "lineDashPhase")
-        anim2.fromValue = perimeter / 2
-        anim2.toValue = perimeter / 2 + perimeter
-        anim2.duration = duration
-        anim2.repeatCount = .infinity
-        anim2.timingFunction = CAMediaTimingFunction(name: .linear)
-
-        snakeLayer1?.add(anim1, forKey: "snakePhase")
-        snakeLayer2?.add(anim2, forKey: "snakePhase")
+        for layer in edgeLayers {
+            layer.fillColor = cgColor
+        }
+        for layer in cornerLayers {
+            layer.fillColor = cgColor
+        }
     }
 }

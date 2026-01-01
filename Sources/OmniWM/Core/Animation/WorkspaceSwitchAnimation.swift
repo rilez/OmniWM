@@ -8,27 +8,27 @@ enum WorkspaceSwitch {
     func currentIndex() -> Double {
         switch self {
         case let .animation(anim):
-            return anim.value(at: CACurrentMediaTime())
+            anim.value(at: CACurrentMediaTime())
         case let .gesture(gesture):
-            return gesture.currentIndex
+            gesture.currentIndex
         }
     }
 
     func isAnimating() -> Bool {
         switch self {
         case let .animation(anim):
-            return !anim.isComplete(at: CACurrentMediaTime())
+            !anim.isComplete(at: CACurrentMediaTime())
         case .gesture:
-            return true
+            true
         }
     }
 
     mutating func tick(at time: TimeInterval) -> Bool {
         switch self {
         case let .animation(anim):
-            return !anim.isComplete(at: time)
+            !anim.isComplete(at: time)
         case .gesture:
-            return true
+            true
         }
     }
 }

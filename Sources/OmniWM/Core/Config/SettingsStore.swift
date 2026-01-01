@@ -100,34 +100,6 @@ final class SettingsStore {
         didSet { defaults.set(borderColorAlpha, forKey: Keys.borderColorAlpha) }
     }
 
-    var borderEffectType: String {
-        didSet { defaults.set(borderEffectType, forKey: Keys.borderEffectType) }
-    }
-
-    var borderPulseSpeed: Double {
-        didSet { defaults.set(borderPulseSpeed, forKey: Keys.borderPulseSpeed) }
-    }
-
-    var borderSnakeSpeed: Double {
-        didSet { defaults.set(borderSnakeSpeed, forKey: Keys.borderSnakeSpeed) }
-    }
-
-    var borderSecondaryColorRed: Double {
-        didSet { defaults.set(borderSecondaryColorRed, forKey: Keys.borderSecondaryColorRed) }
-    }
-
-    var borderSecondaryColorGreen: Double {
-        didSet { defaults.set(borderSecondaryColorGreen, forKey: Keys.borderSecondaryColorGreen) }
-    }
-
-    var borderSecondaryColorBlue: Double {
-        didSet { defaults.set(borderSecondaryColorBlue, forKey: Keys.borderSecondaryColorBlue) }
-    }
-
-    var borderSecondaryColorAlpha: Double {
-        didSet { defaults.set(borderSecondaryColorAlpha, forKey: Keys.borderSecondaryColorAlpha) }
-    }
-
     var hotkeyBindings: [HotkeyBinding] {
         didSet { saveBindings() }
     }
@@ -269,13 +241,6 @@ final class SettingsStore {
         borderColorGreen = defaults.object(forKey: Keys.borderColorGreen) as? Double ?? 0.5
         borderColorBlue = defaults.object(forKey: Keys.borderColorBlue) as? Double ?? 1.0
         borderColorAlpha = defaults.object(forKey: Keys.borderColorAlpha) as? Double ?? 1.0
-        borderEffectType = defaults.string(forKey: Keys.borderEffectType) ?? "none"
-        borderPulseSpeed = defaults.object(forKey: Keys.borderPulseSpeed) as? Double ?? 1.0
-        borderSnakeSpeed = defaults.object(forKey: Keys.borderSnakeSpeed) as? Double ?? 1.0
-        borderSecondaryColorRed = defaults.object(forKey: Keys.borderSecondaryColorRed) as? Double ?? 1.0
-        borderSecondaryColorGreen = defaults.object(forKey: Keys.borderSecondaryColorGreen) as? Double ?? 0.5
-        borderSecondaryColorBlue = defaults.object(forKey: Keys.borderSecondaryColorBlue) as? Double ?? 0.0
-        borderSecondaryColorAlpha = defaults.object(forKey: Keys.borderSecondaryColorAlpha) as? Double ?? 1.0
 
         hotkeyBindings = Self.loadBindings(from: defaults)
 
@@ -308,7 +273,10 @@ final class SettingsStore {
 
         menuAnywhereNativeEnabled = defaults.object(forKey: Keys.menuAnywhereNativeEnabled) as? Bool ?? true
         menuAnywherePaletteEnabled = defaults.object(forKey: Keys.menuAnywherePaletteEnabled) as? Bool ?? true
-        menuAnywherePosition = MenuAnywherePosition(rawValue: defaults.string(forKey: Keys.menuAnywherePosition) ?? "") ?? .cursor
+        menuAnywherePosition = MenuAnywherePosition(
+            rawValue: defaults.string(forKey: Keys.menuAnywherePosition) ?? ""
+        ) ??
+            .cursor
         menuAnywhereShowShortcuts = defaults.object(forKey: Keys.menuAnywhereShowShortcuts) as? Bool ?? true
     }
 
@@ -616,7 +584,8 @@ final class SettingsStore {
 
     func effectiveOrientation(for monitor: Monitor) -> Monitor.Orientation {
         if let override = orientationSettings(for: monitor.name),
-           let orientation = override.orientation {
+           let orientation = override.orientation
+        {
             return orientation
         }
         return monitor.autoOrientation
@@ -670,9 +639,11 @@ final class SettingsStore {
         return ResolvedNiriSettings(
             maxVisibleColumns: override?.maxVisibleColumns ?? niriMaxVisibleColumns,
             maxWindowsPerColumn: override?.maxWindowsPerColumn ?? niriMaxWindowsPerColumn,
-            centerFocusedColumn: override?.centerFocusedColumn.flatMap { CenterFocusedColumn(rawValue: $0) } ?? niriCenterFocusedColumn,
+            centerFocusedColumn: override?.centerFocusedColumn
+                .flatMap { CenterFocusedColumn(rawValue: $0) } ?? niriCenterFocusedColumn,
             alwaysCenterSingleColumn: override?.alwaysCenterSingleColumn ?? niriAlwaysCenterSingleColumn,
-            singleWindowAspectRatio: override?.singleWindowAspectRatio.flatMap { SingleWindowAspectRatio(rawValue: $0) } ?? niriSingleWindowAspectRatio,
+            singleWindowAspectRatio: override?.singleWindowAspectRatio
+                .flatMap { SingleWindowAspectRatio(rawValue: $0) } ?? niriSingleWindowAspectRatio,
             infiniteLoop: override?.infiniteLoop ?? niriInfiniteLoop
         )
     }
@@ -709,13 +680,6 @@ private enum Keys {
     static let borderColorGreen = "settings.borderColorGreen"
     static let borderColorBlue = "settings.borderColorBlue"
     static let borderColorAlpha = "settings.borderColorAlpha"
-    static let borderEffectType = "settings.borderEffectType"
-    static let borderPulseSpeed = "settings.borderPulseSpeed"
-    static let borderSnakeSpeed = "settings.borderSnakeSpeed"
-    static let borderSecondaryColorRed = "settings.borderSecondaryColorRed"
-    static let borderSecondaryColorGreen = "settings.borderSecondaryColorGreen"
-    static let borderSecondaryColorBlue = "settings.borderSecondaryColorBlue"
-    static let borderSecondaryColorAlpha = "settings.borderSecondaryColorAlpha"
 
     static let hotkeyBindings = "settings.hotkeyBindings"
 
@@ -779,4 +743,3 @@ struct MonitorOrientationSettings: Codable, Equatable {
     let monitorName: String
     var orientation: Monitor.Orientation?
 }
-

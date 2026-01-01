@@ -57,7 +57,6 @@ final class DisplayConfigurationObserver: NSObject {
     }
 
     private func handleDisplayChange() {
-        AXWindowService.invalidateGlobalFrameCache()
         let currentMonitors = Monitor.current()
         let currentById = Dictionary(uniqueKeysWithValues: currentMonitors.map { ($0.id, $0) })
         let currentIds = Set(currentById.keys)

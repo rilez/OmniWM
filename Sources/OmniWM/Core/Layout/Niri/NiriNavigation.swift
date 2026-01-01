@@ -29,7 +29,9 @@ extension NiriLayoutEngine {
             targetIdx = ((raw % len) + len) % len
         } else {
             let raw = currentIdx + steps
-            guard raw >= 0, raw < len else { return nil }
+            guard raw >= 0, raw < len else {
+                return nil
+            }
             targetIdx = raw
         }
 
@@ -59,6 +61,8 @@ extension NiriLayoutEngine {
         ) else {
             return nil
         }
+
+        state.activatePrevColumnOnRemoval = nil
 
         let edge: NiriRevealEdge = (direction == .right) ? .right : .left
         ensureSelectionVisible(
@@ -154,19 +158,18 @@ extension NiriLayoutEngine {
             return
         }
 
-        state.ensureColumnVisible(
-            columnIndex: targetIdx,
+        let prevIdx = fromColumnIndex ?? state.activeColumnIndex
+
+        state.transitionToColumn(
+            targetIdx,
             columns: cols,
             gap: gaps,
             viewportWidth: workingFrame.width,
-            preferredEdge: edge,
             animate: true,
             centerMode: centerFocusedColumn,
-            animationConfig: animationConfig,
-            fromColumnIndex: fromColumnIndex
+            fromColumnIndex: prevIdx
         )
 
-        state.activeColumnIndex = targetIdx
         state.selectionProgress = 0.0
     }
 
@@ -181,7 +184,7 @@ extension NiriLayoutEngine {
     ) -> NiriNode? {
         switch orientation {
         case .horizontal:
-            return focusTargetHorizontal(
+            focusTargetHorizontal(
                 direction: direction,
                 currentSelection: currentSelection,
                 in: workspaceId,
@@ -190,7 +193,7 @@ extension NiriLayoutEngine {
                 gaps: gaps
             )
         case .vertical:
-            return focusTargetVertical(
+            focusTargetVertical(
                 direction: direction,
                 currentSelection: currentSelection,
                 in: workspaceId,
@@ -248,7 +251,7 @@ extension NiriLayoutEngine {
         gaps: CGFloat
     ) -> NiriNode? {
         switch direction {
-        case .up, .down:
+        case .down, .up:
             let mappedDirection: Direction = (direction == .up) ? .left : .right
             return moveSelectionVerticalOrientation(
                 direction: mappedDirection,
@@ -295,6 +298,8 @@ extension NiriLayoutEngine {
         ) else {
             return nil
         }
+
+        state.activatePrevColumnOnRemoval = nil
 
         ensureSelectionVisibleVertical(
             node: newSelection,
@@ -384,6 +389,10 @@ extension NiriLayoutEngine {
             return
         }
 
+        let prevIdx = state.activeColumnIndex
+        state.activeColumnIndex = targetIdx
+        state.activatePrevColumnOnRemoval = nil
+
         state.ensureRowVisible(
             rowIndex: targetIdx,
             rows: rows,
@@ -392,10 +401,9 @@ extension NiriLayoutEngine {
             animate: true,
             centerMode: centerFocusedColumn,
             animationConfig: animationConfig,
-            fromRowIndex: fromRowIndex
+            fromRowIndex: fromRowIndex ?? prevIdx
         )
 
-        state.activeColumnIndex = targetIdx
         state.selectionProgress = 0.0
     }
 
@@ -474,6 +482,8 @@ extension NiriLayoutEngine {
             0
         }
 
+        state.activatePrevColumnOnRemoval = nil
+
         let firstColumn = cols[0]
         let windows = firstColumn.windowNodes
         guard !windows.isEmpty else { return firstColumn.firstChild() }
@@ -505,6 +515,8 @@ extension NiriLayoutEngine {
         } else {
             0
         }
+
+        state.activatePrevColumnOnRemoval = nil
 
         let lastColumn = cols[cols.count - 1]
         let windows = lastColumn.windowNodes
@@ -538,6 +550,8 @@ extension NiriLayoutEngine {
         } else {
             0
         }
+
+        state.activatePrevColumnOnRemoval = nil
 
         let targetColumn = cols[columnIndex]
         let windows = targetColumn.windowNodes
@@ -637,6 +651,8 @@ extension NiriLayoutEngine {
         ) else {
             return nil
         }
+
+        state.activatePrevColumnOnRemoval = nil
 
         ensureSelectionVisible(
             node: previousWindow,

@@ -8,20 +8,20 @@ final class AppAXContext: @unchecked Sendable {
     let nsApp: NSRunningApplication
 
     private let axApp: ThreadGuardedValue<AXUIElement>
-    private let subscription: ThreadGuardedValue<AXSubscription?>
     private let windows: ThreadGuardedValue<[Int: AXUIElement]>
     private var thread: Thread?
     private var setFrameJobs: [Int: RunLoopJob] = [:]
-    private let windowSubscriptions: ThreadGuardedValue<[Int: AXSubscription]>
+    private let axObserver: ThreadGuardedValue<AXObserver?>
+    private let subscribedWindowIds: ThreadGuardedValue<Set<Int>>
 
     var lastNativeFocusedWindowId: Int?
 
     private var windowsCount: Int = 0
 
     @MainActor private static var focusJob: RunLoopJob?
-
-    @MainActor static var onAXEvent: ((AXEvent) -> Void)?
-    @MainActor static var onDestroyedUnknown: (() -> Void)?
+    @MainActor static var onWindowDestroyed: ((pid_t, Int) -> Void)?
+    @MainActor static var onWindowDestroyedUnknown: (() -> Void)?
+    @MainActor static var onFocusedWindowChanged: ((pid_t) -> Void)?
 
     @MainActor static var contexts: [pid_t: AppAXContext] = [:]
     @MainActor private static var wipPids: Set<pid_t> = []
@@ -29,16 +29,16 @@ final class AppAXContext: @unchecked Sendable {
     private init(
         _ nsApp: NSRunningApplication,
         _ axApp: AXUIElement,
-        _ subscription: AXSubscription?,
+        _ observer: AXObserver?,
         _ thread: Thread
     ) {
         self.nsApp = nsApp
         pid = nsApp.processIdentifier
         bundleId = nsApp.bundleIdentifier
         self.axApp = .init(axApp)
-        self.subscription = .init(subscription)
         windows = .init([:])
-        windowSubscriptions = .init([:])
+        axObserver = .init(observer)
+        subscribedWindowIds = .init([])
         self.thread = thread
     }
 
@@ -59,38 +59,52 @@ final class AppAXContext: @unchecked Sendable {
         let thread = Thread {
             $appThreadToken.withValue(AppThreadToken(pid: pid, bundleId: nsApp.bundleIdentifier)) {
                 let axApp = AXUIElementCreateApplication(pid)
-                let job = RunLoopJob()
 
-                let notifications = [
-                    kAXWindowCreatedNotification,
-                    kAXFocusedWindowChangedNotification
-                ]
-                let subscription = try? AXSubscription.bulkSubscribe(
-                    nsApp,
-                    axApp,
-                    job,
-                    notifications.map { $0 as String },
-                    axObserverCallback
-                )
+                var observer: AXObserver?
+                AXObserverCreate(pid, axWindowDestroyedCallback, &observer)
 
-                let isGood = subscription != nil
-                let context = isGood ? AppAXContext(nsApp, axApp, subscription, Thread.current) : nil
+                if let obs = observer {
+                    CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(obs), .defaultMode)
+                }
+
+                var focusObserver: AXObserver?
+                AXObserverCreate(pid, axFocusedWindowChangedCallback, &focusObserver)
+
+                if let focusObs = focusObserver {
+                    AXObserverAddNotification(
+                        focusObs,
+                        axApp,
+                        kAXFocusedWindowChangedNotification as CFString,
+                        nil
+                    )
+                    CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(focusObs), .defaultMode)
+                }
+
+                let context = AppAXContext(nsApp, axApp, observer, Thread.current)
 
                 Task { @MainActor in
                     contexts[pid] = context
                     wipPids.remove(pid)
                 }
 
-                if isGood {
-                    CFRunLoopRun()
-                }
+                let port = NSMachPort()
+                RunLoop.current.add(port, forMode: .default)
+
+                CFRunLoopRun()
             }
         }
         thread.name = "OmniWM-AX-\(nsApp.bundleIdentifier ?? "pid:\(pid)")"
         thread.start()
 
+        let startTime = Date()
+        let maxWait: TimeInterval = 2.0
+
         while contexts[pid] == nil, wipPids.contains(pid) {
             try Task.checkCancellation()
+            if Date().timeIntervalSince(startTime) > maxWait {
+                wipPids.remove(pid)
+                return nil
+            }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
 
@@ -100,10 +114,13 @@ final class AppAXContext: @unchecked Sendable {
     func getWindowsAsync() async throws -> [(AXWindowRef, Int)] {
         guard let thread else { return [] }
 
-        let interval = signpostIntervalNonIsolated("getWindowsAsync", "pid: \(pid)")
-        defer { interval.end() }
-
-        let (results, deadWindowIds) = try await thread.runInLoop { [axApp, windows, windowSubscriptions, nsApp] job -> (
+        let (results, deadWindowIds) = try await thread.runInLoop { [
+            axApp,
+            windows,
+            nsApp,
+            axObserver,
+            subscribedWindowIds
+        ] job -> (
             [(AXWindowRef, Int)],
             [Int]
         ) in
@@ -142,26 +159,25 @@ final class AppAXContext: @unchecked Sendable {
                       role == kAXWindowRole as String else { continue }
 
                 let axRef = AXWindowRef(id: UUID(), element: element)
-                let windowType = AXWindowService.windowType(axRef, appPolicy: nsApp.activationPolicy, bundleId: nsApp.bundleIdentifier)
+                let windowType = AXWindowService.windowType(
+                    axRef,
+                    appPolicy: nsApp.activationPolicy,
+                    bundleId: nsApp.bundleIdentifier
+                )
                 guard windowType == .tiling else { continue }
 
                 newWindows[windowId] = element
                 results.append((axRef, windowId))
 
-                if windows.value[windowId] == nil {
-                    let windowNotifications = [
-                        kAXUIElementDestroyedNotification,
-                        kAXMovedNotification,
-                        kAXResizedNotification
-                    ]
-                    if let sub = try? AXSubscription.bulkSubscribe(
-                        nsApp,
+                if !subscribedWindowIds.value.contains(windowId), let obs = axObserver.value {
+                    let subResult = AXObserverAddNotification(
+                        obs,
                         element,
-                        job,
-                        windowNotifications.map { $0 as String },
-                        axObserverCallback
-                    ) {
-                        windowSubscriptions.value[windowId] = sub
+                        kAXUIElementDestroyedNotification as CFString,
+                        nil
+                    )
+                    if subResult == .success {
+                        subscribedWindowIds.value.insert(windowId)
                     }
                 }
             }
@@ -170,7 +186,7 @@ final class AppAXContext: @unchecked Sendable {
             let deadIds = Array(oldWindowIds.subtracting(newWindowIds))
 
             for deadId in deadIds {
-                windowSubscriptions.value.removeValue(forKey: deadId)
+                subscribedWindowIds.value.remove(deadId)
             }
 
             windows.value = newWindows
@@ -230,27 +246,50 @@ final class AppAXContext: @unchecked Sendable {
         }
     }
 
+    func setFramesBatchSync(_ frames: [(windowId: Int, frame: CGRect)]) {
+        guard let thread else { return }
+
+        for (windowId, _) in frames {
+            setFrameJobs[windowId]?.cancel()
+        }
+
+        thread.runInLoopSync { [axApp, windows] in
+            let enhancedUIKey = "AXEnhancedUserInterface" as CFString
+            var wasEnabled = false
+            var value: CFTypeRef?
+            if AXUIElementCopyAttributeValue(axApp.value, enhancedUIKey, &value) == .success,
+               let boolValue = value as? Bool
+            {
+                wasEnabled = boolValue
+            }
+
+            if wasEnabled {
+                AXUIElementSetAttributeValue(axApp.value, enhancedUIKey, kCFBooleanFalse)
+            }
+
+            defer {
+                if wasEnabled {
+                    AXUIElementSetAttributeValue(axApp.value, enhancedUIKey, kCFBooleanTrue)
+                }
+            }
+
+            for (windowId, frame) in frames {
+                guard let element = windows.value[windowId] else { continue }
+                let axRef = AXWindowRef(id: UUID(), element: element)
+                try? AXWindowService.setFrame(axRef, frame: frame)
+            }
+        }
+    }
+
     @MainActor
     func focus(windowId: Int) {
         AppAXContext.focusJob?.cancel()
-
-        if !NSScreen.screensHaveSeparateSpaces || NSScreen.screens.count == 1,
-           lastNativeFocusedWindowId == windowId || windowsCount == 1
-        {
-            nsApp.activate()
-            lastNativeFocusedWindowId = windowId
-        } else {
-            lastNativeFocusedWindowId = windowId
-            AppAXContext.focusJob = thread?.runInLoopAsync { [nsApp, windows] _ in
-                guard let element = windows.value[windowId] else { return }
-
-                AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
-
-                AXUIElementPerformAction(element, kAXRaiseAction as CFString)
-
-                nsApp.activate()
-            }
-        }
+        lastNativeFocusedWindowId = windowId
+        let wid = UInt32(windowId)
+        var psn = ProcessSerialNumber()
+        guard GetProcessForPID(pid, &psn) == noErr else { return }
+        _ = _SLPSSetFrontProcessWithOptions(&psn, wid, kCPSUserGenerated)
+        makeKeyWindow(psn: &psn, windowId: wid)
     }
 
     func destroy() async {
@@ -263,9 +302,12 @@ final class AppAXContext: @unchecked Sendable {
         }
         setFrameJobs = [:]
 
-        thread?.runInLoopAsync { [windows, windowSubscriptions, subscription, axApp] _ in
-            windowSubscriptions.destroy()
-            subscription.destroy()
+        thread?.runInLoopAsync { [windows, axApp, axObserver, subscribedWindowIds] _ in
+            if let obs = axObserver.valueIfExists.flatMap({ $0 }) {
+                CFRunLoopRemoveSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(obs), .defaultMode)
+            }
+            subscribedWindowIds.destroy()
+            axObserver.destroy()
             windows.destroy()
             axApp.destroy()
             CFRunLoopStop(CFRunLoopGetCurrent())
@@ -283,55 +325,45 @@ final class AppAXContext: @unchecked Sendable {
     }
 }
 
-private func axObserverCallback(
+@_silgen_name("_AXUIElementGetWindow")
+private func _AXUIElementGetWindow(_ element: AXUIElement, _ out: UnsafeMutablePointer<Int>) -> AXError
+
+private func axWindowDestroyedCallback(
     _: AXObserver,
     _ element: AXUIElement,
     _ notification: CFString,
     _: UnsafeMutableRawPointer?
 ) {
-    let notif = notification as String
+    guard (notification as String) == (kAXUIElementDestroyedNotification as String) else { return }
 
     var pid: pid_t = 0
-    let pidResult = AXUIElementGetPid(element, &pid)
+    guard AXUIElementGetPid(element, &pid) == .success else { return }
 
     var windowIdRaw: CGWindowID = 0
     _ = _AXUIElementGetWindow(element, &windowIdRaw)
     let windowId = Int(windowIdRaw)
 
-    if notif == kAXUIElementDestroyedNotification as String {
-        let capturedPid = pid
-        let capturedWindowId = windowId
-        let success = pidResult == .success && windowId != 0
-        Task { @MainActor in
-            if success {
-                let axRef = AXWindowRef(id: UUID(), element: AXUIElementCreateSystemWide())
-                AppAXContext.onAXEvent?(.removed(axRef, capturedPid, capturedWindowId))
-            } else {
-                AppAXContext.onDestroyedUnknown?()
-            }
+    DispatchQueue.main.async {
+        if windowId != 0 {
+            AppAXContext.onWindowDestroyed?(pid, windowId)
+        } else {
+            AppAXContext.onWindowDestroyedUnknown?()
         }
-        return
-    }
-
-    guard pidResult == .success else { return }
-
-    let axRef = AXWindowRef(id: UUID(), element: element)
-
-    Task { @MainActor in
-        let event: AXEvent
-        switch notif {
-        case kAXWindowCreatedNotification:
-            event = .created(axRef, pid, windowId)
-        case kAXMovedNotification, kAXResizedNotification:
-            event = .changed(axRef, pid, windowId)
-        case kAXFocusedWindowChangedNotification:
-            event = .focused(axRef, pid, windowId)
-        default:
-            return
-        }
-        AppAXContext.onAXEvent?(event)
     }
 }
 
-@_silgen_name("_AXUIElementGetWindow")
-private func _AXUIElementGetWindow(_ element: AXUIElement, _ out: UnsafeMutablePointer<Int>) -> AXError
+private func axFocusedWindowChangedCallback(
+    _: AXObserver,
+    _ element: AXUIElement,
+    _ notification: CFString,
+    _: UnsafeMutableRawPointer?
+) {
+    guard (notification as String) == (kAXFocusedWindowChangedNotification as String) else { return }
+
+    var pid: pid_t = 0
+    guard AXUIElementGetPid(element, &pid) == .success else { return }
+
+    DispatchQueue.main.async {
+        AppAXContext.onFocusedWindowChanged?(pid)
+    }
+}

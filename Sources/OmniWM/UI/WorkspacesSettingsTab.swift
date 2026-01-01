@@ -116,7 +116,7 @@ struct WorkspaceConfigurationRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(configuration.effectiveDisplayName)
                     .font(.body.weight(.medium))
-                if configuration.displayName != nil && !configuration.displayName!.isEmpty {
+                if configuration.displayName != nil, !configuration.displayName!.isEmpty {
                     Text("(\(configuration.name))")
                         .font(.caption2)
                         .foregroundColor(.secondary)

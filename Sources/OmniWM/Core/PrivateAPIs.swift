@@ -1,5 +1,5 @@
-import Foundation
 import ApplicationServices
+import Foundation
 
 typealias SLPSMode = UInt32
 let kCPSUserGenerated: SLPSMode = 0x200
@@ -30,20 +30,20 @@ func getWindowId(from windowRef: AXUIElement) -> CGWindowID? {
 }
 
 func makeKeyWindow(psn: inout ProcessSerialNumber, windowId: UInt32) {
-    var eventBytes = [UInt8](repeating: 0, count: 0xf8)
-    eventBytes[0x04] = 0xf8
+    var eventBytes = [UInt8](repeating: 0, count: 0xF8)
+    eventBytes[0x04] = 0xF8
     eventBytes[0x08] = 0x01
-    eventBytes[0x3a] = 0x10
+    eventBytes[0x3A] = 0x10
 
     withUnsafeBytes(of: windowId) { ptr in
-        eventBytes[0x3c] = ptr[0]
-        eventBytes[0x3d] = ptr[1]
-        eventBytes[0x3e] = ptr[2]
-        eventBytes[0x3f] = ptr[3]
+        eventBytes[0x3C] = ptr[0]
+        eventBytes[0x3D] = ptr[1]
+        eventBytes[0x3E] = ptr[2]
+        eventBytes[0x3F] = ptr[3]
     }
 
     for i in 0x20 ..< 0x30 {
-        eventBytes[i] = 0xff
+        eventBytes[i] = 0xFF
     }
 
     _ = SLPSPostEventRecordTo(&psn, &eventBytes)
@@ -51,11 +51,10 @@ func makeKeyWindow(psn: inout ProcessSerialNumber, windowId: UInt32) {
     _ = SLPSPostEventRecordTo(&psn, &eventBytes)
 }
 
-func focusWindow(pid: pid_t, windowId: UInt32, windowRef: AXUIElement) {
+func focusWindow(pid: pid_t, windowId: UInt32, windowRef _: AXUIElement) {
     var psn = ProcessSerialNumber()
     guard GetProcessForPID(pid, &psn) == noErr else { return }
 
     _ = _SLPSSetFrontProcessWithOptions(&psn, windowId, kCPSUserGenerated)
     makeKeyWindow(psn: &psn, windowId: windowId)
-    AXUIElementPerformAction(windowRef, "AXRaise" as CFString)
 }

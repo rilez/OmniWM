@@ -16,13 +16,59 @@ final class SkyLight {
     private typealias WindowIteratorGetCountFunc = @convention(c) (CFTypeRef) -> Int32
     private typealias WindowIteratorAdvanceFunc = @convention(c) (CFTypeRef) -> Bool
     private typealias WindowIteratorGetCornerRadiiFunc = @convention(c) (CFTypeRef) -> CFArray?
+    private typealias WindowIteratorGetBoundsFunc = @convention(c) (CFTypeRef) -> CGRect
+    private typealias WindowIteratorGetWindowIDFunc = @convention(c) (CFTypeRef) -> UInt32
+    private typealias WindowIteratorGetPIDFunc = @convention(c) (CFTypeRef) -> Int32
+    private typealias WindowIteratorGetLevelFunc = @convention(c) (CFTypeRef) -> Int32
+    private typealias WindowIteratorGetTagsFunc = @convention(c) (CFTypeRef) -> UInt64
+    private typealias WindowIteratorGetAttributesFunc = @convention(c) (CFTypeRef) -> UInt32
+    private typealias WindowIteratorGetParentIDFunc = @convention(c) (CFTypeRef) -> UInt32
     private typealias TransactionCreateFunc = @convention(c) (Int32) -> CFTypeRef?
     private typealias TransactionCommitFunc = @convention(c) (CFTypeRef, Int32) -> CGError
     private typealias TransactionOrderWindowFunc = @convention(c) (CFTypeRef, UInt32, Int32, UInt32) -> Void
+    private typealias TransactionMoveWindowWithGroupFunc = @convention(c) (CFTypeRef, UInt32, CGPoint) -> CGError
     private typealias DisableUpdateFunc = @convention(c) (Int32) -> Void
     private typealias ReenableUpdateFunc = @convention(c) (Int32) -> Void
     private typealias MoveWindowFunc = @convention(c) (Int32, UInt32, UnsafePointer<CGPoint>) -> CGError
     private typealias GetWindowBoundsFunc = @convention(c) (Int32, UInt32, UnsafeMutablePointer<CGRect>) -> CGError
+    private typealias WindowIsOrderedInFunc = @convention(c) (Int32, UInt32, UnsafeMutablePointer<UInt8>) -> CGError
+    private typealias GetWindowLevelFunc = @convention(c) (Int32, UInt32, UnsafeMutablePointer<Int32>) -> CGError
+
+    typealias ConnectionNotifyCallback = @convention(c) (
+        UInt32,
+        UnsafeMutableRawPointer?,
+        Int,
+        UnsafeMutableRawPointer?,
+        Int32
+    ) -> Void
+    private typealias RegisterConnectionNotifyProcFunc = @convention(c) (
+        Int32,
+        ConnectionNotifyCallback,
+        UInt32,
+        UnsafeMutableRawPointer?
+    ) -> Int32
+    private typealias UnregisterConnectionNotifyProcFunc = @convention(c) (
+        Int32,
+        ConnectionNotifyCallback,
+        UInt32
+    ) -> Int32
+    private typealias RequestNotificationsForWindowsFunc = @convention(c) (
+        Int32,
+        UnsafePointer<UInt32>,
+        Int32
+    ) -> Int32
+
+    typealias NotifyCallback = @convention(c) (
+        UInt32,
+        UnsafeMutableRawPointer?,
+        Int,
+        Int32
+    ) -> Void
+    private typealias RegisterNotifyProcFunc = @convention(c) (
+        NotifyCallback,
+        UInt32,
+        UnsafeMutableRawPointer?
+    ) -> Int32
 
     private let mainConnectionID: MainConnectionIDFunc
     private let windowQueryWindows: WindowQueryWindowsFunc
@@ -30,13 +76,27 @@ final class SkyLight {
     private let windowIteratorGetCount: WindowIteratorGetCountFunc
     private let windowIteratorAdvance: WindowIteratorAdvanceFunc
     private let windowIteratorGetCornerRadii: WindowIteratorGetCornerRadiiFunc
+    private let windowIteratorGetBounds: WindowIteratorGetBoundsFunc?
+    private let windowIteratorGetWindowID: WindowIteratorGetWindowIDFunc?
+    private let windowIteratorGetPID: WindowIteratorGetPIDFunc?
+    private let windowIteratorGetLevel: WindowIteratorGetLevelFunc?
+    private let windowIteratorGetTags: WindowIteratorGetTagsFunc?
+    private let windowIteratorGetAttributes: WindowIteratorGetAttributesFunc?
+    private let windowIteratorGetParentID: WindowIteratorGetParentIDFunc?
     private let transactionCreate: TransactionCreateFunc
     private let transactionCommit: TransactionCommitFunc
     private let transactionOrderWindow: TransactionOrderWindowFunc
+    private let transactionMoveWindowWithGroup: TransactionMoveWindowWithGroupFunc?
     private let disableUpdate: DisableUpdateFunc
     private let reenableUpdate: ReenableUpdateFunc
     private let moveWindow: MoveWindowFunc?
     private let getWindowBounds: GetWindowBoundsFunc?
+    private let windowIsOrderedIn: WindowIsOrderedInFunc?
+    private let getWindowLevel: GetWindowLevelFunc?
+    private let registerConnectionNotifyProc: RegisterConnectionNotifyProcFunc?
+    private let unregisterConnectionNotifyProc: UnregisterConnectionNotifyProcFunc?
+    private let requestNotificationsForWindows: RequestNotificationsForWindowsFunc?
+    private let registerNotifyProc: RegisterNotifyProcFunc?
 
     private init() {
         guard let lib = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY) else {
@@ -94,8 +154,60 @@ final class SkyLight {
         self.disableUpdate = disableUpdate
         self.reenableUpdate = reenableUpdate
 
-        self.moveWindow = unsafeBitCast(dlsym(lib, "SLSMoveWindow"), to: MoveWindowFunc?.self)
-        self.getWindowBounds = unsafeBitCast(dlsym(lib, "SLSGetWindowBounds"), to: GetWindowBoundsFunc?.self)
+        transactionMoveWindowWithGroup = unsafeBitCast(
+            dlsym(lib, "SLSTransactionMoveWindowWithGroup"),
+            to: TransactionMoveWindowWithGroupFunc?.self
+        )
+        moveWindow = unsafeBitCast(dlsym(lib, "SLSMoveWindow"), to: MoveWindowFunc?.self)
+        getWindowBounds = unsafeBitCast(dlsym(lib, "SLSGetWindowBounds"), to: GetWindowBoundsFunc?.self)
+        windowIsOrderedIn = unsafeBitCast(dlsym(lib, "SLSWindowIsOrderedIn"), to: WindowIsOrderedInFunc?.self)
+        getWindowLevel = unsafeBitCast(dlsym(lib, "SLSGetWindowLevel"), to: GetWindowLevelFunc?.self)
+
+        windowIteratorGetBounds = unsafeBitCast(
+            dlsym(lib, "SLSWindowIteratorGetBounds"),
+            to: WindowIteratorGetBoundsFunc?.self
+        )
+        windowIteratorGetWindowID = unsafeBitCast(
+            dlsym(lib, "SLSWindowIteratorGetWindowID"),
+            to: WindowIteratorGetWindowIDFunc?.self
+        )
+        windowIteratorGetPID = unsafeBitCast(
+            dlsym(lib, "SLSWindowIteratorGetPID"),
+            to: WindowIteratorGetPIDFunc?.self
+        )
+        windowIteratorGetLevel = unsafeBitCast(
+            dlsym(lib, "SLSWindowIteratorGetLevel"),
+            to: WindowIteratorGetLevelFunc?.self
+        )
+        windowIteratorGetTags = unsafeBitCast(
+            dlsym(lib, "SLSWindowIteratorGetTags"),
+            to: WindowIteratorGetTagsFunc?.self
+        )
+        windowIteratorGetAttributes = unsafeBitCast(
+            dlsym(lib, "SLSWindowIteratorGetAttributes"),
+            to: WindowIteratorGetAttributesFunc?.self
+        )
+        windowIteratorGetParentID = unsafeBitCast(
+            dlsym(lib, "SLSWindowIteratorGetParentID"),
+            to: WindowIteratorGetParentIDFunc?.self
+        )
+
+        registerConnectionNotifyProc = unsafeBitCast(
+            dlsym(lib, "SLSRegisterConnectionNotifyProc"),
+            to: RegisterConnectionNotifyProcFunc?.self
+        )
+        unregisterConnectionNotifyProc = unsafeBitCast(
+            dlsym(lib, "SLSUnregisterConnectionNotifyProc"),
+            to: UnregisterConnectionNotifyProcFunc?.self
+        )
+        requestNotificationsForWindows = unsafeBitCast(
+            dlsym(lib, "SLSRequestNotificationsForWindows"),
+            to: RequestNotificationsForWindowsFunc?.self
+        )
+        registerNotifyProc = unsafeBitCast(
+            dlsym(lib, "SLSRegisterNotifyProc"),
+            to: RegisterNotifyProcFunc?.self
+        )
     }
 
     func getMainConnectionID() -> Int32 {
@@ -130,6 +242,49 @@ final class SkyLight {
         return CGFloat(radius)
     }
 
+    func cornerRadii(forWindowId wid: Int) -> CornerRadius? {
+        let cid = getMainConnectionID()
+        guard cid != 0 else { return nil }
+
+        var widValue = Int32(wid)
+        let widNumber = CFNumberCreate(nil, .sInt32Type, &widValue)!
+        let windowArray = [widNumber] as CFArray
+
+        guard let query = windowQueryWindows(cid, windowArray, 0),
+              let iterator = windowQueryResultCopyWindows(query),
+              windowIteratorGetCount(iterator) > 0,
+              windowIteratorAdvance(iterator),
+              let radii = windowIteratorGetCornerRadii(iterator)
+        else {
+            return nil
+        }
+
+        let count = CFArrayGetCount(radii)
+        guard count > 0 else { return nil }
+
+        func getRadius(at index: Int) -> CGFloat {
+            guard index < count else { return 0 }
+            var radius: Int32 = 0
+            let value = CFArrayGetValueAtIndex(radii, index)
+            if CFNumberGetValue(unsafeBitCast(value, to: CFNumber.self), .sInt32Type, &radius), radius >= 0 {
+                return CGFloat(radius)
+            }
+            return 0
+        }
+
+        if count >= 4 {
+            return CornerRadius(
+                topLeft: getRadius(at: 0),
+                topRight: getRadius(at: 1),
+                bottomLeft: getRadius(at: 2),
+                bottomRight: getRadius(at: 3)
+            )
+        } else {
+            let uniform = getRadius(at: 0)
+            return CornerRadius(uniform: uniform)
+        }
+    }
+
     func disableUpdates() {
         let cid = getMainConnectionID()
         disableUpdate(cid)
@@ -144,6 +299,21 @@ final class SkyLight {
         let cid = getMainConnectionID()
         guard let transaction = transactionCreate(cid) else {
             fatalError("Failed to create SkyLight transaction")
+        }
+        transactionOrderWindow(transaction, wid, order.rawValue, targetWid)
+        _ = transactionCommit(transaction, 0)
+    }
+
+    func moveAndOrderWindow(
+        _ wid: UInt32,
+        to origin: CGPoint,
+        relativeTo targetWid: UInt32,
+        order: SkyLightWindowOrder = .above
+    ) {
+        let cid = getMainConnectionID()
+        guard let transaction = transactionCreate(cid) else { return }
+        if let transactionMoveWindowWithGroup {
+            _ = transactionMoveWindowWithGroup(transaction, wid, origin)
         }
         transactionOrderWindow(transaction, wid, order.rawValue, targetWid)
         _ = transactionCommit(transaction, 0)
@@ -167,4 +337,272 @@ final class SkyLight {
         guard result == .success else { return nil }
         return rect
     }
+
+    func isWindowOrderedIn(_ wid: UInt32) -> Bool {
+        guard let windowIsOrderedIn else { return true }
+        let cid = getMainConnectionID()
+        guard cid != 0 else { return true }
+        var ordered: UInt8 = 0
+        let result = windowIsOrderedIn(cid, wid, &ordered)
+        guard result == .success else { return true }
+        return ordered != 0
+    }
+
+    func windowLevel(_ wid: UInt32) -> Int32? {
+        guard let getWindowLevel else { return nil }
+        let cid = getMainConnectionID()
+        guard cid != 0 else { return nil }
+        var level: Int32 = 0
+        let result = getWindowLevel(cid, wid, &level)
+        guard result == .success else { return nil }
+        return level
+    }
+
+    func createTransaction() -> CFTypeRef? {
+        let cid = getMainConnectionID()
+        return transactionCreate(cid)
+    }
+
+    func commitTransaction(_ transaction: CFTypeRef) {
+        _ = transactionCommit(transaction, 0)
+    }
+
+    func batchMoveWindows(_ positions: [(windowId: UInt32, origin: CGPoint)]) {
+        guard let transactionMoveWindowWithGroup else {
+            for (windowId, origin) in positions {
+                _ = moveWindow(windowId, to: origin)
+            }
+            return
+        }
+
+        let cid = getMainConnectionID()
+        guard let transaction = transactionCreate(cid) else { return }
+
+        for (windowId, origin) in positions {
+            _ = transactionMoveWindowWithGroup(transaction, windowId, origin)
+        }
+
+        _ = transactionCommit(transaction, 0)
+    }
+
+    func queryAllVisibleWindows() -> [WindowServerInfo] {
+        guard let windowIteratorGetBounds,
+              let windowIteratorGetWindowID,
+              let windowIteratorGetPID,
+              let windowIteratorGetLevel,
+              let windowIteratorGetTags,
+              let windowIteratorGetAttributes,
+              let windowIteratorGetParentID
+        else { return [] }
+
+        let cid = getMainConnectionID()
+        guard cid != 0 else { return [] }
+
+        let emptyArray = [] as CFArray
+        guard let query = windowQueryWindows(cid, emptyArray, 0),
+              let iterator = windowQueryResultCopyWindows(query)
+        else { return [] }
+
+        var results: [WindowServerInfo] = []
+
+        while windowIteratorAdvance(iterator) {
+            let parentId = windowIteratorGetParentID(iterator)
+            guard parentId == 0 else { continue }
+
+            let level = windowIteratorGetLevel(iterator)
+            guard level == 0 || level == 3 || level == 8 else { continue }
+
+            let tags = windowIteratorGetTags(iterator)
+            let attributes = windowIteratorGetAttributes(iterator)
+
+            let hasVisibleAttribute = (attributes & 0x2) != 0
+            let hasTagBit54 = (tags & 0x0040_0000_0000_0000) != 0
+            guard hasVisibleAttribute || hasTagBit54 else { continue }
+
+            let isDocument = (tags & 0x1) != 0
+            let isFloating = (tags & 0x2) != 0
+            let isModal = (tags & 0x8000_0000) != 0
+            guard isDocument || (isFloating && isModal) else { continue }
+
+            let wid = windowIteratorGetWindowID(iterator)
+            let pid = windowIteratorGetPID(iterator)
+            let bounds = windowIteratorGetBounds(iterator)
+
+            results.append(WindowServerInfo(
+                id: wid,
+                pid: pid,
+                level: level,
+                frame: bounds,
+                tags: tags,
+                attributes: attributes,
+                parentId: parentId
+            ))
+        }
+
+        return results
+    }
+
+    func queryWindowInfo(_ windowId: UInt32) -> WindowServerInfo? {
+        guard let windowIteratorGetBounds,
+              let windowIteratorGetWindowID,
+              let windowIteratorGetPID,
+              let windowIteratorGetLevel,
+              let windowIteratorGetTags,
+              let windowIteratorGetAttributes,
+              let windowIteratorGetParentID
+        else { return nil }
+
+        let cid = getMainConnectionID()
+        guard cid != 0 else { return nil }
+
+        var widValue = Int32(windowId)
+        let widNumber = CFNumberCreate(nil, .sInt32Type, &widValue)!
+        let windowArray = [widNumber] as CFArray
+
+        guard let query = windowQueryWindows(cid, windowArray, 1),
+              let iterator = windowQueryResultCopyWindows(query),
+              windowIteratorAdvance(iterator)
+        else { return nil }
+
+        let wid = windowIteratorGetWindowID(iterator)
+        let pid = windowIteratorGetPID(iterator)
+        let level = windowIteratorGetLevel(iterator)
+        let bounds = windowIteratorGetBounds(iterator)
+        let tags = windowIteratorGetTags(iterator)
+        let attributes = windowIteratorGetAttributes(iterator)
+        let parentId = windowIteratorGetParentID(iterator)
+
+        return WindowServerInfo(
+            id: wid,
+            pid: pid,
+            level: level,
+            frame: bounds,
+            tags: tags,
+            attributes: attributes,
+            parentId: parentId
+        )
+    }
+
+    func registerForNotification(
+        event: CGSEventType,
+        callback: @escaping ConnectionNotifyCallback,
+        context: UnsafeMutableRawPointer? = nil
+    ) -> Bool {
+        guard let registerConnectionNotifyProc else {
+            return false
+        }
+        let cid = getMainConnectionID()
+        guard cid != 0 else {
+            return false
+        }
+        let result = registerConnectionNotifyProc(cid, callback, event.rawValue, context)
+        return result == 0
+    }
+
+    func unregisterForNotification(
+        event: CGSEventType,
+        callback: @escaping ConnectionNotifyCallback
+    ) -> Bool {
+        guard let unregisterConnectionNotifyProc else {
+            return false
+        }
+        let cid = getMainConnectionID()
+        guard cid != 0 else { return false }
+        let result = unregisterConnectionNotifyProc(cid, callback, event.rawValue)
+        return result == 0
+    }
+
+    func registerNotifyProc(
+        event: CGSEventType,
+        callback: @escaping NotifyCallback,
+        context: UnsafeMutableRawPointer? = nil
+    ) -> Bool {
+        guard let registerNotifyProc else {
+            return false
+        }
+        let result = registerNotifyProc(callback, event.rawValue, context)
+        return result == 0
+    }
+
+    func subscribeToWindowNotifications(_ windowIds: [UInt32]) -> Bool {
+        guard let requestNotificationsForWindows else {
+            return false
+        }
+        guard !windowIds.isEmpty else {
+            return true
+        }
+        let cid = getMainConnectionID()
+        guard cid != 0 else {
+            return false
+        }
+        let result = windowIds.withUnsafeBufferPointer { buffer in
+            requestNotificationsForWindows(cid, buffer.baseAddress!, Int32(windowIds.count))
+        }
+        return result == 0
+    }
+
+    func getWindowTitle(_ windowId: UInt32) -> String? {
+        let options: CGWindowListOption = [.optionIncludingWindow]
+        guard let windowList = CGWindowListCopyWindowInfo(options, CGWindowID(windowId)) as? [[String: Any]],
+              let windowInfo = windowList.first,
+              let title = windowInfo[kCGWindowName as String] as? String
+        else { return nil }
+        return title
+    }
+
+    func getAllWindowTitles() -> [UInt32: String] {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
+        else { return [:] }
+
+        var titles: [UInt32: String] = [:]
+        for info in windowList {
+            guard let windowId = info[kCGWindowNumber as String] as? UInt32,
+                  let title = info[kCGWindowName as String] as? String,
+                  !title.isEmpty
+            else { continue }
+            titles[windowId] = title
+        }
+        return titles
+    }
+}
+
+enum CGSEventType: UInt32 {
+    case windowClosed = 804
+    case windowMoved = 806
+    case windowResized = 807
+    case windowReordered = 808
+    case windowLevelChanged = 811
+    case windowUnhidden = 815
+    case windowHidden = 816
+    case windowTitleChanged = 1322
+    case spaceWindowCreated = 1325
+    case spaceWindowDestroyed = 1326
+    case spaceCreated = 1327
+    case spaceDestroyed = 1328
+    case workspaceWillChange = 1400
+    case workspaceDidChange = 1401
+    case frontmostApplicationChanged = 1508
+    case all = 0xFFFF_FFFF
+}
+
+struct WindowServerInfo {
+    let id: UInt32
+    let pid: Int32
+    let level: Int32
+    let frame: CGRect
+    var tags: UInt64 = 0
+    var attributes: UInt32 = 0
+    var parentId: UInt32 = 0
+    var title: String?
+}
+
+struct SLSWindowTags: OptionSet, Sendable {
+    let rawValue: UInt64
+
+    static let document = SLSWindowTags(rawValue: 1 << 0)
+    static let floating = SLSWindowTags(rawValue: 1 << 1)
+    static let attached = SLSWindowTags(rawValue: 1 << 7)
+    static let sticky = SLSWindowTags(rawValue: 1 << 11)
+    static let modal = SLSWindowTags(rawValue: 1 << 31)
 }

@@ -1,5 +1,5 @@
-import Foundation
 import ApplicationServices
+import Foundation
 
 struct MenuItemModel: Identifiable {
     let id: UUID
@@ -20,7 +20,7 @@ struct MenuItemModel: Identifiable {
         depth: Int,
         parentTitles: [String]
     ) {
-        self.id = UUID()
+        id = UUID()
         self.title = title
         self.fullPath = fullPath
         self.keyboardShortcut = keyboardShortcut

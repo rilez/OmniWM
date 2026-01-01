@@ -74,7 +74,7 @@ struct HotkeySettingsView: View {
     private func bindingsForCategory(_ category: HotkeyCategory) -> [HotkeyBinding] {
         settings.hotkeyBindings.filter { binding in
             binding.category == category &&
-            (searchText.isEmpty || binding.command.displayName.localizedCaseInsensitiveContains(searchText))
+                (searchText.isEmpty || binding.command.displayName.localizedCaseInsensitiveContains(searchText))
         }
     }
 

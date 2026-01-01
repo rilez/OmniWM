@@ -385,10 +385,63 @@ class NiriContainer: NiriNode {
 
     var savedHeight: ContainerHeight?
 
-    var activatePrevRestoreStart: CGFloat?
+    var moveAnimation: MoveAnimation?
 
     override init() {
         super.init()
+    }
+
+    func animateMoveFrom(
+        displacement: CGPoint,
+        clock: AnimationClock?,
+        config: SpringConfig = .default,
+        displayRefreshRate: Double = 60.0
+    ) {
+        let now = clock?.now() ?? CACurrentMediaTime()
+        let currentOffset = renderOffset(at: now)
+
+        if displacement.x != 0 {
+            let totalOffsetX = displacement.x + currentOffset.x
+            let anim = SpringAnimation(
+                from: 1,
+                to: 0,
+                startTime: now,
+                config: config,
+                clock: clock,
+                displayRefreshRate: displayRefreshRate
+            )
+            moveAnimation = MoveAnimation(animation: anim, fromOffset: totalOffsetX)
+        }
+    }
+
+    func renderOffset(at time: TimeInterval = CACurrentMediaTime()) -> CGPoint {
+        guard let anim = moveAnimation else { return .zero }
+        return CGPoint(x: anim.currentOffset(at: time), y: 0)
+    }
+
+    func tickMoveAnimation(at time: TimeInterval) -> Bool {
+        guard let anim = moveAnimation else { return false }
+        if anim.isComplete(at: time) {
+            moveAnimation = nil
+            return false
+        }
+        return true
+    }
+
+    var hasMoveAnimationRunning: Bool {
+        moveAnimation != nil
+    }
+
+    func offsetMoveAnimCurrent(_ offsetX: CGFloat) {
+        guard let anim = moveAnimation else { return }
+        let now = CACurrentMediaTime()
+        let value = anim.animation.value(at: now)
+        if value > 0.001 {
+            moveAnimation = MoveAnimation(
+                animation: anim.animation,
+                fromOffset: anim.fromOffset + offsetX / CGFloat(value)
+            )
+        }
     }
 
     func resolveAndCacheWidth(workingAreaWidth: CGFloat, gaps: CGFloat) {
@@ -702,9 +755,7 @@ class NiriRoot: NiriContainer {
     }
 
     func registerNode(_ node: NiriNode) {
-        if nodeIndex != nil {
-            nodeIndex?[node.id] = node
-        }
+        nodeIndex?[node.id] = node
     }
 
     func unregisterNode(_ node: NiriNode) {

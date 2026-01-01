@@ -13,7 +13,7 @@ final class MenuAnywhereController: NSObject, NSMenuDelegate {
     private static let kAXPressAction = "AXPress" as CFString
     private static let appActivationDelay: TimeInterval = 0.1
 
-    private override init() {
+    override private init() {
         super.init()
     }
 
@@ -133,7 +133,7 @@ final class MenuAnywhereController: NSObject, NSMenuDelegate {
 
     private func populateSubmenuAsync(menu: NSMenu, axRoot: AXUIElement) {
         nonisolated(unsafe) let menu = menu
-        let extractor = self.menuExtractor
+        let extractor = menuExtractor
         axFetchQueue.async { [weak self] in
             guard let children = axRoot.getChildren() else {
                 DispatchQueue.main.async {
@@ -148,7 +148,7 @@ final class MenuAnywhereController: NSObject, NSMenuDelegate {
 
             let attrs = [
                 "AXTitle", "AXRole", "AXRoleDescription", "AXEnabled",
-                "AXMenuItemMarkChar", "AXMenuItemCmdChar", "AXMenuItemCmdModifiers", "AXChildren",
+                "AXMenuItemMarkChar", "AXMenuItemCmdChar", "AXMenuItemCmdModifiers", "AXChildren"
             ]
             var itemsData: [[String: Any]] = []
             itemsData.reserveCapacity(children.count)
@@ -161,7 +161,7 @@ final class MenuAnywhereController: NSObject, NSMenuDelegate {
             }
 
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self else { return }
                 let submenuItems = extractor.buildSubmenu(
                     fromChildren: children, itemsData: itemsData, target: self,
                     action: #selector(self.menuAction(_:))

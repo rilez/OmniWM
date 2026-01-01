@@ -34,7 +34,6 @@ struct OmniWMApp: App {
         controller.rebuildAppRulesCache()
 
         controller.setEnabled(true)
-        controller.start()
 
         controller.setBordersEnabled(settings.bordersEnabled)
         controller.updateBorderConfig(BorderConfig.from(settings: settings))

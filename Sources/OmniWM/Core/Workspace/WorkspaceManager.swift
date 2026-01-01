@@ -26,14 +26,13 @@ final class WorkspaceManager {
     private var screenPointToVisibleWorkspace: [CGPoint: WorkspaceDescriptor.ID] = [:]
     private var visibleWorkspaceToScreenPoint: [WorkspaceDescriptor.ID: CGPoint] = [:]
     private var screenPointToPrevVisibleWorkspace: [CGPoint: WorkspaceDescriptor.ID] = [:]
-    private var _sortedWorkspacesCache: [WorkspaceDescriptor]?
 
     private(set) var gaps: Double = 8
     private(set) var outerGaps: LayoutGaps.OuterGaps = .zero
     private let windows = WindowModel()
 
     private var niriViewportStates: [WorkspaceDescriptor.ID: ViewportState] = [:]
-    private var currentAnimationSettings: ViewportState = ViewportState()
+    private var currentAnimationSettings: ViewportState = .init()
     var animationClock: AnimationClock?
 
     var onGapsChanged: (() -> Void)?
@@ -183,6 +182,14 @@ final class WorkspaceManager {
         windows.entries(forPid: pid)
     }
 
+    func entry(forWindowId windowId: Int) -> WindowModel.Entry? {
+        windows.entry(forWindowId: windowId)
+    }
+
+    func allEntries() -> [WindowModel.Entry] {
+        windows.allEntries()
+    }
+
     func removeMissing(keys activeKeys: Set<WindowModel.WindowKey>) {
         windows.removeMissing(keys: activeKeys)
     }
@@ -218,10 +225,6 @@ final class WorkspaceManager {
 
     func isHiddenInCorner(_ handle: WindowHandle) -> Bool {
         windows.isHiddenInCorner(handle)
-    }
-
-    func allEntries() -> [WindowModel.Entry] {
-        Array(windows.entries.values)
     }
 
     func layoutReason(for handle: WindowHandle) -> LayoutReason {
@@ -422,7 +425,6 @@ final class WorkspaceManager {
             screenPointToVisibleWorkspace = screenPointToVisibleWorkspace.filter { !toRemove.contains($0.value) }
             screenPointToPrevVisibleWorkspace = screenPointToPrevVisibleWorkspace
                 .filter { !toRemove.contains($0.value) }
-            invalidateSortedWorkspacesCache()
         }
     }
 
@@ -504,20 +506,11 @@ final class WorkspaceManager {
     }
 
     private func sortedWorkspaces() -> [WorkspaceDescriptor] {
-        if let cached = _sortedWorkspacesCache {
-            return cached
-        }
-        let sorted = workspacesById.values.sorted {
+        workspacesById.values.sorted {
             let a = $0.name.toLogicalSegments()
             let b = $1.name.toLogicalSegments()
             return a < b
         }
-        _sortedWorkspacesCache = sorted
-        return sorted
-    }
-
-    private func invalidateSortedWorkspacesCache() {
-        _sortedWorkspacesCache = nil
     }
 
     private func ensurePersistentWorkspaces() {
@@ -529,7 +522,7 @@ final class WorkspaceManager {
     private func applyForcedAssignments() {
         let assignments = settings.workspaceToMonitorAssignments()
         for (name, descriptions) in assignments {
-            guard descriptions.isEmpty == false else { continue }
+            guard !descriptions.isEmpty else { continue }
             _ = workspaceId(for: name, createIfMissing: true)
         }
     }
@@ -680,7 +673,6 @@ final class WorkspaceManager {
         let workspace = WorkspaceDescriptor(name: "fallback")
         workspacesById[workspace.id] = workspace
         workspaceIdByName[workspace.name] = workspace.id
-        invalidateSortedWorkspacesCache()
         return workspace.id
     }
 
@@ -750,7 +742,6 @@ final class WorkspaceManager {
         let workspace = WorkspaceDescriptor(name: parsed.raw)
         workspacesById[workspace.id] = workspace
         workspaceIdByName[workspace.name] = workspace.id
-        invalidateSortedWorkspacesCache()
         return workspace.id
     }
 }

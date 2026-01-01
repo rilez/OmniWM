@@ -108,13 +108,9 @@ struct ResizeHitTestResult {
 
 struct ResizeConfiguration {
     var edgeThreshold: CGFloat = 8.0
-
     var minColumnWeight: CGFloat = 0.3
-
     var maxColumnWeight: CGFloat = 3.0
-
     var minWindowWeight: CGFloat = 0.3
-
     var maxWindowWeight: CGFloat = 3.0
 
     static let `default` = ResizeConfiguration()

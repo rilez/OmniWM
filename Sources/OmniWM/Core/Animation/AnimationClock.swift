@@ -8,9 +8,9 @@ final class AnimationClock {
     private(set) var shouldCompleteInstantly: Bool
 
     init(time: TimeInterval = CACurrentMediaTime()) {
-        self.currentTime = time
-        self.lastSeenTime = time
-        self.shouldCompleteInstantly = false
+        currentTime = time
+        lastSeenTime = time
+        shouldCompleteInstantly = false
     }
 
     func now() -> TimeInterval {
