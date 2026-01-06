@@ -53,35 +53,28 @@ final class BorderManager {
         }
 
         guard let windowId else {
-            borderWindow?.orderOut(nil)
+            borderWindow?.hide()
             lastAppliedFrame = nil
             lastAppliedWindowId = nil
             return
         }
 
-        let cornerRadius = cornerRadius(for: windowId)
         let targetWid = UInt32(windowId)
-
-        borderWindow?.update(frame: frame, windowCornerRadius: cornerRadius, targetWid: targetWid)
-        borderWindow?.orderFront(nil)
+        borderWindow?.update(frame: frame, targetWid: targetWid)
         currentWindowId = windowId
         lastAppliedFrame = frame
         lastAppliedWindowId = windowId
     }
 
     func hideBorder() {
-        borderWindow?.orderOut(nil)
+        borderWindow?.hide()
         lastAppliedFrame = nil
         lastAppliedWindowId = nil
     }
 
     func cleanup() {
         hideBorder()
-        borderWindow?.close()
+        borderWindow?.destroy()
         borderWindow = nil
-    }
-
-    private func cornerRadius(for windowId: Int) -> CornerRadius {
-        SkyLight.shared.cornerRadii(forWindowId: windowId) ?? CornerRadius(uniform: 9)
     }
 }

@@ -247,6 +247,29 @@ struct ViewportState {
         viewOffsetToRestore = nil
     }
 
+    mutating func animateViewOffsetRestore(_ offset: CGFloat) {
+        guard !viewOffsetPixels.isGesture else {
+            viewOffsetToRestore = nil
+            return
+        }
+
+        let now = animationClock?.now() ?? CACurrentMediaTime()
+        let currentOffset = viewOffsetPixels.current()
+        let velocity = viewOffsetPixels.currentVelocity()
+
+        let animation = SpringAnimation(
+            from: Double(currentOffset),
+            to: Double(offset),
+            initialVelocity: velocity,
+            startTime: now,
+            config: springConfig,
+            clock: animationClock,
+            displayRefreshRate: displayRefreshRate
+        )
+        viewOffsetPixels = .spring(animation)
+        viewOffsetToRestore = nil
+    }
+
     mutating func clearSavedViewOffset() {
         viewOffsetToRestore = nil
     }

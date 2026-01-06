@@ -454,14 +454,14 @@ final class NiriLayoutEngine {
             return windowNode
         }
 
-        let referenceColumn: NiriContainer? = if let selId = selectedNodeId,
-                                                 let selNode = root.findNode(by: selId),
-                                                 let col = column(of: selNode)
+        let referenceColumn: NiriContainer? = if let focused = focusedHandle,
+                                                 let focusedNode = handleToNode[focused],
+                                                 let col = column(of: focusedNode)
         {
             col
-        } else if let focused = focusedHandle,
-                  let focusedNode = handleToNode[focused],
-                  let col = column(of: focusedNode)
+        } else if let selId = selectedNodeId,
+                  let selNode = root.findNode(by: selId),
+                  let col = column(of: selNode)
         {
             col
         } else {
@@ -1062,51 +1062,59 @@ final class NiriLayoutEngine {
             return false
         }
 
+        let sourceWindows = currentColumn.windowNodes
         let targetWindows = targetColumn.windowNodes
         guard !targetWindows.isEmpty else { return false }
 
-        guard let sourceIndex = currentColumn.children.firstIndex(where: { $0.id == node.id }) else {
-            return false
+        if sourceWindows.count == 1 && targetWindows.count == 1 {
+            return moveColumn(
+                currentColumn,
+                direction: direction,
+                in: workspaceId,
+                state: &state,
+                workingFrame: workingFrame,
+                gaps: gaps
+            )
         }
-        let targetIndex = min(sourceIndex, targetWindows.count - 1)
-        let targetNode = targetWindows[targetIndex]
-        guard let targetNodeIndex = targetColumn.children.firstIndex(where: { $0.id == targetNode.id }) else {
-            return false
-        }
 
-        let sourceActiveId = currentColumn.displayMode == .tabbed ? currentColumn.activeWindow?.id : nil
-        let targetActiveId = targetColumn.displayMode == .tabbed ? targetColumn.activeWindow?.id : nil
+        let sourceActiveTileIdx = currentColumn.activeTileIdx.clamped(to: 0 ... (sourceWindows.count - 1))
+        let targetActiveTileIdx = targetColumn.activeTileIdx.clamped(to: 0 ... (targetWindows.count - 1))
 
-        node.detach()
-        targetNode.detach()
-        currentColumn.insertChild(targetNode, at: sourceIndex)
-        targetColumn.insertChild(node, at: targetNodeIndex)
+        let sourceActiveWindow = sourceWindows[sourceActiveTileIdx]
+        let targetActiveWindow = targetWindows[targetActiveTileIdx]
 
-        if currentColumn.displayMode == .tabbed {
-            if let activeId = sourceActiveId,
-               let newIndex = currentColumn.children.firstIndex(where: { $0.id == activeId })
-            {
-                currentColumn.activeTileIdx = newIndex
-            } else {
-                currentColumn.clampActiveTileIdx()
-            }
+        let sourceWidth = currentColumn.width
+        let sourceIsFullWidth = currentColumn.isFullWidth
+        let targetWidth = targetColumn.width
+        let targetIsFullWidth = targetColumn.isFullWidth
+
+        sourceActiveWindow.detach()
+        targetActiveWindow.detach()
+
+        let sourceInsertIdx = min(sourceActiveTileIdx, currentColumn.children.count)
+        let targetInsertIdx = min(targetActiveTileIdx, targetColumn.children.count)
+
+        currentColumn.insertChild(targetActiveWindow, at: sourceInsertIdx)
+        targetColumn.insertChild(sourceActiveWindow, at: targetInsertIdx)
+
+        currentColumn.width = targetWidth
+        currentColumn.isFullWidth = targetIsFullWidth
+        targetColumn.width = sourceWidth
+        targetColumn.isFullWidth = sourceIsFullWidth
+
+        currentColumn.setActiveTileIdx(sourceActiveTileIdx)
+        targetColumn.setActiveTileIdx(targetActiveTileIdx)
+
+        if currentColumn.isTabbed {
             updateTabbedColumnVisibility(column: currentColumn)
         }
-
-        if targetColumn.displayMode == .tabbed {
-            if let activeId = targetActiveId,
-               let newIndex = targetColumn.children.firstIndex(where: { $0.id == activeId })
-            {
-                targetColumn.activeTileIdx = newIndex
-            } else {
-                targetColumn.clampActiveTileIdx()
-            }
+        if targetColumn.isTabbed {
             updateTabbedColumnVisibility(column: targetColumn)
         }
 
         let edge: NiriRevealEdge = direction == .right ? .right : .left
         ensureSelectionVisible(
-            node: node,
+            node: sourceActiveWindow,
             in: workspaceId,
             state: &state,
             edge: edge,
@@ -2075,7 +2083,7 @@ final class NiriLayoutEngine {
             }
 
             if let savedOffset = state.viewOffsetToRestore {
-                state.restoreViewOffset(savedOffset)
+                state.animateViewOffsetRestore(savedOffset)
             }
         }
 

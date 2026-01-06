@@ -1,277 +1,160 @@
 import AppKit
 import QuartzCore
 
-final class BorderWindow: NSWindow {
-    private var edgeLayers: [CAShapeLayer] = []
-    private var cornerLayers: [CAShapeLayer] = []
+@MainActor
+final class BorderWindow {
+    private var wid: UInt32 = 0
+    private var context: CGContext?
     private var config: BorderConfig
-    private var lastTargetWid: UInt32?
-    private var currentGeometry: BorderGeometry?
-    private var currentCornerRadius: CornerRadius = .zero
+
+    private var currentFrame: CGRect = .zero
+    private var currentTargetFrame: CGRect = .zero
+    private var currentTargetWid: UInt32 = 0
+    private var origin: CGPoint = .zero
+    private var needsRedraw = true
+
+    private let padding: CGFloat = 8.0
+    private let cornerRadius: CGFloat = 9.0
 
     init(config: BorderConfig) {
         self.config = config
-
-        super.init(
-            contentRect: .zero,
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-
-        isOpaque = false
-        backgroundColor = .clear
-        level = .floating
-        ignoresMouseEvents = true
-        hasShadow = false
-        collectionBehavior = [.canJoinAllSpaces, .stationary]
-
-        let rootLayer = CALayer()
-        rootLayer.masksToBounds = false
-
-        for _ in 0..<4 {
-            let layer = CAShapeLayer()
-            layer.fillColor = config.color.cgColor
-            layer.strokeColor = nil
-            layer.lineWidth = 0
-            edgeLayers.append(layer)
-            rootLayer.addSublayer(layer)
-        }
-
-        for _ in 0..<4 {
-            let layer = CAShapeLayer()
-            layer.fillColor = config.color.cgColor
-            layer.strokeColor = nil
-            layer.lineWidth = 0
-            cornerLayers.append(layer)
-            rootLayer.addSublayer(layer)
-        }
-
-        contentView?.layer = rootLayer
-        contentView?.wantsLayer = true
     }
 
-    private var wid: UInt32 { UInt32(windowNumber) }
+    func destroy() {
+        context = nil
+        if wid != 0 {
+            SkyLight.shared.releaseBorderWindow(wid)
+            wid = 0
+        }
+    }
 
-    func update(frame targetFrame: CGRect, windowCornerRadius: CornerRadius, targetWid: UInt32? = nil) {
+    func update(frame targetFrame: CGRect, targetWid: UInt32) {
+        let borderWidth = config.width
         let scale = NSScreen.main?.backingScaleFactor ?? 2.0
 
-        let geometry = calculateBorderGeometry(
-            windowSize: targetFrame.size,
-            borderWidth: config.width,
-            windowCornerRadius: windowCornerRadius,
-            scale: scale
+        let borderOffset = -borderWidth - padding
+        var frame = targetFrame.insetBy(dx: borderOffset, dy: borderOffset)
+            .roundedToPhysicalPixels(scale: scale)
+
+        origin = frame.origin
+        if let screen = NSScreen.main {
+            origin.y = screen.frame.height - origin.y - frame.height
+        }
+        frame.origin = .zero
+
+        let drawingBounds = CGRect(
+            x: -borderOffset,
+            y: -borderOffset,
+            width: targetFrame.width,
+            height: targetFrame.height
         )
 
-        currentGeometry = geometry
-        currentCornerRadius = windowCornerRadius
+        if wid == 0 {
+            createWindow(frame: frame)
+        }
 
-        let borderFrame = CGRect(
-            x: targetFrame.origin.x - config.width,
-            y: targetFrame.origin.y - config.width,
-            width: targetFrame.width + config.width * 2,
-            height: targetFrame.height + config.width * 2
+        if frame.size != currentFrame.size {
+            reshapeWindow(frame: frame)
+            needsRedraw = true
+        }
+        currentTargetFrame = targetFrame
+        currentTargetWid = targetWid
+        currentFrame = frame
+
+        if needsRedraw {
+            draw(frame: frame, drawingBounds: drawingBounds)
+        }
+
+        moveAndOrder(relativeTo: targetWid)
+    }
+
+    private func createWindow(frame: CGRect) {
+        wid = SkyLight.shared.createBorderWindow(frame: frame)
+        guard wid != 0 else { return }
+
+        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        SkyLight.shared.configureWindow(wid, resolution: Float(scale), opaque: false)
+
+        let tags: UInt64 = (1 << 1) | (1 << 9)
+        SkyLight.shared.setWindowTags(wid, tags: tags)
+
+        context = SkyLight.shared.createWindowContext(for: wid)
+        context?.interpolationQuality = .none
+    }
+
+    private func reshapeWindow(frame: CGRect) {
+        SkyLight.shared.setWindowShape(wid, frame: frame)
+    }
+
+    private func draw(frame: CGRect, drawingBounds: CGRect) {
+        guard let context else { return }
+        needsRedraw = false
+
+        let borderWidth = config.width
+        let outerRadius = cornerRadius + borderWidth
+
+        context.saveGState()
+        context.clear(frame)
+
+        let innerRect = drawingBounds.insetBy(dx: borderWidth, dy: borderWidth)
+        let innerPath = CGPath(
+            roundedRect: innerRect,
+            cornerWidth: cornerRadius,
+            cornerHeight: cornerRadius,
+            transform: nil
         )
 
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
+        let clipPath = CGMutablePath()
+        clipPath.addRect(frame)
+        clipPath.addPath(innerPath)
+        context.addPath(clipPath)
+        context.clip(using: .evenOdd)
 
-        setFrame(borderFrame, display: false)
-        updateEdgeLayers(geometry: geometry)
-        updateCornerLayers(geometry: geometry, scale: scale)
+        context.setFillColor(config.color.cgColor)
 
-        CATransaction.commit()
+        let outerPath = CGPath(
+            roundedRect: drawingBounds,
+            cornerWidth: outerRadius,
+            cornerHeight: outerRadius,
+            transform: nil
+        )
+        context.addPath(outerPath)
+        context.fillPath()
 
-        if let targetWid {
-            lastTargetWid = targetWid
-            SkyLight.shared.moveAndOrderWindow(wid, to: borderFrame.origin, relativeTo: targetWid, order: .below)
-        }
+        context.restoreGState()
+        context.flush()
+        SkyLight.shared.flushWindow(wid)
     }
 
-    private func updateEdgeLayers(geometry: BorderGeometry) {
-        for i in 0..<4 {
-            let size = geometry.sizes[i]
-            let location = geometry.locations[i]
-
-            let localOrigin = CGPoint(
-                x: location.x + config.width,
-                y: location.y + config.width
-            )
-
-            edgeLayers[i].frame = CGRect(origin: localOrigin, size: size)
-            edgeLayers[i].path = CGPath(rect: CGRect(origin: .zero, size: size), transform: nil)
-        }
+    private func moveAndOrder(relativeTo targetWid: UInt32) {
+        SkyLight.shared.transactionMoveAndOrder(
+            wid,
+            origin: origin,
+            level: 3,
+            relativeTo: targetWid,
+            order: .below
+        )
     }
 
-    private func updateCornerLayers(geometry: BorderGeometry, scale: CGFloat) {
-        let corners: [BorderPiece] = [
-            .topLeftCorner,
-            .topRightCorner,
-            .bottomRightCorner,
-            .bottomLeftCorner
-        ]
-
-        for (index, piece) in corners.enumerated() {
-            let size = geometry.sizes[piece.rawValue]
-            let location = geometry.locations[piece.rawValue]
-
-            let localOrigin = CGPoint(
-                x: location.x + config.width,
-                y: location.y + config.width
-            )
-
-            cornerLayers[index].frame = CGRect(origin: localOrigin, size: size)
-
-            let path = createCornerPath(
-                cornerSize: size,
-                geometry: geometry,
-                corner: piece,
-                thickenCorners: config.thickenCorners
-            )
-            cornerLayers[index].path = path
-        }
+    func hide() {
+        guard wid != 0 else { return }
+        SkyLight.shared.transactionHide(wid)
     }
 
-    private func createCornerPath(
-        cornerSize: CGSize,
-        geometry: BorderGeometry,
-        corner: BorderPiece,
-        thickenCorners: Bool
-    ) -> CGPath {
-        let path = CGMutablePath()
-        let extra: CGFloat = thickenCorners ? 0.5 : 0
-
-        let (outerR, rawInnerR): (CGFloat, CGFloat) = {
-            switch corner {
-            case .topLeftCorner:
-                return (geometry.outerCornerRadius.topLeft, geometry.innerCornerRadius.topLeft)
-            case .topRightCorner:
-                return (geometry.outerCornerRadius.topRight, geometry.innerCornerRadius.topRight)
-            case .bottomRightCorner:
-                return (geometry.outerCornerRadius.bottomRight, geometry.innerCornerRadius.bottomRight)
-            case .bottomLeftCorner:
-                return (geometry.outerCornerRadius.bottomLeft, geometry.innerCornerRadius.bottomLeft)
-            default:
-                return (0, 0)
-            }
-        }()
-
-        let innerR = max(0, rawInnerR - extra)
-
-        if outerR <= 0 {
-            path.addRect(CGRect(origin: .zero, size: cornerSize))
-            return path
-        }
-
-        switch corner {
-        case .topLeftCorner:
-            path.move(to: CGPoint(x: 0, y: outerR))
-            path.addArc(
-                center: CGPoint(x: outerR, y: outerR),
-                radius: outerR,
-                startAngle: .pi,
-                endAngle: -.pi / 2,
-                clockwise: false
-            )
-            if innerR > 0 {
-                path.addLine(to: CGPoint(x: outerR, y: outerR - innerR))
-                path.addArc(
-                    center: CGPoint(x: outerR, y: outerR),
-                    radius: innerR,
-                    startAngle: -.pi / 2,
-                    endAngle: .pi,
-                    clockwise: true
-                )
-            } else {
-                path.addLine(to: CGPoint(x: outerR, y: outerR))
-            }
-            path.closeSubpath()
-
-        case .topRightCorner:
-            path.move(to: CGPoint(x: outerR, y: outerR))
-            path.addArc(
-                center: CGPoint(x: 0, y: outerR),
-                radius: outerR,
-                startAngle: 0,
-                endAngle: -.pi / 2,
-                clockwise: true
-            )
-            if innerR > 0 {
-                path.addLine(to: CGPoint(x: 0, y: outerR - innerR))
-                path.addArc(
-                    center: CGPoint(x: 0, y: outerR),
-                    radius: innerR,
-                    startAngle: -.pi / 2,
-                    endAngle: 0,
-                    clockwise: false
-                )
-            } else {
-                path.addLine(to: CGPoint(x: 0, y: outerR))
-            }
-            path.closeSubpath()
-
-        case .bottomRightCorner:
-            path.move(to: CGPoint(x: 0, y: outerR))
-            path.addArc(
-                center: CGPoint(x: 0, y: 0),
-                radius: outerR,
-                startAngle: .pi / 2,
-                endAngle: 0,
-                clockwise: true
-            )
-            if innerR > 0 {
-                path.addLine(to: CGPoint(x: innerR, y: 0))
-                path.addArc(
-                    center: CGPoint(x: 0, y: 0),
-                    radius: innerR,
-                    startAngle: 0,
-                    endAngle: .pi / 2,
-                    clockwise: false
-                )
-            } else {
-                path.addLine(to: CGPoint(x: 0, y: 0))
-            }
-            path.closeSubpath()
-
-        case .bottomLeftCorner:
-            path.move(to: CGPoint(x: 0, y: 0))
-            path.addArc(
-                center: CGPoint(x: outerR, y: 0),
-                radius: outerR,
-                startAngle: .pi,
-                endAngle: .pi / 2,
-                clockwise: false
-            )
-            if innerR > 0 {
-                path.addLine(to: CGPoint(x: outerR, y: innerR))
-                path.addArc(
-                    center: CGPoint(x: outerR, y: 0),
-                    radius: innerR,
-                    startAngle: .pi / 2,
-                    endAngle: .pi,
-                    clockwise: true
-                )
-            } else {
-                path.addLine(to: CGPoint(x: outerR, y: 0))
-            }
-            path.closeSubpath()
-
-        default:
-            path.addRect(CGRect(origin: .zero, size: cornerSize))
-        }
-
-        return path
+    func show(relativeTo targetWid: UInt32) {
+        guard wid != 0 else { return }
+        moveAndOrder(relativeTo: targetWid)
     }
 
     func updateConfig(_ newConfig: BorderConfig) {
+        let needsRedrawForColor = config.color != newConfig.color
+        let needsRedrawForWidth = config.width != newConfig.width
         config = newConfig
-        let cgColor = config.color.cgColor
-
-        for layer in edgeLayers {
-            layer.fillColor = cgColor
-        }
-        for layer in cornerLayers {
-            layer.fillColor = cgColor
+        if needsRedrawForColor || needsRedrawForWidth {
+            if wid != 0, currentTargetWid != 0 {
+                needsRedraw = true
+                update(frame: currentTargetFrame, targetWid: currentTargetWid)
+            }
         }
     }
 }

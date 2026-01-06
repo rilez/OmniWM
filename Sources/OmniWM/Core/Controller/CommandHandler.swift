@@ -483,7 +483,7 @@ final class CommandHandler {
         controller.internalLayoutRefreshController?.runLightSession {
             guard let engine = controller.internalNiriEngine else { return }
             guard let wsId = controller.activeWorkspace()?.id else { return }
-            let state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+            var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
 
             guard let currentId = state.selectedNodeId,
                   let currentNode = engine.findNode(by: currentId),
@@ -492,17 +492,8 @@ final class CommandHandler {
                 return
             }
 
-            if windowNode.sizingMode == .fullscreen {
-                windowNode.sizingMode = .normal
-
-                if let savedHeight = windowNode.savedHeight {
-                    windowNode.height = savedHeight
-                    windowNode.savedHeight = nil
-                }
-            } else {
-                windowNode.savedHeight = windowNode.height
-                windowNode.sizingMode = .fullscreen
-            }
+            engine.toggleFullscreen(windowNode, in: wsId, state: &state)
+            controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
             controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
         }
     }

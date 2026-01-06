@@ -395,6 +395,7 @@ extension NiriLayoutEngine {
                 y: rowRenderOffset.y + windowOffset.y
             )
             let animatedFrame = frame.offsetBy(dx: totalOffset.x, dy: totalOffset.y)
+                .roundedToPhysicalPixels(scale: scale)
             result[window.handle] = animatedFrame
 
             if !isTabbed {
@@ -521,6 +522,7 @@ extension NiriLayoutEngine {
                 y: columnRenderOffset.y + windowOffset.y
             )
             let animatedFrame = frame.offsetBy(dx: totalOffset.x, dy: totalOffset.y)
+                .roundedToPhysicalPixels(scale: scale)
             result[row.handle] = animatedFrame
 
             if !isTabbed {

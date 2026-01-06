@@ -33,6 +33,17 @@ final class SkyLight {
     private typealias GetWindowBoundsFunc = @convention(c) (Int32, UInt32, UnsafeMutablePointer<CGRect>) -> CGError
     private typealias WindowIsOrderedInFunc = @convention(c) (Int32, UInt32, UnsafeMutablePointer<UInt8>) -> CGError
     private typealias GetWindowLevelFunc = @convention(c) (Int32, UInt32, UnsafeMutablePointer<Int32>) -> CGError
+    private typealias NewWindowFunc = @convention(c) (Int32, Int32, Float, Float, CFTypeRef, UnsafeMutablePointer<UInt32>) -> CGError
+    private typealias ReleaseWindowFunc = @convention(c) (Int32, UInt32) -> CGError
+    private typealias WindowContextCreateFunc = @convention(c) (Int32, UInt32, CFDictionary?) -> CGContext?
+    private typealias SetWindowShapeFunc = @convention(c) (Int32, UInt32, Float, Float, CFTypeRef) -> CGError
+    private typealias SetWindowResolutionFunc = @convention(c) (Int32, UInt32, Float) -> CGError
+    private typealias SetWindowOpacityFunc = @convention(c) (Int32, UInt32, Int32) -> CGError
+    private typealias SetWindowTagsFunc = @convention(c) (Int32, UInt32, UnsafePointer<UInt64>, Int32) -> CGError
+    private typealias ClearWindowTagsFunc = @convention(c) (Int32, UInt32, UnsafePointer<UInt64>, Int32) -> CGError
+    private typealias FlushWindowContentRegionFunc = @convention(c) (Int32, UInt32, CFTypeRef?) -> CGError
+    private typealias NewRegionWithRectFunc = @convention(c) (UnsafePointer<CGRect>, UnsafeMutablePointer<CFTypeRef?>) -> CGError
+    private typealias TransactionSetWindowLevelFunc = @convention(c) (CFTypeRef, UInt32, Int32) -> CGError
 
     typealias ConnectionNotifyCallback = @convention(c) (
         UInt32,
@@ -97,6 +108,17 @@ final class SkyLight {
     private let unregisterConnectionNotifyProc: UnregisterConnectionNotifyProcFunc?
     private let requestNotificationsForWindows: RequestNotificationsForWindowsFunc?
     private let registerNotifyProc: RegisterNotifyProcFunc?
+    private let newWindow: NewWindowFunc?
+    private let releaseWindow: ReleaseWindowFunc?
+    private let windowContextCreate: WindowContextCreateFunc?
+    private let setWindowShape: SetWindowShapeFunc?
+    private let setWindowResolution: SetWindowResolutionFunc?
+    private let setWindowOpacity: SetWindowOpacityFunc?
+    private let setWindowTags: SetWindowTagsFunc?
+    private let clearWindowTags: ClearWindowTagsFunc?
+    private let flushWindowContentRegion: FlushWindowContentRegionFunc?
+    private let newRegionWithRect: NewRegionWithRectFunc?
+    private let transactionSetWindowLevel: TransactionSetWindowLevelFunc?
 
     private init() {
         guard let lib = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY) else {
@@ -208,7 +230,21 @@ final class SkyLight {
             dlsym(lib, "SLSRegisterNotifyProc"),
             to: RegisterNotifyProcFunc?.self
         )
+
+        newWindow = unsafeBitCast(dlsym(lib, "SLSNewWindow"), to: NewWindowFunc?.self)
+        releaseWindow = unsafeBitCast(dlsym(lib, "SLSReleaseWindow"), to: ReleaseWindowFunc?.self)
+        windowContextCreate = unsafeBitCast(dlsym(lib, "SLWindowContextCreate"), to: WindowContextCreateFunc?.self)
+        setWindowShape = unsafeBitCast(dlsym(lib, "SLSSetWindowShape"), to: SetWindowShapeFunc?.self)
+        setWindowResolution = unsafeBitCast(dlsym(lib, "SLSSetWindowResolution"), to: SetWindowResolutionFunc?.self)
+        setWindowOpacity = unsafeBitCast(dlsym(lib, "SLSSetWindowOpacity"), to: SetWindowOpacityFunc?.self)
+        setWindowTags = unsafeBitCast(dlsym(lib, "SLSSetWindowTags"), to: SetWindowTagsFunc?.self)
+        clearWindowTags = unsafeBitCast(dlsym(lib, "SLSClearWindowTags"), to: ClearWindowTagsFunc?.self)
+        flushWindowContentRegion = unsafeBitCast(dlsym(lib, "SLSFlushWindowContentRegion"), to: FlushWindowContentRegionFunc?.self)
+        newRegionWithRect = unsafeBitCast(dlsym(lib, "CGSNewRegionWithRect"), to: NewRegionWithRectFunc?.self)
+        transactionSetWindowLevel = unsafeBitCast(dlsym(lib, "SLSTransactionSetWindowLevel"), to: TransactionSetWindowLevelFunc?.self)
     }
+
+    var cid: Int32 { getMainConnectionID() }
 
     func getMainConnectionID() -> Int32 {
         mainConnectionID()
@@ -564,6 +600,101 @@ final class SkyLight {
             titles[windowId] = title
         }
         return titles
+    }
+
+    func createRegion(for rect: CGRect) -> CFTypeRef? {
+        guard let newRegionWithRect else { return nil }
+        var region: CFTypeRef?
+        var r = rect
+        _ = newRegionWithRect(&r, &region)
+        return region
+    }
+
+    func createBorderWindow(frame: CGRect) -> UInt32 {
+        guard let newWindow, let newRegionWithRect else { return 0 }
+        let cid = getMainConnectionID()
+        guard cid != 0 else { return 0 }
+
+        var region: CFTypeRef?
+        var rect = frame
+        _ = newRegionWithRect(&rect, &region)
+        guard let region else { return 0 }
+
+        var wid: UInt32 = 0
+        _ = newWindow(cid, 2, -9999, -9999, region, &wid)
+        return wid
+    }
+
+    func releaseBorderWindow(_ wid: UInt32) {
+        guard let releaseWindow else { return }
+        let cid = getMainConnectionID()
+        guard cid != 0 else { return }
+        _ = releaseWindow(cid, wid)
+    }
+
+    func createWindowContext(for wid: UInt32) -> CGContext? {
+        guard let windowContextCreate else { return nil }
+        let cid = getMainConnectionID()
+        guard cid != 0 else { return nil }
+        return windowContextCreate(cid, wid, nil)
+    }
+
+    func setWindowShape(_ wid: UInt32, frame: CGRect) {
+        guard let setWindowShape, let newRegionWithRect else { return }
+        let cid = getMainConnectionID()
+        guard cid != 0 else { return }
+
+        var region: CFTypeRef?
+        var rect = frame
+        _ = newRegionWithRect(&rect, &region)
+        guard let region else { return }
+
+        disableUpdate(cid)
+        _ = setWindowShape(cid, wid, -9999, -9999, region)
+        reenableUpdate(cid)
+    }
+
+    func configureWindow(_ wid: UInt32, resolution: Float, opaque: Bool) {
+        let cid = getMainConnectionID()
+        guard cid != 0 else { return }
+        setWindowResolution?(cid, wid, resolution)
+        setWindowOpacity?(cid, wid, opaque ? 1 : 0)
+    }
+
+    func setWindowTags(_ wid: UInt32, tags: UInt64) {
+        guard let setWindowTags else { return }
+        let cid = getMainConnectionID()
+        guard cid != 0 else { return }
+        var t = tags
+        _ = setWindowTags(cid, wid, &t, 64)
+    }
+
+    func flushWindow(_ wid: UInt32) {
+        guard let flushWindowContentRegion else { return }
+        let cid = getMainConnectionID()
+        guard cid != 0 else { return }
+        _ = flushWindowContentRegion(cid, wid, nil)
+    }
+
+    func transactionMoveAndOrder(_ wid: UInt32, origin: CGPoint, level: Int32, relativeTo targetWid: UInt32, order: SkyLightWindowOrder) {
+        let cid = getMainConnectionID()
+        guard let transaction = transactionCreate(cid) else { return }
+
+        if let transactionMoveWindowWithGroup {
+            _ = transactionMoveWindowWithGroup(transaction, wid, origin)
+        }
+        if let transactionSetWindowLevel {
+            _ = transactionSetWindowLevel(transaction, wid, level)
+        }
+        transactionOrderWindow(transaction, wid, order.rawValue, targetWid)
+        _ = transactionCommit(transaction, 0)
+    }
+
+    func transactionHide(_ wid: UInt32) {
+        let cid = getMainConnectionID()
+        guard let transaction = transactionCreate(cid) else { return }
+        transactionOrderWindow(transaction, wid, 0, 0)
+        _ = transactionCommit(transaction, 0)
     }
 }
 

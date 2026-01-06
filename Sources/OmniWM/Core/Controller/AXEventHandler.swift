@@ -346,17 +346,41 @@ final class AXEventHandler: CGSEventDelegate {
            controller.internalWorkspaceManager.entry(for: focused)?.workspaceId == workspaceId
         {
             controller.internalLastFocusedByWorkspace[workspaceId] = focused
+            if let engine = controller.internalNiriEngine,
+               let node = engine.findNode(for: focused)
+            {
+                var state = controller.internalWorkspaceManager.niriViewportState(for: workspaceId)
+                if state.selectedNodeId != node.id {
+                    state.selectedNodeId = node.id
+                    controller.internalWorkspaceManager.updateNiriViewportState(state, for: workspaceId)
+                }
+            }
             return
         }
         if let remembered = controller.internalLastFocusedByWorkspace[workspaceId],
            controller.internalWorkspaceManager.entry(for: remembered) != nil
         {
             controller.internalFocusedHandle = remembered
+            if let engine = controller.internalNiriEngine,
+               let node = engine.findNode(for: remembered)
+            {
+                var state = controller.internalWorkspaceManager.niriViewportState(for: workspaceId)
+                state.selectedNodeId = node.id
+                controller.internalWorkspaceManager.updateNiriViewportState(state, for: workspaceId)
+            }
             return
         }
-        controller.internalFocusedHandle = controller.internalWorkspaceManager.entries(in: workspaceId).first?.handle
-        if let focusedHandle = controller.internalFocusedHandle {
+        let newHandle = controller.internalWorkspaceManager.entries(in: workspaceId).first?.handle
+        controller.internalFocusedHandle = newHandle
+        if let focusedHandle = newHandle {
             controller.internalLastFocusedByWorkspace[workspaceId] = focusedHandle
+            if let engine = controller.internalNiriEngine,
+               let node = engine.findNode(for: focusedHandle)
+            {
+                var state = controller.internalWorkspaceManager.niriViewportState(for: workspaceId)
+                state.selectedNodeId = node.id
+                controller.internalWorkspaceManager.updateNiriViewportState(state, for: workspaceId)
+            }
         }
     }
 
@@ -374,6 +398,11 @@ final class AXEventHandler: CGSEventDelegate {
             return
         }
 
+        if shouldDeferBorderUpdates(for: activeWs.id) {
+            controller.internalBorderManager.hideBorder()
+            return
+        }
+
         if let entry = controller.internalWorkspaceManager.entry(for: handle) {
             controller.internalIsAppFullscreenActive = AXWindowService.isFullscreen(entry.axRef)
         } else {
@@ -385,6 +414,24 @@ final class AXEventHandler: CGSEventDelegate {
             return
         }
         controller.internalBorderManager.updateFocusedWindow(frame: frame, windowId: windowId)
+    }
+
+    private func shouldDeferBorderUpdates(for workspaceId: WorkspaceDescriptor.ID) -> Bool {
+        guard let controller else { return false }
+
+        let state = controller.internalWorkspaceManager.niriViewportState(for: workspaceId)
+        if state.viewOffsetPixels.isAnimating {
+            return true
+        }
+
+        guard let engine = controller.internalNiriEngine else { return false }
+        if engine.hasAnyWindowAnimationsRunning(in: workspaceId) {
+            return true
+        }
+        if engine.hasAnyColumnAnimationsRunning(in: workspaceId) {
+            return true
+        }
+        return false
     }
 
     private func isManagedWindowFullscreen(_ handle: WindowHandle) -> Bool {

@@ -40,4 +40,18 @@ struct CornerRadius: Equatable {
             bottomRight: bottomRight + amount
         )
     }
+
+    func normalized() -> CornerRadius {
+        let values = [topLeft, topRight, bottomLeft, bottomRight].sorted()
+        let median = (values[1] + values[2]) / 2
+        func clamp(_ v: CGFloat) -> CGFloat {
+            abs(v - median) > 1 ? median : v
+        }
+        return CornerRadius(
+            topLeft: clamp(topLeft),
+            topRight: clamp(topRight),
+            bottomLeft: clamp(bottomLeft),
+            bottomRight: clamp(bottomRight)
+        )
+    }
 }
