@@ -14,11 +14,16 @@ final class SettingsWindowController {
             return
         }
 
-        let hosting = NSHostingController(rootView: SettingsView(settings: settings, controller: controller))
+        let settingsView = SettingsView(settings: settings, controller: controller)
+            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+
+        let hosting = NSHostingController(rootView: settingsView)
         let window = NSWindow(contentViewController: hosting)
         window.title = "OmniWM Settings"
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 500, height: 550))
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.titlebarAppearsTransparent = true
+        window.setContentSize(NSSize(width: 720, height: 600))
+        window.minSize = NSSize(width: 600, height: 500)
         window.center()
         window.isReleasedWhenClosed = false
         window.makeKeyAndOrderFront(nil)

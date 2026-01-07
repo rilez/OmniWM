@@ -3,51 +3,20 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var settings: SettingsStore
     @Bindable var controller: WMController
+    @State private var selectedSection: SettingsSection = .general
 
     var body: some View {
-        TabView {
-            GeneralSettingsTab(settings: settings, controller: controller)
-                .tabItem {
-                    Label("General", systemImage: "gearshape")
-                }
-
-            NiriSettingsTab(settings: settings, controller: controller)
-                .tabItem {
-                    Label("Niri", systemImage: "scroll")
-                }
-
-            MonitorSettingsTab(settings: settings, controller: controller)
-                .tabItem {
-                    Label("Monitors", systemImage: "display")
-                }
-
-            WorkspacesSettingsTab(settings: settings, controller: controller)
-                .tabItem {
-                    Label("Workspaces", systemImage: "rectangle.3.group")
-                }
-
-            BorderSettingsTab(settings: settings, controller: controller)
-                .tabItem {
-                    Label("Borders", systemImage: "square.dashed")
-                }
-
-            WorkspaceBarSettingsTab(settings: settings, controller: controller)
-                .tabItem {
-                    Label("Bar", systemImage: "menubar.rectangle")
-                }
-
-            MenuAnywhereSettingsTab(settings: settings)
-                .tabItem {
-                    Label("Menu", systemImage: "filemenu.and.selection")
-                }
-
-            HotkeySettingsView(settings: settings, controller: controller)
-                .padding()
-                .tabItem {
-                    Label("Hotkeys", systemImage: "keyboard")
-                }
+        NavigationSplitView {
+            SettingsSidebar(selection: $selectedSection)
+        } detail: {
+            SettingsDetailView(
+                section: selectedSection,
+                settings: settings,
+                controller: controller
+            )
         }
-        .frame(minWidth: 480, minHeight: 500)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 680, minHeight: 500)
     }
 }
 
@@ -165,7 +134,7 @@ struct GeneralSettingsTab: View {
                     .foregroundColor(.secondary)
             }
         }
-        .padding()
+        .formStyle(.grouped)
     }
 
     private func syncOuterGaps() {
@@ -186,66 +155,63 @@ struct NiriSettingsTab: View {
     @State private var connectedMonitors: [Monitor] = Monitor.current()
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                SectionHeader("Configuration Scope")
+        VStack(alignment: .leading, spacing: 16) {
+            SectionHeader("Configuration Scope")
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Picker("Configure settings for:", selection: $selectedMonitor) {
-                        Text("Global Defaults").tag(nil as String?)
-                        if !connectedMonitors.isEmpty {
-                            Divider()
-                            ForEach(connectedMonitors, id: \.name) { monitor in
-                                HStack {
-                                    Text(monitor.name)
-                                    if monitor.isMain {
-                                        Text("(Main)")
-                                            .foregroundColor(.secondary)
-                                    }
+            VStack(alignment: .leading, spacing: 8) {
+                Picker("Configure settings for:", selection: $selectedMonitor) {
+                    Text("Global Defaults").tag(nil as String?)
+                    if !connectedMonitors.isEmpty {
+                        Divider()
+                        ForEach(connectedMonitors, id: \.name) { monitor in
+                            HStack {
+                                Text(monitor.name)
+                                if monitor.isMain {
+                                    Text("(Main)")
+                                        .foregroundColor(.secondary)
                                 }
-                                .tag(monitor.name as String?)
                             }
-                        }
-                    }
-
-                    if let monitorName = selectedMonitor {
-                        HStack {
-                            if settings.niriSettings(for: monitorName) != nil {
-                                Text("Has custom overrides")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            } else {
-                                Text("Using global defaults")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            Button("Reset to Global") {
-                                settings.removeNiriSettings(for: monitorName)
-                                controller.updateMonitorNiriSettings()
-                            }
-                            .disabled(settings.niriSettings(for: monitorName) == nil)
+                            .tag(monitor.name as String?)
                         }
                     }
                 }
-
-                Divider()
 
                 if let monitorName = selectedMonitor {
-                    MonitorNiriSettingsSection(
-                        settings: settings,
-                        controller: controller,
-                        monitorName: monitorName
-                    )
-                } else {
-                    GlobalNiriSettingsSection(
-                        settings: settings,
-                        controller: controller
-                    )
+                    HStack {
+                        if settings.niriSettings(for: monitorName) != nil {
+                            Text("Has custom overrides")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("Using global defaults")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button("Reset to Global") {
+                            settings.removeNiriSettings(for: monitorName)
+                            controller.updateMonitorNiriSettings()
+                        }
+                        .disabled(settings.niriSettings(for: monitorName) == nil)
+                    }
                 }
             }
+
+            Divider()
+
+            if let monitorName = selectedMonitor {
+                MonitorNiriSettingsSection(
+                    settings: settings,
+                    controller: controller,
+                    monitorName: monitorName
+                )
+            } else {
+                GlobalNiriSettingsSection(
+                    settings: settings,
+                    controller: controller
+                )
+            }
         }
-        .padding()
         .onAppear {
             connectedMonitors = Monitor.current()
         }
@@ -432,6 +398,6 @@ struct MenuAnywhereSettingsTab: View {
                     .foregroundColor(.secondary)
             }
         }
-        .padding()
+        .formStyle(.grouped)
     }
 }

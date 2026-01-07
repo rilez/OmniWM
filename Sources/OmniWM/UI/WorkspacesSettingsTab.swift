@@ -54,7 +54,7 @@ struct WorkspacesSettingsTab: View {
                     .foregroundColor(.secondary)
             }
         }
-        .padding()
+        .formStyle(.grouped)
         .sheet(item: $editingConfig) { config in
             WorkspaceEditSheet(
                 configuration: config,

@@ -8,9 +8,8 @@ struct WorkspaceBarSettingsTab: View {
     @State private var connectedMonitors: [Monitor] = Monitor.current()
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                SectionHeader("Configuration Scope")
+        VStack(alignment: .leading, spacing: 16) {
+            SectionHeader("Configuration Scope")
 
                 VStack(alignment: .leading, spacing: 8) {
                     Picker("Configure settings for:", selection: $selectedMonitor) {
@@ -65,9 +64,7 @@ struct WorkspaceBarSettingsTab: View {
                         controller: controller
                     )
                 }
-            }
         }
-        .padding()
         .onAppear {
             connectedMonitors = Monitor.current()
         }

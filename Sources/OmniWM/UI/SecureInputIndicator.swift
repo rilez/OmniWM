@@ -82,21 +82,8 @@ struct SecureInputIndicatorView: View {
     let isExpanded: Bool
     let onTap: () -> Void
 
-    @Environment(\.colorScheme) var colorScheme
-
-    private var backgroundColor: Color {
-        colorScheme == .dark ? Color.gray.opacity(0.9) : Color.gray.opacity(0.85)
-    }
-
-    private var foregroundColor: Color {
-        colorScheme == .dark ? .black : .white
-    }
-
     var body: some View {
         ZStack(alignment: .center) {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(backgroundColor)
-
             if isExpanded {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -119,11 +106,12 @@ struct SecureInputIndicatorView: View {
                     .padding(10)
             }
         }
-        .foregroundStyle(foregroundColor)
+        .foregroundStyle(.primary)
         .frame(
             width: isExpanded ? expandedSize.width : iconSize.width,
             height: isExpanded ? expandedSize.height : iconSize.height
         )
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
         .onTapGesture {
             onTap()
         }

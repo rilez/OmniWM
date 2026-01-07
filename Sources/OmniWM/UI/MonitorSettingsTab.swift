@@ -42,7 +42,7 @@ struct MonitorSettingsTab: View {
                 }
             }
         }
-        .padding()
+        .formStyle(.grouped)
         .onAppear {
             connectedMonitors = Monitor.current()
             if selectedMonitor == nil, let first = connectedMonitors.first {

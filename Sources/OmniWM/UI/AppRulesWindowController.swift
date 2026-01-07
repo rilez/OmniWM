@@ -14,11 +14,16 @@ final class AppRulesWindowController {
             return
         }
 
-        let hosting = NSHostingController(rootView: AppRulesView(settings: settings, controller: controller))
+        let appRulesView = AppRulesView(settings: settings, controller: controller)
+            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+
+        let hosting = NSHostingController(rootView: appRulesView)
         let window = NSWindow(contentViewController: hosting)
         window.title = "App Rules"
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 500, height: 400))
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.titlebarAppearsTransparent = true
+        window.setContentSize(NSSize(width: 620, height: 480))
+        window.minSize = NSSize(width: 520, height: 380)
         window.center()
         window.isReleasedWhenClosed = false
         window.makeKeyAndOrderFront(nil)

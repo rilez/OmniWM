@@ -238,7 +238,6 @@ struct WindowFinderView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(Color(nsColor: .textBackgroundColor))
 
             Divider()
 
@@ -266,15 +265,9 @@ struct WindowFinderView: View {
                     }
                 }
             }
-            .background(Color(nsColor: .controlBackgroundColor))
         }
         .frame(width: 500, height: 400)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
     }
 }
 

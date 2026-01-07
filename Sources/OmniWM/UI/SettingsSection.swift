@@ -1,0 +1,40 @@
+import SwiftUI
+
+enum SettingsSection: String, CaseIterable, Identifiable {
+    case general
+    case niri
+    case monitors
+    case workspaces
+    case borders
+    case bar
+    case menu
+    case hotkeys
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .general: "General"
+        case .niri: "Niri"
+        case .monitors: "Monitors"
+        case .workspaces: "Workspaces"
+        case .borders: "Borders"
+        case .bar: "Bar"
+        case .menu: "Menu"
+        case .hotkeys: "Hotkeys"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .general: "gearshape"
+        case .niri: "scroll"
+        case .monitors: "display"
+        case .workspaces: "rectangle.3.group"
+        case .borders: "square.dashed"
+        case .bar: "menubar.rectangle"
+        case .menu: "filemenu.and.selection"
+        case .hotkeys: "keyboard"
+        }
+    }
+}

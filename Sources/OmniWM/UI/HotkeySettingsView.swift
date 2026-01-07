@@ -138,7 +138,7 @@ struct HotkeyCategorySection: View {
             Text(category.rawValue)
                 .font(.subheadline)
                 .fontWeight(.semibold)
-                .foregroundColor(.red)
+                .foregroundColor(.accentColor)
 
             ForEach(bindings) { binding in
                 HotkeyBindingRow(

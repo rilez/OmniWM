@@ -39,7 +39,7 @@ struct BorderSettingsTab: View {
                     .foregroundColor(.secondary)
             }
         }
-        .padding()
+        .formStyle(.grouped)
     }
 
     private var colorBinding: Binding<Color> {

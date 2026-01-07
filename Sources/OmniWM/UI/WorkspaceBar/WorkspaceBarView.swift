@@ -41,42 +41,25 @@ struct WorkspaceBarView: View {
     private let windowSpacing: CGFloat = 2
     private let cornerRadius: CGFloat = 6
 
-    private var backgroundColor: Color {
-        colorScheme == .dark
-            ? Color.white.opacity(resolvedSettings.backgroundOpacity)
-            : Color.black.opacity(resolvedSettings.backgroundOpacity * 0.5)
-    }
-
-    private var activeBackgroundColor: Color {
-        colorScheme == .dark
-            ? Color.white.opacity(resolvedSettings.backgroundOpacity * 2)
-            : Color.black.opacity(resolvedSettings.backgroundOpacity)
-    }
-
-    private var borderColor: Color {
-        Color(red: 196 / 255.0, green: 167 / 255.0, blue: 231 / 255.0)
-    }
-
     var body: some View {
-        HStack(spacing: workspaceSpacing) {
-            ForEach(workspaceItems, id: \.id) { item in
-                WorkspaceItemView(
-                    item: item,
-                    iconSize: iconSize,
-                    itemHeight: itemHeight,
-                    windowSpacing: windowSpacing,
-                    cornerRadius: cornerRadius,
-                    backgroundColor: backgroundColor,
-                    activeBackgroundColor: activeBackgroundColor,
-                    borderColor: borderColor,
-                    showLabels: resolvedSettings.showLabels,
-                    onFocusWorkspace: { focusWorkspace(item) },
-                    onFocusWindow: { windowId in focusWindow(windowId) }
-                )
+        GlassEffectContainer {
+            HStack(spacing: workspaceSpacing) {
+                ForEach(workspaceItems, id: \.id) { item in
+                    WorkspaceItemView(
+                        item: item,
+                        iconSize: iconSize,
+                        itemHeight: itemHeight,
+                        windowSpacing: windowSpacing,
+                        cornerRadius: cornerRadius,
+                        showLabels: resolvedSettings.showLabels,
+                        onFocusWorkspace: { focusWorkspace(item) },
+                        onFocusWindow: { windowId in focusWindow(windowId) }
+                    )
+                }
             }
+            .padding(.horizontal, 4)
+            .frame(height: itemHeight + 4)
         }
-        .padding(.horizontal, 4)
-        .frame(height: itemHeight + 4)
     }
 
     private var workspaceItems: [WorkspaceBarItem] {
@@ -104,9 +87,6 @@ private struct WorkspaceItemView: View {
     let itemHeight: CGFloat
     let windowSpacing: CGFloat
     let cornerRadius: CGFloat
-    let backgroundColor: Color
-    let activeBackgroundColor: Color
-    let borderColor: Color
     let showLabels: Bool
     let onFocusWorkspace: () -> Void
     let onFocusWindow: (Int) -> Void
@@ -118,7 +98,7 @@ private struct WorkspaceItemView: View {
             if showLabels {
                 Text(item.name)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundColor(item.isFocused ? borderColor : .secondary)
+                    .foregroundColor(item.isFocused ? .accentColor : .secondary)
                     .frame(minWidth: 16)
 
                 if !item.windows.isEmpty {
@@ -141,14 +121,18 @@ private struct WorkspaceItemView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 2)
         .frame(height: itemHeight)
-        .background(
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(item.isFocused ? activeBackgroundColor : (isHovered ? backgroundColor : Color.clear))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .strokeBorder(item.isFocused ? borderColor : Color.clear, lineWidth: 1)
-        )
+        .background {
+            if item.isFocused || isHovered {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(.regularMaterial)
+                    .overlay {
+                        if item.isFocused {
+                            RoundedRectangle(cornerRadius: cornerRadius)
+                                .strokeBorder(Color.accentColor, lineWidth: 1)
+                        }
+                    }
+            }
+        }
         .onHover { hovering in
             isHovered = hovering
         }
