@@ -13,73 +13,115 @@ struct StatusBarMenuView: View {
         VStack(spacing: 0) {
             headerSection
             GlassMenuDivider()
-            togglesSection
+
+            GlassSectionLabel("CONTROLS")
+            controlsSection
             GlassMenuDivider()
-            actionsSection
+
+            GlassSectionLabel("SETTINGS")
+            settingsSection
             GlassMenuDivider()
+
+            GlassSectionLabel("LINKS")
             linksSection
             GlassMenuDivider()
+
             quitSection
         }
         .padding(.vertical, 8)
-        .frame(width: 260)
+        .frame(width: 280)
     }
 
     private var headerSection: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "o.circle")
-                .font(.system(size: 24, weight: .medium))
-                .foregroundStyle(.primary)
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [.blue.opacity(0.3), .purple.opacity(0.2)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 36, height: 36)
+                Image(systemName: "square.grid.2x2")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(.primary)
+            }
+
             VStack(alignment: .leading, spacing: 2) {
-                Text("OmniWM")
-                    .font(.system(size: 15, weight: .semibold))
+                HStack(spacing: 6) {
+                    Text("OmniWM")
+                        .font(.system(size: 15, weight: .semibold))
+                    StatusIndicator()
+                }
                 Text("v\(appVersion)")
-                    .font(.system(size: 11))
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
             Spacer()
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
     }
 
-    private var togglesSection: some View {
+    private var controlsSection: some View {
         GlassMenuSection {
-            GlassToggleRow(label: "Focus Follows Mouse", isOn: $settings.focusFollowsMouse)
-                .onChange(of: settings.focusFollowsMouse) { _, newValue in
-                    controller.setFocusFollowsMouse(newValue)
-                }
-            GlassToggleRow(label: "Move Mouse to Focused Window", isOn: $settings.moveMouseToFocusedWindow)
-                .onChange(of: settings.moveMouseToFocusedWindow) { _, newValue in
-                    controller.setMoveMouseToFocusedWindow(newValue)
-                }
-            GlassToggleRow(label: "Window Borders", isOn: $settings.bordersEnabled)
-                .onChange(of: settings.bordersEnabled) { _, newValue in
-                    controller.setBordersEnabled(newValue)
-                }
-            GlassToggleRow(label: "Workspace Bar", isOn: $settings.workspaceBarEnabled)
-                .onChange(of: settings.workspaceBarEnabled) { _, newValue in
-                    controller.setWorkspaceBarEnabled(newValue)
-                }
-            GlassToggleRow(label: "Keep Awake", isOn: $settings.preventSleepEnabled)
-                .onChange(of: settings.preventSleepEnabled) { _, newValue in
-                    controller.setPreventSleepEnabled(newValue)
-                }
+            GlassToggleRow(
+                icon: "cursorarrow.motionlines",
+                label: "Focus Follows Mouse",
+                isOn: $settings.focusFollowsMouse
+            )
+            .onChange(of: settings.focusFollowsMouse) { _, newValue in
+                controller.setFocusFollowsMouse(newValue)
+            }
+            GlassToggleRow(
+                icon: "arrow.up.left.and.down.right.magnifyingglass",
+                label: "Mouse to Focused",
+                isOn: $settings.moveMouseToFocusedWindow
+            )
+            .onChange(of: settings.moveMouseToFocusedWindow) { _, newValue in
+                controller.setMoveMouseToFocusedWindow(newValue)
+            }
+            GlassToggleRow(
+                icon: "square.dashed",
+                label: "Window Borders",
+                isOn: $settings.bordersEnabled
+            )
+            .onChange(of: settings.bordersEnabled) { _, newValue in
+                controller.setBordersEnabled(newValue)
+            }
+            GlassToggleRow(
+                icon: "menubar.rectangle",
+                label: "Workspace Bar",
+                isOn: $settings.workspaceBarEnabled
+            )
+            .onChange(of: settings.workspaceBarEnabled) { _, newValue in
+                controller.setWorkspaceBarEnabled(newValue)
+            }
+            GlassToggleRow(
+                icon: "moon.zzz",
+                label: "Keep Awake",
+                isOn: $settings.preventSleepEnabled
+            )
+            .onChange(of: settings.preventSleepEnabled) { _, newValue in
+                controller.setPreventSleepEnabled(newValue)
+            }
         }
     }
 
-    private var actionsSection: some View {
+    private var settingsSection: some View {
         GlassMenuSection {
-            GlassMenuRow(icon: "slider.horizontal.3", action: {
+            GlassMenuRow(icon: "slider.horizontal.3", showChevron: true, action: {
                 AppRulesWindowController.shared.show(settings: settings, controller: controller)
             }) {
-                Text("App Rules…")
+                Text("App Rules")
                     .font(.system(size: 13))
             }
-            GlassMenuRow(icon: "gearshape", action: {
+            GlassMenuRow(icon: "gearshape", showChevron: true, action: {
                 SettingsWindowController.shared.show(settings: settings, controller: controller)
             }) {
-                Text("Settings…")
+                Text("Settings")
                     .font(.system(size: 13))
             }
         }
@@ -87,7 +129,7 @@ struct StatusBarMenuView: View {
 
     private var linksSection: some View {
         GlassMenuSection {
-            GlassMenuRow(icon: "link", action: {
+            GlassMenuRow(icon: "link", isExternal: true, action: {
                 if let url = URL(string: "https://github.com/BarutSRB/OmniWM") {
                     NSWorkspace.shared.open(url)
                 }
@@ -95,7 +137,7 @@ struct StatusBarMenuView: View {
                 Text("GitHub")
                     .font(.system(size: 13))
             }
-            GlassMenuRow(icon: "heart", action: {
+            GlassMenuRow(icon: "heart", isExternal: true, action: {
                 if let url = URL(string: "https://github.com/sponsors/BarutSRB") {
                     NSWorkspace.shared.open(url)
                 }
@@ -103,7 +145,7 @@ struct StatusBarMenuView: View {
                 Text("Sponsor on GitHub")
                     .font(.system(size: 13))
             }
-            GlassMenuRow(icon: "heart", action: {
+            GlassMenuRow(icon: "heart", isExternal: true, action: {
                 if let url = URL(string: "https://paypal.me/beacon2024") {
                     NSWorkspace.shared.open(url)
                 }
@@ -115,7 +157,7 @@ struct StatusBarMenuView: View {
     }
 
     private var quitSection: some View {
-        GlassMenuRow(icon: "power", action: {
+        GlassMenuRow(icon: "power", isDestructive: true, action: {
             NSApplication.shared.terminate(nil)
         }) {
             Text("Quit OmniWM")

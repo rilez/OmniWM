@@ -61,15 +61,64 @@ struct GlassSearchField: View {
     }
 }
 
+struct GlassSectionLabel: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(.tertiary)
+            .tracking(0.5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+    }
+}
+
+struct StatusIndicator: View {
+    @State private var isAnimating = false
+
+    var body: some View {
+        Circle()
+            .fill(.green)
+            .frame(width: 6, height: 6)
+            .shadow(color: .green.opacity(0.5), radius: isAnimating ? 4 : 2)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
+                    isAnimating = true
+                }
+            }
+    }
+}
+
 struct GlassMenuRow<Content: View>: View {
     let content: Content
     var icon: String?
     var action: () -> Void
+    var showChevron: Bool = false
+    var isExternal: Bool = false
+    var isDestructive: Bool = false
 
     @State private var isHovered = false
+    @State private var isPressed = false
 
-    init(icon: String? = nil, action: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+    init(
+        icon: String? = nil,
+        showChevron: Bool = false,
+        isExternal: Bool = false,
+        isDestructive: Bool = false,
+        action: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
         self.icon = icon
+        self.showChevron = showChevron
+        self.isExternal = isExternal
+        self.isDestructive = isDestructive
         self.action = action
         self.content = content()
     }
@@ -80,11 +129,24 @@ struct GlassMenuRow<Content: View>: View {
                 if let icon = icon {
                     Image(systemName: icon)
                         .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(iconColor)
                         .frame(width: 16)
                 }
                 content
+                    .foregroundStyle(textColor)
                 Spacer()
+
+                if showChevron {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+
+                if isExternal {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -92,39 +154,68 @@ struct GlassMenuRow<Content: View>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .scaleEffect(isPressed ? 0.97 : 1.0)
         .background {
             if isHovered {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(.quaternary)
+                    .fill(isDestructive ? AnyShapeStyle(Color.red.opacity(0.1)) : AnyShapeStyle(.quaternary))
             }
         }
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .animation(.spring(duration: 0.2), value: isPressed)
         .onHover { hovering in
             isHovered = hovering
         }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in isPressed = true }
+                .onEnded { _ in isPressed = false }
+        )
+    }
+
+    private var iconColor: Color {
+        if isDestructive && isHovered { return .red }
+        return .secondary
+    }
+
+    private var textColor: Color {
+        if isDestructive && isHovered { return .red }
+        return .primary
     }
 }
 
 struct GlassToggleRow: View {
+    var icon: String?
     let label: String
     @Binding var isOn: Bool
 
     @State private var isHovered = false
 
     var body: some View {
-        Toggle(label, isOn: $isOn)
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background {
-                if isHovered {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(.quaternary)
-                }
+        HStack(spacing: 10) {
+            if let icon = icon {
+                Image(systemName: icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
             }
-            .onHover { hovering in
-                isHovered = hovering
+
+            Toggle(label, isOn: $isOn)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background {
+            if isHovered {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(.quaternary)
             }
+        }
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .onHover { hovering in
+            isHovered = hovering
+        }
     }
 }
 
