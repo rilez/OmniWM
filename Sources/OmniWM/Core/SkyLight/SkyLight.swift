@@ -657,8 +657,8 @@ final class SkyLight {
     func configureWindow(_ wid: UInt32, resolution: Float, opaque: Bool) {
         let cid = getMainConnectionID()
         guard cid != 0 else { return }
-        setWindowResolution?(cid, wid, resolution)
-        setWindowOpacity?(cid, wid, opaque ? 1 : 0)
+        _ = setWindowResolution?(cid, wid, resolution)
+        _ = setWindowOpacity?(cid, wid, opaque ? 1 : 0)
     }
 
     func setWindowTags(_ wid: UInt32, tags: UInt64) {

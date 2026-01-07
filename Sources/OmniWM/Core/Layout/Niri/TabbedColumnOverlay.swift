@@ -1,21 +1,16 @@
 import AppKit
 
 private enum TabbedOverlayMetrics {
-    static let headerHeight: CGFloat = 28
-    static let overlayHeight: CGFloat = 22
-    static let padding: CGFloat = 6
-    static let itemSize = CGSize(width: 20, height: 20)
-    static let itemSpacing: CGFloat = 6
-    static let backgroundRadius: CGFloat = 8
-    static let itemRadius: CGFloat = 6
+    static let barThickness: CGFloat = 10
+    static let spacing: CGFloat = 2
+    static let totalWidth: CGFloat = barThickness + spacing
+    static let cornerRadius: CGFloat = 3
+    static let segmentGap: CGFloat = 2
     static let minVisibleIntersection: CGFloat = 10
 
     static let backgroundColor = NSColor.black.withAlphaComponent(0.4)
-    static let inactiveItemColor = NSColor.white.withAlphaComponent(0.12)
-    static let activeItemColor = NSColor.white.withAlphaComponent(0.28)
-    static let inactiveTextColor = NSColor.white.withAlphaComponent(0.85)
-    static let activeTextColor = NSColor.white
-    @MainActor static let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+    static let selectedColor = NSColor(red: 0.0, green: 0.8, blue: 0.2, alpha: 0.9)
+    static let unselectedColor = NSColor(red: 0.0, green: 0.5, blue: 1.0, alpha: 0.7)
 }
 
 struct TabbedColumnOverlayInfo {
@@ -31,7 +26,7 @@ struct TabbedColumnOverlayInfo {
 final class TabbedColumnOverlayManager {
     typealias SelectionHandler = (WorkspaceDescriptor.ID, NodeId, Int) -> Void
 
-    static let tabIndicatorHeight: CGFloat = TabbedOverlayMetrics.headerHeight
+    static let tabIndicatorWidth: CGFloat = TabbedOverlayMetrics.totalWidth
 
     var onSelect: SelectionHandler?
 
@@ -121,17 +116,14 @@ private final class TabbedColumnOverlayWindow: NSPanel {
         workspaceId = info.workspaceId
         columnId = info.columnId
 
-        let clampedCount = max(1, min(5, info.tabCount))
-        let clampedActive = min(max(0, info.activeIndex), clampedCount - 1)
-
-        overlayView.tabCount = clampedCount
-        overlayView.activeIndex = clampedActive
+        overlayView.tabCount = info.tabCount
+        overlayView.activeIndex = min(max(0, info.activeIndex), max(0, info.tabCount - 1))
         overlayView.onSelect = { [weak self] index in
             guard let self else { return }
             onSelect?(workspaceId, columnId, index)
         }
 
-        let frame = Self.overlayFrame(for: info.columnFrame, tabCount: clampedCount)
+        let frame = Self.overlayFrame(for: info.columnFrame)
         guard frame.width > 1, frame.height > 1 else {
             orderOut(nil)
             return
@@ -148,26 +140,22 @@ private final class TabbedColumnOverlayWindow: NSPanel {
         }
     }
 
-    private static func overlayFrame(for columnFrame: CGRect, tabCount: Int) -> CGRect {
-        let idealWidth = TabbedColumnOverlayView.idealWidth(for: tabCount)
-        let maxWidth = max(0, columnFrame.width - TabbedOverlayMetrics.padding * 2)
-        let width = min(idealWidth, maxWidth)
-        let height = TabbedOverlayMetrics.overlayHeight
-
-        let x = columnFrame.minX + (columnFrame.width - width) / 2
-        let y = columnFrame.maxY - TabbedOverlayMetrics.headerHeight +
-            (TabbedOverlayMetrics.headerHeight - height) / 2
+    private static func overlayFrame(for columnFrame: CGRect) -> CGRect {
+        let x = columnFrame.minX
+        let y = columnFrame.origin.y
+        let width = TabbedOverlayMetrics.barThickness
+        let height = columnFrame.height
         return CGRect(x: x, y: y, width: width, height: height)
     }
 }
 
 private final class TabbedColumnOverlayView: NSView {
     var tabCount: Int = 0 {
-        didSet { needsDisplay = true }
+        didSet { if oldValue != tabCount { needsDisplay = true } }
     }
 
     var activeIndex: Int = 0 {
-        didSet { needsDisplay = true }
+        didSet { if oldValue != activeIndex { needsDisplay = true } }
     }
 
     var onSelect: ((Int) -> Void)?
@@ -177,78 +165,64 @@ private final class TabbedColumnOverlayView: NSView {
     }
 
     override func draw(_: NSRect) {
+        guard tabCount > 0 else { return }
+
         TabbedOverlayMetrics.backgroundColor.setFill()
         let backgroundPath = NSBezierPath(
             roundedRect: bounds,
-            xRadius: TabbedOverlayMetrics.backgroundRadius,
-            yRadius: TabbedOverlayMetrics.backgroundRadius
+            xRadius: TabbedOverlayMetrics.cornerRadius,
+            yRadius: TabbedOverlayMetrics.cornerRadius
         )
         backgroundPath.fill()
 
-        let count = max(1, min(5, tabCount))
-        let clampedActive = min(max(0, activeIndex), count - 1)
+        let clampedActive = min(max(0, activeIndex), tabCount - 1)
 
-        for index in 0 ..< count {
-            let itemRect = rectForItem(index)
+        for index in 0 ..< tabCount {
+            let segmentRect = rectForSegment(index)
             let path = NSBezierPath(
-                roundedRect: itemRect,
-                xRadius: TabbedOverlayMetrics.itemRadius,
-                yRadius: TabbedOverlayMetrics.itemRadius
+                roundedRect: segmentRect,
+                xRadius: TabbedOverlayMetrics.cornerRadius,
+                yRadius: TabbedOverlayMetrics.cornerRadius
             )
             if index == clampedActive {
-                TabbedOverlayMetrics.activeItemColor.setFill()
+                TabbedOverlayMetrics.selectedColor.setFill()
             } else {
-                TabbedOverlayMetrics.inactiveItemColor.setFill()
+                TabbedOverlayMetrics.unselectedColor.setFill()
             }
             path.fill()
-
-            let text = "\(index + 1)" as NSString
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: TabbedOverlayMetrics.font,
-                .foregroundColor: index == clampedActive
-                    ? TabbedOverlayMetrics.activeTextColor
-                    : TabbedOverlayMetrics.inactiveTextColor
-            ]
-            let textSize = text.size(withAttributes: attributes)
-            let textRect = CGRect(
-                x: itemRect.midX - textSize.width / 2,
-                y: itemRect.midY - textSize.height / 2,
-                width: textSize.width,
-                height: textSize.height
-            )
-            text.draw(in: textRect, withAttributes: attributes)
         }
     }
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        guard let index = index(at: point) else { return }
+        guard let index = segmentIndex(at: point) else { return }
         onSelect?(index)
     }
 
-    private func index(at point: CGPoint) -> Int? {
-        let count = max(1, min(5, tabCount))
-        for index in 0 ..< count {
-            if rectForItem(index).contains(point) {
+    private func segmentIndex(at point: CGPoint) -> Int? {
+        guard tabCount > 0 else { return nil }
+        for index in 0 ..< tabCount {
+            if rectForSegment(index).contains(point) {
                 return index
             }
         }
         return nil
     }
 
-    private func rectForItem(_ index: Int) -> CGRect {
-        let count = max(1, min(5, tabCount))
-        let totalWidth = TabbedColumnOverlayView.idealWidth(for: count)
-        let offsetX = (bounds.width - totalWidth) / 2 + TabbedOverlayMetrics.padding
-        let x = offsetX + CGFloat(index) * (TabbedOverlayMetrics.itemSize.width + TabbedOverlayMetrics.itemSpacing)
-        let y = (bounds.height - TabbedOverlayMetrics.itemSize.height) / 2
-        return CGRect(origin: CGPoint(x: x, y: y), size: TabbedOverlayMetrics.itemSize)
-    }
+    private func rectForSegment(_ index: Int) -> CGRect {
+        guard tabCount > 0 else { return .zero }
 
-    static func idealWidth(for tabCount: Int) -> CGFloat {
-        let count = max(1, min(5, tabCount))
-        let items = CGFloat(count) * TabbedOverlayMetrics.itemSize.width
-        let gaps = CGFloat(max(0, count - 1)) * TabbedOverlayMetrics.itemSpacing
-        return TabbedOverlayMetrics.padding * 2 + items + gaps
+        let totalGaps = CGFloat(tabCount - 1) * TabbedOverlayMetrics.segmentGap
+        let availableHeight = bounds.height - totalGaps
+        let segmentHeight = availableHeight / CGFloat(tabCount)
+
+        let y = bounds.height - CGFloat(index + 1) * segmentHeight - CGFloat(index) * TabbedOverlayMetrics.segmentGap
+
+        return CGRect(
+            x: 0,
+            y: y,
+            width: bounds.width,
+            height: segmentHeight
+        )
     }
 }

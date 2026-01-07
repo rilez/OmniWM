@@ -674,7 +674,7 @@ final class WMController {
         let engine = NiriLayoutEngine(maxWindowsPerColumn: maxWindowsPerColumn)
         engine.centerFocusedColumn = centerFocusedColumn
         engine.alwaysCenterSingleColumn = alwaysCenterSingleColumn
-        engine.renderStyle.tabIndicatorHeight = TabbedColumnOverlayManager.tabIndicatorHeight
+        engine.renderStyle.tabIndicatorWidth = TabbedColumnOverlayManager.tabIndicatorWidth
         engine.animationClock = animationClock
         niriEngine = engine
 

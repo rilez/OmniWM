@@ -348,9 +348,9 @@ extension NiriLayoutEngine {
     ) {
         row.frame = rowRect
 
-        let tabOffset = row.isTabbed ? renderStyle.tabIndicatorHeight : 0
+        let tabOffset = row.isTabbed ? renderStyle.tabIndicatorWidth : 0
         let contentRect = CGRect(
-            x: rowRect.origin.x,
+            x: rowRect.origin.x + tabOffset,
             y: rowRect.origin.y,
             width: max(0, rowRect.width - tabOffset),
             height: rowRect.height
@@ -475,12 +475,12 @@ extension NiriLayoutEngine {
     ) {
         column.frame = columnRect
 
-        let tabOffset = column.isTabbed ? renderStyle.tabIndicatorHeight : 0
+        let tabOffset = column.isTabbed ? renderStyle.tabIndicatorWidth : 0
         let contentRect = CGRect(
-            x: columnRect.origin.x,
+            x: columnRect.origin.x + tabOffset,
             y: columnRect.origin.y,
-            width: columnRect.width,
-            height: max(0, columnRect.height - tabOffset)
+            width: max(0, columnRect.width - tabOffset),
+            height: columnRect.height
         )
 
         let rows = column.windowNodes

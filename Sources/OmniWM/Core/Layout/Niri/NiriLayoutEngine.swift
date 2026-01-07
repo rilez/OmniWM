@@ -91,11 +91,11 @@ func computeWorkingArea(
 
 struct NiriRenderStyle {
     var borderWidth: CGFloat
-    var tabIndicatorHeight: CGFloat
+    var tabIndicatorWidth: CGFloat
 
     static let `default` = NiriRenderStyle(
         borderWidth: 0,
-        tabIndicatorHeight: 0
+        tabIndicatorWidth: 0
     )
 }
 
@@ -2383,9 +2383,9 @@ extension NiriLayoutEngine {
         let colX = columnX(at: colIdx)
         let screenX = workingFrame.origin.x + colX + targetViewOffset + centeringOffset
 
-        let tabOffset = column.isTabbed ? renderStyle.tabIndicatorHeight : 0
+        let tabOffset = column.isTabbed ? renderStyle.tabIndicatorWidth : 0
         let contentY = workingFrame.origin.y
-        let availableHeight = workingFrame.height - tabOffset
+        let availableHeight = workingFrame.height
 
         let windowNodes = column.windowNodes
         guard let windowIndex = windowNodes.firstIndex(where: { $0.handle == handle }) else { return nil }
@@ -2407,9 +2407,9 @@ extension NiriLayoutEngine {
         }
 
         return CGRect(
-            x: screenX,
+            x: screenX + tabOffset,
             y: targetY,
-            width: column.cachedWidth,
+            width: column.cachedWidth - tabOffset,
             height: targetHeight
         )
     }
