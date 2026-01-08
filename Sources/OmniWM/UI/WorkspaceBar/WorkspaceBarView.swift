@@ -41,25 +41,34 @@ struct WorkspaceBarView: View {
     private let windowSpacing: CGFloat = 2
     private let cornerRadius: CGFloat = 6
 
+    private var backgroundColor: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(resolvedSettings.backgroundOpacity)
+            : Color.black.opacity(resolvedSettings.backgroundOpacity * 0.5)
+    }
+
     var body: some View {
-        GlassEffectContainer {
-            HStack(spacing: workspaceSpacing) {
-                ForEach(workspaceItems, id: \.id) { item in
-                    WorkspaceItemView(
-                        item: item,
-                        iconSize: iconSize,
-                        itemHeight: itemHeight,
-                        windowSpacing: windowSpacing,
-                        cornerRadius: cornerRadius,
-                        showLabels: resolvedSettings.showLabels,
-                        onFocusWorkspace: { focusWorkspace(item) },
-                        onFocusWindow: { windowId in focusWindow(windowId) }
-                    )
-                }
+        HStack(spacing: workspaceSpacing) {
+            ForEach(workspaceItems, id: \.id) { item in
+                WorkspaceItemView(
+                    item: item,
+                    iconSize: iconSize,
+                    itemHeight: itemHeight,
+                    windowSpacing: windowSpacing,
+                    cornerRadius: cornerRadius,
+                    showLabels: resolvedSettings.showLabels,
+                    onFocusWorkspace: { focusWorkspace(item) },
+                    onFocusWindow: { windowId in focusWindow(windowId) }
+                )
             }
-            .padding(.horizontal, 4)
-            .frame(height: itemHeight + 4)
         }
+        .padding(.horizontal, 4)
+        .frame(height: itemHeight + 4)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(backgroundColor)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        )
     }
 
     private var workspaceItems: [WorkspaceBarItem] {
@@ -168,6 +177,7 @@ private struct WindowIconView: View {
             }
             .frame(width: iconSize, height: iconSize)
             .opacity(opacity)
+            .shadow(color: Color.accentColor.opacity(glowOpacity), radius: glowRadius)
 
             if window.windowCount > 1 {
                 Text("\(window.windowCount)")
@@ -181,7 +191,8 @@ private struct WindowIconView: View {
                     .offset(x: iconSize * 0.2, y: -iconSize * 0.1)
             }
         }
-        .scaleEffect(isHovered ? 1.1 : 1.0)
+        .scaleEffect(scale)
+        .animation(.easeInOut(duration: 0.15), value: isFocused)
         .animation(.easeInOut(duration: 0.1), value: isHovered)
         .onHover { hovering in
             isHovered = hovering
@@ -210,10 +221,28 @@ private struct WindowIconView: View {
         if isFocused {
             1.0
         } else if isInFocusedWorkspace {
-            0.6
+            0.4
         } else {
-            0.8
+            0.5
         }
+    }
+
+    private var scale: CGFloat {
+        if isFocused {
+            1.1
+        } else if isHovered {
+            1.05
+        } else {
+            1.0
+        }
+    }
+
+    private var glowRadius: CGFloat {
+        isFocused ? 4 : 0
+    }
+
+    private var glowOpacity: Double {
+        isFocused ? 0.5 : 0
     }
 }
 
