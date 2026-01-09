@@ -35,8 +35,8 @@ extension Direction {
 
     var isPositive: Bool {
         switch self {
-        case .right, .down: true
-        case .left, .up: false
+        case .right, .up: true
+        case .left, .down: false
         }
     }
 }
