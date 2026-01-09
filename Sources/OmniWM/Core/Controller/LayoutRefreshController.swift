@@ -312,6 +312,11 @@ final class LayoutRefreshController {
             await layoutWithDwindleEngine(activeWorkspaces: dwindleWorkspaces)
         }
 
+        for ws in controller.internalWorkspaceManager.workspaces where !activeWorkspaceIds.contains(ws.id) {
+            guard let monitor = controller.internalWorkspaceManager.monitor(for: ws.id) else { continue }
+            hideWorkspace(ws.id, monitor: monitor)
+        }
+
         if let focusedWorkspaceId = controller.activeWorkspace()?.id {
             controller.ensureFocusedHandleValid(in: focusedWorkspaceId)
         }
@@ -809,11 +814,6 @@ final class LayoutRefreshController {
 
         updateTabbedColumnOverlays()
         controller.updateWorkspaceBar()
-
-        for ws in workspaceManager.workspaces where !activeWorkspaces.contains(ws.id) {
-            guard let monitor = workspaceManager.monitor(for: ws.id) else { continue }
-            hideWorkspace(ws.id, monitor: monitor)
-        }
     }
 
     func layoutWithDwindleEngine(activeWorkspaces: Set<WorkspaceDescriptor.ID>) async {
@@ -831,8 +831,6 @@ final class LayoutRefreshController {
             let layoutType = controller.internalSettings.layoutType(for: wsName)
             guard layoutType == .dwindle else { continue }
 
-            unhideWorkspace(wsId, monitor: monitor)
-
             let windowHandles = workspaceManager.entries(in: wsId).map(\.handle)
             let focusedHandle = controller.internalFocusedHandle
 
@@ -841,6 +839,12 @@ final class LayoutRefreshController {
             let insetFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
 
             let frames = engine.calculateLayout(for: wsId, screen: insetFrame)
+
+            for entry in workspaceManager.entries(in: wsId) {
+                if frames[entry.handle] != nil {
+                    unhideWindow(entry, monitor: monitor)
+                }
+            }
 
             if let selected = engine.selectedNode(in: wsId),
                case let .leaf(handle, _) = selected.kind,
@@ -875,15 +879,6 @@ final class LayoutRefreshController {
         }
 
         controller.updateWorkspaceBar()
-
-        for ws in workspaceManager.workspaces where !activeWorkspaces.contains(ws.id) {
-            let wsName = ws.name
-            let layoutType = controller.internalSettings.layoutType(for: wsName)
-            guard layoutType == .dwindle else { continue }
-
-            guard let monitor = workspaceManager.monitor(for: ws.id) else { continue }
-            hideWorkspace(ws.id, monitor: monitor)
-        }
     }
 
     private func partitionWorkspacesByLayoutType(
