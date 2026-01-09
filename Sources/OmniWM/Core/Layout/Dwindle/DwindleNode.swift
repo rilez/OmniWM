@@ -154,6 +154,22 @@ final class DwindleNode {
         }
     }
 
+    func insertBefore(_ sibling: DwindleNode) {
+        guard let parent = sibling.parent,
+              let index = parent.children.firstIndex(where: { $0.id == sibling.id }) else { return }
+        self.detach()
+        self.parent = parent
+        parent.children.insert(self, at: index)
+    }
+
+    func insertAfter(_ sibling: DwindleNode) {
+        guard let parent = sibling.parent,
+              let index = parent.children.firstIndex(where: { $0.id == sibling.id }) else { return }
+        self.detach()
+        self.parent = parent
+        parent.children.insert(self, at: index + 1)
+    }
+
     func collectAllLeaves() -> [DwindleNode] {
         var result: [DwindleNode] = []
         collectLeavesRecursive(into: &result)

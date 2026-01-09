@@ -142,6 +142,10 @@ final class CommandHandler {
             case .niri, .defaultLayout:
                 balanceSizesInNiri()
             }
+        case .moveToRoot:
+            if layoutType == .dwindle {
+                moveToRootInDwindle()
+            }
         case let .summonWorkspace(index):
             controller.internalWorkspaceNavigationHandler?.summonWorkspace(index: index)
         case .openWindowFinder:
@@ -781,6 +785,16 @@ final class CommandHandler {
         guard let wsId = controller.activeWorkspace()?.id else { return }
 
         engine.balanceSizes(in: wsId)
+        controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
+    }
+
+    private func moveToRootInDwindle() {
+        guard let controller else { return }
+        guard let engine = controller.internalDwindleEngine else { return }
+        guard let wsId = controller.activeWorkspace()?.id else { return }
+
+        let stable = controller.internalSettings.dwindleMoveToRootStable
+        engine.moveSelectionToRoot(stable: stable, in: wsId)
         controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
     }
 }

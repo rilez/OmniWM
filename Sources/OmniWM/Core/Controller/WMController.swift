@@ -139,6 +139,15 @@ final class WMController {
         layoutRefreshController?.refreshWindowsAndLayout()
     }
 
+    func updateMonitorDwindleSettings() {
+        guard let engine = dwindleEngine else { return }
+        for monitor in workspaceManager.monitors {
+            let resolved = settings.resolvedDwindleSettings(for: monitor.name)
+            engine.updateMonitorSettings(resolved, for: monitor.id)
+        }
+        layoutRefreshController?.refreshWindowsAndLayout()
+    }
+
     func workspaceBarItems(for monitor: Monitor, deduplicate: Bool, hideEmpty: Bool) -> [WorkspaceBarItem] {
         var workspaces = workspaceManager.workspaces(on: monitor.id)
 
@@ -740,6 +749,8 @@ final class WMController {
 
     func updateDwindleConfig(
         smartSplit: Bool? = nil,
+        defaultSplitRatio: CGFloat? = nil,
+        splitWidthMultiplier: CGFloat? = nil,
         singleWindowAspectRatio: CGSize? = nil,
         innerGap: CGFloat? = nil,
         outerGapTop: CGFloat? = nil,
@@ -749,6 +760,8 @@ final class WMController {
     ) {
         guard let engine = dwindleEngine else { return }
         if let v = smartSplit { engine.settings.smartSplit = v }
+        if let v = defaultSplitRatio { engine.settings.defaultSplitRatio = v }
+        if let v = splitWidthMultiplier { engine.settings.splitWidthMultiplier = v }
         if let v = singleWindowAspectRatio { engine.settings.singleWindowAspectRatio = v }
         if let v = innerGap { engine.settings.innerGap = v }
         if let v = outerGapTop { engine.settings.outerGapTop = v }

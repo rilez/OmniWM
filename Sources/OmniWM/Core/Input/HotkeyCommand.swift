@@ -40,6 +40,7 @@ enum HotkeyCommand: Codable, Equatable, Hashable {
     case moveWorkspaceToMonitor(Direction)
 
     case balanceSizes
+    case moveToRoot
 
     case summonWorkspace(Int)
 
@@ -87,6 +88,7 @@ enum HotkeyCommand: Codable, Equatable, Hashable {
         case .toggleColumnFullWidth: "toggleColumnFullWidth"
         case let .moveWorkspaceToMonitor(dir): "moveWorkspaceToMonitor.\(dir.rawValue)"
         case .balanceSizes: "balanceSizes"
+        case .moveToRoot: "moveToRoot"
         case let .summonWorkspace(idx): "summonWorkspace.\(idx)"
         case .openWindowFinder: "openWindowFinder"
         case .raiseAllFloatingWindows: "raiseAllFloatingWindows"
@@ -132,6 +134,7 @@ enum HotkeyCommand: Codable, Equatable, Hashable {
         case .toggleColumnFullWidth: "Toggle Column Full Width"
         case let .moveWorkspaceToMonitor(dir): "Move Workspace to \(dir.displayName) Monitor"
         case .balanceSizes: "Balance Sizes"
+        case .moveToRoot: "Move to Root"
         case let .summonWorkspace(idx): "Summon Workspace \(idx + 1)"
         case .openWindowFinder: "Open Window Finder"
         case .raiseAllFloatingWindows: "Raise All Floating Windows"

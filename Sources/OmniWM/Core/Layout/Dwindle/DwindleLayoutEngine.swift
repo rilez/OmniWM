@@ -8,8 +8,33 @@ final class DwindleLayoutEngine {
     private var selectedNodeId: [WorkspaceDescriptor.ID: DwindleNodeId] = [:]
 
     var settings: DwindleSettings = DwindleSettings()
+    private var monitorSettings: [Monitor.ID: ResolvedDwindleSettings] = [:]
     var animationClock: AnimationClock?
     var displayRefreshRate: Double = 60.0
+
+    func updateMonitorSettings(_ resolved: ResolvedDwindleSettings, for monitorId: Monitor.ID) {
+        monitorSettings[monitorId] = resolved
+    }
+
+    func effectiveSettings(for monitorId: Monitor.ID) -> DwindleSettings {
+        guard let resolved = monitorSettings[monitorId] else { return settings }
+
+        var effective = settings
+        effective.smartSplit = resolved.smartSplit
+        effective.defaultSplitRatio = resolved.defaultSplitRatio
+        effective.splitWidthMultiplier = resolved.splitWidthMultiplier
+        if !resolved.singleWindowAspectRatio.isFillScreen {
+            effective.singleWindowAspectRatio = resolved.singleWindowAspectRatio.size
+        }
+        if !resolved.useGlobalGaps {
+            effective.innerGap = resolved.innerGap
+            effective.outerGapTop = resolved.outerGapTop
+            effective.outerGapBottom = resolved.outerGapBottom
+            effective.outerGapLeft = resolved.outerGapLeft
+            effective.outerGapRight = resolved.outerGapRight
+        }
+        return effective
+    }
 
     var windowMovementAnimationConfig: SpringConfig = SpringConfig(
         duration: 0.35,
@@ -512,6 +537,55 @@ final class DwindleLayoutEngine {
 
         selected.kind = .leaf(handle: handle, fullscreen: !fullscreen)
         return handle
+    }
+
+    func moveSelectionToRoot(stable: Bool, in workspaceId: WorkspaceDescriptor.ID) {
+        guard let selected = selectedNode(in: workspaceId) else { return }
+        let leaf = selected.isLeaf ? selected : selected.descendToFirstLeaf()
+        guard let root = roots[workspaceId] else { return }
+
+        if leaf.id == root.id { return }
+
+        guard let leafParent = leaf.parent else { return }
+
+        if leafParent.id == root.id { return }
+
+        var ancestor = leafParent
+        while let parent = ancestor.parent, parent.id != root.id {
+            ancestor = parent
+        }
+
+        guard ancestor.parent?.id == root.id else { return }
+
+        guard root.children.count == 2,
+              let first = root.firstChild(),
+              let second = root.secondChild() else { return }
+
+        let ancestorIsFirst = first.id == ancestor.id
+        let swapNode = ancestorIsFirst ? second : first
+
+        guard let leafSibling = leaf.sibling() else { return }
+        let leafIsFirst = leaf.isFirstChild(of: leafParent)
+
+        leaf.detach()
+        if ancestorIsFirst {
+            leaf.insertAfter(ancestor)
+        } else {
+            leaf.insertBefore(ancestor)
+        }
+
+        swapNode.detach()
+        if leafIsFirst {
+            swapNode.insertBefore(leafSibling)
+        } else {
+            swapNode.insertAfter(leafSibling)
+        }
+
+        if stable, root.children.count == 2,
+           let newFirst = root.firstChild() {
+            newFirst.detach()
+            root.appendChild(newFirst)
+        }
     }
 
     func resizeSelected(

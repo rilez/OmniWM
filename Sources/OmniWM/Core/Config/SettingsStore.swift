@@ -164,6 +164,34 @@ final class SettingsStore {
         didSet { saveMonitorNiriSettings() }
     }
 
+    var dwindleSmartSplit: Bool {
+        didSet { defaults.set(dwindleSmartSplit, forKey: Keys.dwindleSmartSplit) }
+    }
+
+    var dwindleDefaultSplitRatio: Double {
+        didSet { defaults.set(dwindleDefaultSplitRatio, forKey: Keys.dwindleDefaultSplitRatio) }
+    }
+
+    var dwindleSplitWidthMultiplier: Double {
+        didSet { defaults.set(dwindleSplitWidthMultiplier, forKey: Keys.dwindleSplitWidthMultiplier) }
+    }
+
+    var dwindleSingleWindowAspectRatio: DwindleSingleWindowAspectRatio {
+        didSet { defaults.set(dwindleSingleWindowAspectRatio.rawValue, forKey: Keys.dwindleSingleWindowAspectRatio) }
+    }
+
+    var dwindleUseGlobalGaps: Bool {
+        didSet { defaults.set(dwindleUseGlobalGaps, forKey: Keys.dwindleUseGlobalGaps) }
+    }
+
+    var dwindleMoveToRootStable: Bool {
+        didSet { defaults.set(dwindleMoveToRootStable, forKey: Keys.dwindleMoveToRootStable) }
+    }
+
+    var monitorDwindleSettings: [MonitorDwindleSettings] {
+        didSet { saveMonitorDwindleSettings() }
+    }
+
     var preventSleepEnabled: Bool {
         didSet { defaults.set(preventSleepEnabled, forKey: Keys.preventSleepEnabled) }
     }
@@ -261,6 +289,17 @@ final class SettingsStore {
         appRules = Self.loadAppRules(from: defaults)
         monitorOrientationSettings = Self.loadMonitorOrientationSettings(from: defaults)
         monitorNiriSettings = Self.loadMonitorNiriSettings(from: defaults)
+
+        dwindleSmartSplit = defaults.object(forKey: Keys.dwindleSmartSplit) as? Bool ?? true
+        dwindleDefaultSplitRatio = defaults.object(forKey: Keys.dwindleDefaultSplitRatio) as? Double ?? 1.0
+        dwindleSplitWidthMultiplier = defaults.object(forKey: Keys.dwindleSplitWidthMultiplier) as? Double ?? 1.0
+        dwindleSingleWindowAspectRatio = DwindleSingleWindowAspectRatio(
+            rawValue: defaults.string(forKey: Keys.dwindleSingleWindowAspectRatio) ?? ""
+        ) ?? .ratio4x3
+        dwindleUseGlobalGaps = defaults.object(forKey: Keys.dwindleUseGlobalGaps) as? Bool ?? true
+        dwindleMoveToRootStable = defaults.object(forKey: Keys.dwindleMoveToRootStable) as? Bool ?? true
+        monitorDwindleSettings = Self.loadMonitorDwindleSettings(from: defaults)
+
         preventSleepEnabled = defaults.object(forKey: Keys.preventSleepEnabled) as? Bool ?? false
         scrollGestureEnabled = defaults.object(forKey: Keys.scrollGestureEnabled) as? Bool ?? true
         scrollSensitivity = defaults.object(forKey: Keys.scrollSensitivity) as? Double ?? 1.0
@@ -647,6 +686,55 @@ final class SettingsStore {
             infiniteLoop: override?.infiniteLoop ?? niriInfiniteLoop
         )
     }
+
+    private static func loadMonitorDwindleSettings(from defaults: UserDefaults) -> [MonitorDwindleSettings] {
+        guard let data = defaults.data(forKey: Keys.monitorDwindleSettings),
+              let settings = try? JSONDecoder().decode([MonitorDwindleSettings].self, from: data)
+        else {
+            return []
+        }
+        return settings
+    }
+
+    private func saveMonitorDwindleSettings() {
+        guard let data = try? JSONEncoder().encode(monitorDwindleSettings) else { return }
+        defaults.set(data, forKey: Keys.monitorDwindleSettings)
+    }
+
+    func dwindleSettings(for monitorName: String) -> MonitorDwindleSettings? {
+        monitorDwindleSettings.first { $0.monitorName == monitorName }
+    }
+
+    func updateDwindleSettings(_ settings: MonitorDwindleSettings) {
+        if let index = monitorDwindleSettings.firstIndex(where: { $0.monitorName == settings.monitorName }) {
+            monitorDwindleSettings[index] = settings
+        } else {
+            monitorDwindleSettings.append(settings)
+        }
+    }
+
+    func removeDwindleSettings(for monitorName: String) {
+        monitorDwindleSettings.removeAll { $0.monitorName == monitorName }
+    }
+
+    func resolvedDwindleSettings(for monitorName: String) -> ResolvedDwindleSettings {
+        let override = dwindleSettings(for: monitorName)
+        let useGlobalGaps = override?.useGlobalGaps ?? dwindleUseGlobalGaps
+
+        return ResolvedDwindleSettings(
+            smartSplit: override?.smartSplit ?? dwindleSmartSplit,
+            defaultSplitRatio: CGFloat(override?.defaultSplitRatio ?? dwindleDefaultSplitRatio),
+            splitWidthMultiplier: CGFloat(override?.splitWidthMultiplier ?? dwindleSplitWidthMultiplier),
+            singleWindowAspectRatio: override?.singleWindowAspectRatio
+                .flatMap { DwindleSingleWindowAspectRatio(rawValue: $0) } ?? dwindleSingleWindowAspectRatio,
+            useGlobalGaps: useGlobalGaps,
+            innerGap: useGlobalGaps ? CGFloat(gapSize) : CGFloat(override?.innerGap ?? gapSize),
+            outerGapTop: useGlobalGaps ? CGFloat(outerGapTop) : CGFloat(override?.outerGapTop ?? outerGapTop),
+            outerGapBottom: useGlobalGaps ? CGFloat(outerGapBottom) : CGFloat(override?.outerGapBottom ?? outerGapBottom),
+            outerGapLeft: useGlobalGaps ? CGFloat(outerGapLeft) : CGFloat(override?.outerGapLeft ?? outerGapLeft),
+            outerGapRight: useGlobalGaps ? CGFloat(outerGapRight) : CGFloat(override?.outerGapRight ?? outerGapRight)
+        )
+    }
 }
 
 private enum Keys {
@@ -667,6 +755,14 @@ private enum Keys {
     static let niriAlwaysCenterSingleColumn = "settings.niriAlwaysCenterSingleColumn"
     static let niriSingleWindowAspectRatio = "settings.niriSingleWindowAspectRatio"
     static let monitorNiriSettings = "settings.monitorNiriSettings"
+
+    static let dwindleSmartSplit = "settings.dwindleSmartSplit"
+    static let dwindleDefaultSplitRatio = "settings.dwindleDefaultSplitRatio"
+    static let dwindleSplitWidthMultiplier = "settings.dwindleSplitWidthMultiplier"
+    static let dwindleSingleWindowAspectRatio = "settings.dwindleSingleWindowAspectRatio"
+    static let dwindleUseGlobalGaps = "settings.dwindleUseGlobalGaps"
+    static let dwindleMoveToRootStable = "settings.dwindleMoveToRootStable"
+    static let monitorDwindleSettings = "settings.monitorDwindleSettings"
 
     static let persistentWorkspaces = "settings.persistentWorkspaces"
     static let workspaceAssignments = "settings.workspaceAssignments"
