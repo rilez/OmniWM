@@ -57,6 +57,7 @@ struct WorkspaceBarView: View {
                     windowSpacing: windowSpacing,
                     cornerRadius: cornerRadius,
                     showLabels: resolvedSettings.showLabels,
+                    animationsEnabled: settings.animationsEnabled,
                     onFocusWorkspace: { focusWorkspace(item) },
                     onFocusWindow: { windowId in focusWindow(windowId) }
                 )
@@ -97,6 +98,7 @@ private struct WorkspaceItemView: View {
     let windowSpacing: CGFloat
     let cornerRadius: CGFloat
     let showLabels: Bool
+    let animationsEnabled: Bool
     let onFocusWorkspace: () -> Void
     let onFocusWindow: (Int) -> Void
 
@@ -123,6 +125,7 @@ private struct WorkspaceItemView: View {
                     iconSize: iconSize,
                     isFocused: window.isFocused,
                     isInFocusedWorkspace: item.isFocused,
+                    animationsEnabled: animationsEnabled,
                     onFocusWindow: onFocusWindow
                 )
             }
@@ -157,6 +160,7 @@ private struct WindowIconView: View {
     let iconSize: CGFloat
     let isFocused: Bool
     let isInFocusedWorkspace: Bool
+    let animationsEnabled: Bool
     let onFocusWindow: (Int) -> Void
 
     @State private var isHovered = false
@@ -192,8 +196,8 @@ private struct WindowIconView: View {
             }
         }
         .scaleEffect(scale)
-        .animation(.easeInOut(duration: 0.15), value: isFocused)
-        .animation(.easeInOut(duration: 0.1), value: isHovered)
+        .animation(animationsEnabled ? .easeInOut(duration: 0.15) : nil, value: isFocused)
+        .animation(animationsEnabled ? .easeInOut(duration: 0.1) : nil, value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }

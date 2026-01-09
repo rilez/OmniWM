@@ -103,6 +103,7 @@ struct GlassMenuRow<Content: View>: View {
     var showChevron: Bool = false
     var isExternal: Bool = false
     var isDestructive: Bool = false
+    var animationsEnabled: Bool = true
 
     @State private var isHovered = false
     @State private var isPressed = false
@@ -112,6 +113,7 @@ struct GlassMenuRow<Content: View>: View {
         showChevron: Bool = false,
         isExternal: Bool = false,
         isDestructive: Bool = false,
+        animationsEnabled: Bool = true,
         action: @escaping () -> Void,
         @ViewBuilder content: () -> Content
     ) {
@@ -119,6 +121,7 @@ struct GlassMenuRow<Content: View>: View {
         self.showChevron = showChevron
         self.isExternal = isExternal
         self.isDestructive = isDestructive
+        self.animationsEnabled = animationsEnabled
         self.action = action
         self.content = content()
     }
@@ -161,8 +164,8 @@ struct GlassMenuRow<Content: View>: View {
                     .fill(isDestructive ? AnyShapeStyle(Color.red.opacity(0.1)) : AnyShapeStyle(.quaternary))
             }
         }
-        .animation(.easeOut(duration: 0.15), value: isHovered)
-        .animation(.spring(duration: 0.2), value: isPressed)
+        .animation(animationsEnabled ? .easeOut(duration: 0.15) : nil, value: isHovered)
+        .animation(animationsEnabled ? .spring(duration: 0.2) : nil, value: isPressed)
         .onHover { hovering in
             isHovered = hovering
         }
@@ -188,6 +191,7 @@ struct GlassToggleRow: View {
     var icon: String?
     let label: String
     @Binding var isOn: Bool
+    var animationsEnabled: Bool = true
 
     @State private var isHovered = false
 
@@ -212,7 +216,7 @@ struct GlassToggleRow: View {
                     .fill(.quaternary)
             }
         }
-        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .animation(animationsEnabled ? .easeOut(duration: 0.15) : nil, value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }

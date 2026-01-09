@@ -594,6 +594,9 @@ class NiriWindow: NiriNode {
 
     var moveXAnimation: MoveAnimation?
     var moveYAnimation: MoveAnimation?
+    var alphaAnimation: AlphaAnimation?
+    var baseAlpha: CGFloat = 1.0
+    var needsAlphaReset: Bool = false
 
     init(handle: WindowHandle) {
         self.handle = handle
@@ -726,6 +729,63 @@ class NiriWindow: NiriNode {
 
     var hasMoveAnimationsRunning: Bool {
         moveXAnimation != nil || moveYAnimation != nil
+    }
+
+    func renderAlpha(at time: TimeInterval = CACurrentMediaTime()) -> CGFloat {
+        if let alphaAnim = alphaAnimation {
+            return alphaAnim.currentAlpha(at: time)
+        }
+        return baseAlpha
+    }
+
+    func animateAlpha(
+        from: CGFloat,
+        to: CGFloat,
+        clock: AnimationClock?,
+        config: SpringConfig = .default,
+        displayRefreshRate: Double = 60.0
+    ) {
+        let now = clock?.now() ?? CACurrentMediaTime()
+        let anim = SpringAnimation(
+            from: 0,
+            to: 1,
+            startTime: now,
+            config: config,
+            clock: clock,
+            displayRefreshRate: displayRefreshRate
+        )
+        alphaAnimation = AlphaAnimation(animation: anim, fromAlpha: from, toAlpha: to)
+        baseAlpha = to
+    }
+
+    func tickAlphaAnimation(at time: TimeInterval) -> Bool {
+        guard let alphaAnim = alphaAnimation else { return false }
+        if alphaAnim.isComplete(at: time) {
+            alphaAnimation = nil
+            needsAlphaReset = true
+            return false
+        }
+        return true
+    }
+
+    func consumeAlphaReset() -> Bool {
+        if needsAlphaReset {
+            needsAlphaReset = false
+            return true
+        }
+        return false
+    }
+
+    func stopAlphaAnimation() {
+        alphaAnimation = nil
+    }
+
+    var hasAlphaAnimationRunning: Bool {
+        alphaAnimation != nil
+    }
+
+    var hasAnyAnimationRunning: Bool {
+        hasMoveAnimationsRunning || hasAlphaAnimationRunning
     }
 }
 

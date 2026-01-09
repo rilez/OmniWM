@@ -3,6 +3,7 @@ import Foundation
 enum LayoutType: String, Codable, CaseIterable, Identifiable {
     case defaultLayout = "default"
     case niri
+    case dwindle
 
     var id: String { rawValue }
 
@@ -10,6 +11,7 @@ enum LayoutType: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .defaultLayout: "Default"
         case .niri: "Niri (Scrolling)"
+        case .dwindle: "Dwindle (BSP)"
         }
     }
 }

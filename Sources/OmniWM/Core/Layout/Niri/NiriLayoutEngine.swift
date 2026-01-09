@@ -108,6 +108,9 @@ final class NiriLayoutEngine {
 
     private var closingHandles: Set<WindowHandle> = []
 
+    private var framePool: [WindowHandle: CGRect] = [:]
+    private var hiddenPool: [WindowHandle: HideSide] = [:]
+
     var maxWindowsPerColumn: Int
     var maxVisibleColumns: Int
     var infiniteLoop: Bool
@@ -1081,11 +1084,29 @@ final class NiriLayoutEngine {
             )
         }
 
+        let now = animationClock?.now() ?? CACurrentMediaTime()
+
         let sourceActiveTileIdx = currentColumn.activeTileIdx.clamped(to: 0 ... (sourceWindows.count - 1))
         let targetActiveTileIdx = targetColumn.activeTileIdx.clamped(to: 0 ... (targetWindows.count - 1))
 
         let sourceActiveWindow = sourceWindows[sourceActiveTileIdx]
         let targetActiveWindow = targetWindows[targetActiveTileIdx]
+
+        let sourceColX = state.columnX(at: currentColIdx, columns: cols, gap: gaps)
+        let targetColX = state.columnX(at: targetColIdx, columns: cols, gap: gaps)
+        let sourceColRenderOffset = currentColumn.renderOffset(at: now)
+        let targetColRenderOffset = targetColumn.renderOffset(at: now)
+        let sourceTileOffset = computeTileOffset(column: currentColumn, tileIdx: sourceActiveTileIdx, gaps: gaps)
+        let targetTileOffset = computeTileOffset(column: targetColumn, tileIdx: targetActiveTileIdx, gaps: gaps)
+
+        let sourcePt = CGPoint(
+            x: sourceColX + sourceColRenderOffset.x,
+            y: sourceTileOffset
+        )
+        let targetPt = CGPoint(
+            x: targetColX + targetColRenderOffset.x,
+            y: targetTileOffset
+        )
 
         let sourceWidth = currentColumn.width
         let sourceIsFullWidth = currentColumn.isFullWidth
@@ -1108,6 +1129,33 @@ final class NiriLayoutEngine {
 
         currentColumn.setActiveTileIdx(sourceActiveTileIdx)
         targetColumn.setActiveTileIdx(targetActiveTileIdx)
+
+        let newCols = columns(in: workspaceId)
+        let newSourceColIdx = columnIndex(of: currentColumn, in: workspaceId) ?? currentColIdx
+        let newTargetColIdx = columnIndex(of: targetColumn, in: workspaceId) ?? targetColIdx
+        let newSourceColX = state.columnX(at: newSourceColIdx, columns: newCols, gap: gaps)
+        let newTargetColX = state.columnX(at: newTargetColIdx, columns: newCols, gap: gaps)
+        let newSourceTileOffset = computeTileOffset(column: currentColumn, tileIdx: sourceInsertIdx, gaps: gaps)
+        let newTargetTileOffset = computeTileOffset(column: targetColumn, tileIdx: targetInsertIdx, gaps: gaps)
+
+        let newSourcePt = CGPoint(x: newSourceColX, y: newSourceTileOffset)
+        let newTargetPt = CGPoint(x: newTargetColX, y: newTargetTileOffset)
+
+        targetActiveWindow.stopMoveAnimations()
+        targetActiveWindow.animateMoveFrom(
+            displacement: CGPoint(x: targetPt.x - newSourcePt.x, y: targetPt.y - newSourcePt.y),
+            clock: animationClock,
+            config: windowMovementAnimationConfig,
+            displayRefreshRate: displayRefreshRate
+        )
+
+        sourceActiveWindow.stopMoveAnimations()
+        sourceActiveWindow.animateMoveFrom(
+            displacement: CGPoint(x: sourcePt.x - newTargetPt.x, y: sourcePt.y - newTargetPt.y),
+            clock: animationClock,
+            config: windowMovementAnimationConfig,
+            displayRefreshRate: displayRefreshRate
+        )
 
         if currentColumn.isTabbed {
             updateTabbedColumnVisibility(column: currentColumn)
@@ -1308,6 +1356,9 @@ final class NiriLayoutEngine {
         guard let currentIdx = columnIndex(of: column, in: workspaceId) else { return false }
 
         let currentColX = state.columnX(at: currentIdx, columns: cols, gap: gaps)
+        let nextColX = currentIdx + 1 < cols.count
+            ? state.columnX(at: currentIdx + 1, columns: cols, gap: gaps)
+            : currentColX + (column.cachedWidth > 0 ? column.cachedWidth : workingFrame.width / CGFloat(maxVisibleColumns)) + gaps
 
         let step = (direction == .right) ? 1 : -1
         let targetIdx: Int
@@ -1330,6 +1381,41 @@ final class NiriLayoutEngine {
         let newCols = columns(in: workspaceId)
         let viewOffsetDelta = -state.columnX(at: currentIdx, columns: newCols, gap: gaps) + currentColX
         state.offsetViewport(by: viewOffsetDelta)
+
+        let newColX = state.columnX(at: targetIdx, columns: newCols, gap: gaps)
+        column.animateMoveFrom(
+            displacement: CGPoint(x: currentColX - newColX, y: 0),
+            clock: animationClock,
+            config: windowMovementAnimationConfig,
+            displayRefreshRate: displayRefreshRate
+        )
+
+        let othersXOffset = nextColX - currentColX
+        if currentIdx < targetIdx {
+            for i in currentIdx ..< targetIdx {
+                let col = newCols[i]
+                if col.id != column.id {
+                    col.animateMoveFrom(
+                        displacement: CGPoint(x: othersXOffset, y: 0),
+                        clock: animationClock,
+                        config: windowMovementAnimationConfig,
+                        displayRefreshRate: displayRefreshRate
+                    )
+                }
+            }
+        } else {
+            for i in (targetIdx + 1) ... currentIdx {
+                let col = newCols[i]
+                if col.id != column.id {
+                    col.animateMoveFrom(
+                        displacement: CGPoint(x: -othersXOffset, y: 0),
+                        clock: animationClock,
+                        config: windowMovementAnimationConfig,
+                        displayRefreshRate: displayRefreshRate
+                    )
+                }
+            }
+        }
 
         let edge: NiriRevealEdge = direction == .right ? .right : .left
         ensureColumnVisible(
@@ -1388,16 +1474,46 @@ final class NiriLayoutEngine {
 
         guard let windowToConsume = consumedWindow else { return false }
 
+        let now = animationClock?.now() ?? CACurrentMediaTime()
+
+        let sourceTileIdx = neighborColumn.windowNodes.firstIndex(where: { $0.id == windowToConsume.id }) ?? 0
+        let sourceColX = state.columnX(at: neighborIdx, columns: cols, gap: gaps)
+        let sourceColRenderOffset = neighborColumn.renderOffset(at: now)
+        let sourceTileOffset = computeTileOffset(column: neighborColumn, tileIdx: sourceTileIdx, gaps: gaps)
+
         windowToConsume.detach()
 
+        let newTileIdx: Int
         if direction == .right {
             currentColumn.appendChild(windowToConsume)
+            newTileIdx = currentColumn.windowNodes.count - 1
         } else {
             currentColumn.insertChild(windowToConsume, at: 0)
+            newTileIdx = 0
 
             if currentColumn.displayMode == .tabbed {
                 currentColumn.activeTileIdx += 1
             }
+        }
+
+        let newCols = columns(in: workspaceId)
+        let targetColIdx = columnIndex(of: currentColumn, in: workspaceId) ?? currentIdx
+        let targetColX = state.columnX(at: targetColIdx, columns: newCols, gap: gaps)
+        let targetColRenderOffset = currentColumn.renderOffset(at: now)
+        let targetTileOffset = computeTileOffset(column: currentColumn, tileIdx: newTileIdx, gaps: gaps)
+
+        let displacement = CGPoint(
+            x: sourceColX + sourceColRenderOffset.x - (targetColX + targetColRenderOffset.x),
+            y: sourceTileOffset - targetTileOffset
+        )
+
+        if displacement.x != 0 || displacement.y != 0 {
+            windowToConsume.animateMoveFrom(
+                displacement: displacement,
+                clock: animationClock,
+                config: windowMovementAnimationConfig,
+                displayRefreshRate: displayRefreshRate
+            )
         }
 
         if currentColumn.displayMode == .tabbed {
@@ -1429,10 +1545,19 @@ final class NiriLayoutEngine {
         guard direction == .left || direction == .right else { return false }
 
         guard let currentColumn = findColumn(containing: window, in: workspaceId),
-              let root = roots[workspaceId]
+              let root = roots[workspaceId],
+              let currentColIdx = columnIndex(of: currentColumn, in: workspaceId)
         else {
             return false
         }
+
+        let now = animationClock?.now() ?? CACurrentMediaTime()
+        let cols = columns(in: workspaceId)
+
+        let sourceTileIdx = currentColumn.windowNodes.firstIndex(where: { $0.id == window.id }) ?? 0
+        let sourceColX = state.columnX(at: currentColIdx, columns: cols, gap: gaps)
+        let sourceColRenderOffset = currentColumn.renderOffset(at: now)
+        let sourceTileOffset = computeTileOffset(column: currentColumn, tileIdx: sourceTileIdx, gaps: gaps)
 
         let wasTabbed = currentColumn.displayMode == .tabbed
         if wasTabbed {
@@ -1474,6 +1599,26 @@ final class NiriLayoutEngine {
         newColumn.appendChild(window)
 
         window.isHiddenInTabbedMode = false
+
+        let newCols = columns(in: workspaceId)
+        if let newColIdx = columnIndex(of: newColumn, in: workspaceId) {
+            let targetColX = state.columnX(at: newColIdx, columns: newCols, gap: gaps)
+            let targetColRenderOffset = newColumn.renderOffset(at: now)
+
+            let displacement = CGPoint(
+                x: sourceColX + sourceColRenderOffset.x - (targetColX + targetColRenderOffset.x),
+                y: sourceTileOffset
+            )
+
+            if displacement.x != 0 || displacement.y != 0 {
+                window.animateMoveFrom(
+                    displacement: displacement,
+                    clock: animationClock,
+                    config: windowMovementAnimationConfig,
+                    displayRefreshRate: displayRefreshRate
+                )
+            }
+        }
 
         if wasTabbed, !currentColumn.children.isEmpty {
             currentColumn.clampActiveTileIdx()
@@ -2186,7 +2331,7 @@ final class NiriLayoutEngine {
     }
 
     @discardableResult
-    func setColumnDisplay(_ mode: ColumnDisplay, for column: NiriContainer, in _: WorkspaceDescriptor.ID) -> Bool {
+    func setColumnDisplay(_ mode: ColumnDisplay, for column: NiriContainer, in _: WorkspaceDescriptor.ID, gaps: CGFloat = 0) -> Bool {
         guard column.displayMode != mode else { return false }
 
         if let resize = interactiveResize,
@@ -2197,8 +2342,57 @@ final class NiriLayoutEngine {
             interactiveResizeEnd()
         }
 
-        column.displayMode = mode
+        let windows = column.windowNodes
+        guard !windows.isEmpty else {
+            column.displayMode = mode
+            return true
+        }
 
+        let prevOrigin = tilesOrigin(column: column)
+
+        column.displayMode = mode
+        let newOrigin = tilesOrigin(column: column)
+        let originDelta = CGPoint(x: prevOrigin.x - newOrigin.x, y: prevOrigin.y - newOrigin.y)
+
+        column.displayMode = .normal
+        let tileOffsets = computeTileOffsets(column: column, gaps: gaps)
+
+        for (idx, window) in windows.enumerated() {
+            var yDelta = idx < tileOffsets.count ? tileOffsets[idx] : 0
+            yDelta -= prevOrigin.y
+
+            if mode == .normal {
+                yDelta *= -1
+            }
+
+            let delta = CGPoint(x: originDelta.x, y: originDelta.y + yDelta)
+            if delta.x != 0 || delta.y != 0 {
+                window.animateMoveFrom(
+                    displacement: delta,
+                    clock: animationClock,
+                    config: windowMovementAnimationConfig,
+                    displayRefreshRate: displayRefreshRate
+                )
+            }
+        }
+
+        for (idx, window) in windows.enumerated() {
+            if idx != column.activeTileIdx {
+                let (fromAlpha, toAlpha): (CGFloat, CGFloat) = mode == .tabbed ? (1, 0) : (0, 1)
+                window.animateAlpha(
+                    from: fromAlpha,
+                    to: toAlpha,
+                    clock: animationClock,
+                    config: windowMovementAnimationConfig,
+                    displayRefreshRate: displayRefreshRate
+                )
+            } else {
+                window.baseAlpha = 1.0
+                window.alphaAnimation = nil
+            }
+        }
+
+        column.displayMode = mode
         updateTabbedColumnVisibility(column: column)
 
         return true
@@ -2328,6 +2522,42 @@ extension NiriLayoutEngine {
             orientation: orientation,
             animationTime: animationTime
         )
+    }
+
+    func calculateCombinedLayoutUsingPools(
+        in workspaceId: WorkspaceDescriptor.ID,
+        monitor: Monitor,
+        gaps: LayoutGaps,
+        state: ViewportState,
+        workingArea: WorkingAreaContext? = nil,
+        animationTime: TimeInterval? = nil
+    ) -> (frames: [WindowHandle: CGRect], hiddenHandles: [WindowHandle: HideSide]) {
+        framePool.removeAll(keepingCapacity: true)
+        hiddenPool.removeAll(keepingCapacity: true)
+
+        let area = workingArea ?? WorkingAreaContext(
+            workingFrame: monitor.visibleFrame,
+            viewFrame: monitor.frame,
+            scale: 2.0
+        )
+
+        let orientation = self.monitor(for: monitor.id)?.orientation ?? monitor.autoOrientation
+
+        calculateLayoutInto(
+            frames: &framePool,
+            hiddenHandles: &hiddenPool,
+            state: state,
+            workspaceId: workspaceId,
+            monitorFrame: monitor.visibleFrame,
+            screenFrame: monitor.frame,
+            gaps: gaps.asTuple,
+            scale: area.scale,
+            workingArea: area,
+            orientation: orientation,
+            animationTime: animationTime
+        )
+
+        return (framePool, hiddenPool)
     }
 
     func captureWindowFrames(in workspaceId: WorkspaceDescriptor.ID) -> [WindowHandle: CGRect] {
@@ -2463,7 +2693,42 @@ extension NiriLayoutEngine {
             if window.tickMoveAnimations(at: time) {
                 anyRunning = true
             }
+            if window.tickAlphaAnimation(at: time) {
+                anyRunning = true
+            }
         }
         return anyRunning
+    }
+
+    func computeTileOffset(column: NiriContainer, tileIdx: Int, gaps: CGFloat) -> CGFloat {
+        let windows = column.windowNodes
+        guard tileIdx > 0, tileIdx < windows.count else { return 0 }
+
+        var offset: CGFloat = 0
+        for i in 0 ..< tileIdx {
+            let height = windows[i].resolvedHeight ?? windows[i].frame?.height ?? 0
+            offset += height
+            offset += gaps
+        }
+        return offset
+    }
+
+    func computeTileOffsets(column: NiriContainer, gaps: CGFloat) -> [CGFloat] {
+        let windows = column.windowNodes
+        guard !windows.isEmpty else { return [] }
+
+        var offsets: [CGFloat] = [0]
+        var y: CGFloat = 0
+        for i in 0 ..< windows.count - 1 {
+            let height = windows[i].resolvedHeight ?? windows[i].frame?.height ?? 0
+            y += height + gaps
+            offsets.append(y)
+        }
+        return offsets
+    }
+
+    func tilesOrigin(column: NiriContainer) -> CGPoint {
+        let xOffset = column.isTabbed ? renderStyle.tabIndicatorWidth : 0
+        return CGPoint(x: xOffset, y: 0)
     }
 }

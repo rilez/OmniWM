@@ -30,6 +30,7 @@ struct OmniWMApp: App {
             alwaysCenterSingleColumn: settings.niriAlwaysCenterSingleColumn,
             singleWindowAspectRatio: settings.niriSingleWindowAspectRatio
         )
+        controller.enableDwindleLayout()
         controller.updateWorkspaceConfig()
         controller.rebuildAppRulesCache()
 

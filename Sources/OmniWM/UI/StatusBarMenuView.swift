@@ -73,7 +73,8 @@ struct StatusBarMenuView: View {
             GlassToggleRow(
                 icon: "cursorarrow.motionlines",
                 label: "Focus Follows Mouse",
-                isOn: $settings.focusFollowsMouse
+                isOn: $settings.focusFollowsMouse,
+                animationsEnabled: settings.animationsEnabled
             )
             .onChange(of: settings.focusFollowsMouse) { _, newValue in
                 controller.setFocusFollowsMouse(newValue)
@@ -81,7 +82,8 @@ struct StatusBarMenuView: View {
             GlassToggleRow(
                 icon: "arrow.up.left.and.down.right.magnifyingglass",
                 label: "Mouse to Focused",
-                isOn: $settings.moveMouseToFocusedWindow
+                isOn: $settings.moveMouseToFocusedWindow,
+                animationsEnabled: settings.animationsEnabled
             )
             .onChange(of: settings.moveMouseToFocusedWindow) { _, newValue in
                 controller.setMoveMouseToFocusedWindow(newValue)
@@ -89,7 +91,8 @@ struct StatusBarMenuView: View {
             GlassToggleRow(
                 icon: "square.dashed",
                 label: "Window Borders",
-                isOn: $settings.bordersEnabled
+                isOn: $settings.bordersEnabled,
+                animationsEnabled: settings.animationsEnabled
             )
             .onChange(of: settings.bordersEnabled) { _, newValue in
                 controller.setBordersEnabled(newValue)
@@ -97,7 +100,8 @@ struct StatusBarMenuView: View {
             GlassToggleRow(
                 icon: "menubar.rectangle",
                 label: "Workspace Bar",
-                isOn: $settings.workspaceBarEnabled
+                isOn: $settings.workspaceBarEnabled,
+                animationsEnabled: settings.animationsEnabled
             )
             .onChange(of: settings.workspaceBarEnabled) { _, newValue in
                 controller.setWorkspaceBarEnabled(newValue)
@@ -105,7 +109,8 @@ struct StatusBarMenuView: View {
             GlassToggleRow(
                 icon: "moon.zzz",
                 label: "Keep Awake",
-                isOn: $settings.preventSleepEnabled
+                isOn: $settings.preventSleepEnabled,
+                animationsEnabled: settings.animationsEnabled
             )
             .onChange(of: settings.preventSleepEnabled) { _, newValue in
                 controller.setPreventSleepEnabled(newValue)
@@ -115,13 +120,13 @@ struct StatusBarMenuView: View {
 
     private var settingsSection: some View {
         GlassMenuSection {
-            GlassMenuRow(icon: "slider.horizontal.3", showChevron: true, action: {
+            GlassMenuRow(icon: "slider.horizontal.3", showChevron: true, animationsEnabled: settings.animationsEnabled, action: {
                 AppRulesWindowController.shared.show(settings: settings, controller: controller)
             }) {
                 Text("App Rules")
                     .font(.system(size: 13))
             }
-            GlassMenuRow(icon: "gearshape", showChevron: true, action: {
+            GlassMenuRow(icon: "gearshape", showChevron: true, animationsEnabled: settings.animationsEnabled, action: {
                 SettingsWindowController.shared.show(settings: settings, controller: controller)
             }) {
                 Text("Settings")
@@ -132,7 +137,7 @@ struct StatusBarMenuView: View {
 
     private var linksSection: some View {
         GlassMenuSection {
-            GlassMenuRow(icon: "link", isExternal: true, action: {
+            GlassMenuRow(icon: "link", isExternal: true, animationsEnabled: settings.animationsEnabled, action: {
                 if let url = URL(string: "https://github.com/BarutSRB/OmniWM") {
                     NSWorkspace.shared.open(url)
                 }
@@ -140,7 +145,7 @@ struct StatusBarMenuView: View {
                 Text("GitHub")
                     .font(.system(size: 13))
             }
-            GlassMenuRow(icon: "heart", isExternal: true, action: {
+            GlassMenuRow(icon: "heart", isExternal: true, animationsEnabled: settings.animationsEnabled, action: {
                 if let url = URL(string: "https://github.com/sponsors/BarutSRB") {
                     NSWorkspace.shared.open(url)
                 }
@@ -148,7 +153,7 @@ struct StatusBarMenuView: View {
                 Text("Sponsor on GitHub")
                     .font(.system(size: 13))
             }
-            GlassMenuRow(icon: "heart", isExternal: true, action: {
+            GlassMenuRow(icon: "heart", isExternal: true, animationsEnabled: settings.animationsEnabled, action: {
                 if let url = URL(string: "https://paypal.me/beacon2024") {
                     NSWorkspace.shared.open(url)
                 }
@@ -160,7 +165,7 @@ struct StatusBarMenuView: View {
     }
 
     private var sponsorsSection: some View {
-        GlassMenuRow(icon: "sparkles", action: {
+        GlassMenuRow(icon: "sparkles", animationsEnabled: settings.animationsEnabled, action: {
             SponsorsWindowController.shared.show()
         }) {
             Text("Omni Sponsors")
@@ -169,7 +174,7 @@ struct StatusBarMenuView: View {
     }
 
     private var quitSection: some View {
-        GlassMenuRow(icon: "power", isDestructive: true, action: {
+        GlassMenuRow(icon: "power", isDestructive: true, animationsEnabled: settings.animationsEnabled, action: {
             NSApplication.shared.terminate(nil)
         }) {
             Text("Quit OmniWM")

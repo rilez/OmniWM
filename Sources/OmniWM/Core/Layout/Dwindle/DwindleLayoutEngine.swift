@@ -1,0 +1,634 @@
+import Foundation
+import CoreGraphics
+import QuartzCore
+
+final class DwindleLayoutEngine {
+    private var roots: [WorkspaceDescriptor.ID: DwindleNode] = [:]
+    private var windowToNode: [WindowHandle: DwindleNode] = [:]
+    private var selectedNodeId: [WorkspaceDescriptor.ID: DwindleNodeId] = [:]
+
+    var settings: DwindleSettings = DwindleSettings()
+    var animationClock: AnimationClock?
+    var displayRefreshRate: Double = 60.0
+
+    var windowMovementAnimationConfig: SpringConfig = SpringConfig(
+        duration: 0.35,
+        bounce: 0.0,
+        epsilon: 0.0001,
+        velocityEpsilon: 0.01
+    )
+
+    func root(for workspaceId: WorkspaceDescriptor.ID) -> DwindleNode? {
+        roots[workspaceId]
+    }
+
+    func ensureRoot(for workspaceId: WorkspaceDescriptor.ID) -> DwindleNode {
+        if let existing = roots[workspaceId] {
+            return existing
+        }
+        let newRoot = DwindleNode(kind: .leaf(handle: nil, fullscreen: false))
+        roots[workspaceId] = newRoot
+        return newRoot
+    }
+
+    func removeLayout(for workspaceId: WorkspaceDescriptor.ID) {
+        if let root = roots.removeValue(forKey: workspaceId) {
+            for window in root.collectAllWindows() {
+                windowToNode.removeValue(forKey: window)
+            }
+        }
+        selectedNodeId.removeValue(forKey: workspaceId)
+    }
+
+    func containsWindow(_ handle: WindowHandle, in workspaceId: WorkspaceDescriptor.ID) -> Bool {
+        guard let root = roots[workspaceId] else { return false }
+        return root.collectAllWindows().contains(handle)
+    }
+
+    func findNode(for handle: WindowHandle) -> DwindleNode? {
+        windowToNode[handle]
+    }
+
+    func windowCount(in workspaceId: WorkspaceDescriptor.ID) -> Int {
+        roots[workspaceId]?.collectAllWindows().count ?? 0
+    }
+
+    func selectedNode(in workspaceId: WorkspaceDescriptor.ID) -> DwindleNode? {
+        guard let nodeId = selectedNodeId[workspaceId],
+              let root = roots[workspaceId] else { return nil }
+        return findNodeById(nodeId, in: root)
+    }
+
+    func setSelectedNode(_ node: DwindleNode?, in workspaceId: WorkspaceDescriptor.ID) {
+        selectedNodeId[workspaceId] = node?.id
+    }
+
+    private func findNodeById(_ nodeId: DwindleNodeId, in root: DwindleNode) -> DwindleNode? {
+        if root.id == nodeId { return root }
+        for child in root.children {
+            if let found = findNodeById(nodeId, in: child) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    @discardableResult
+    func addWindow(
+        handle: WindowHandle,
+        to workspaceId: WorkspaceDescriptor.ID,
+        activeWindowFrame: CGRect?
+    ) -> DwindleNode {
+        let root = ensureRoot(for: workspaceId)
+
+        if case let .leaf(existingHandle, _) = root.kind, existingHandle == nil {
+            root.kind = .leaf(handle: handle, fullscreen: false)
+            windowToNode[handle] = root
+            selectedNodeId[workspaceId] = root.id
+            return root
+        }
+
+        let targetNode: DwindleNode
+        if let selected = selectedNode(in: workspaceId), selected.isLeaf {
+            targetNode = selected
+        } else {
+            targetNode = root.descendToFirstLeaf()
+        }
+
+        let newLeaf = splitLeaf(
+            targetNode,
+            newWindow: handle,
+            workspaceId: workspaceId,
+            activeWindowFrame: activeWindowFrame
+        )
+
+        windowToNode[handle] = newLeaf
+        selectedNodeId[workspaceId] = newLeaf.id
+        return newLeaf
+    }
+
+    private func splitLeaf(
+        _ leaf: DwindleNode,
+        newWindow: WindowHandle,
+        workspaceId: WorkspaceDescriptor.ID,
+        activeWindowFrame: CGRect?
+    ) -> DwindleNode {
+        guard case let .leaf(existingHandle, fullscreen) = leaf.kind else {
+            let newLeaf = DwindleNode(kind: .leaf(handle: newWindow, fullscreen: false))
+            leaf.appendChild(newLeaf)
+            return newLeaf
+        }
+
+        let targetRect = leaf.cachedFrame
+        let (orientation, newFirst) = planSplit(
+            targetRect: targetRect,
+            activeWindowFrame: activeWindowFrame
+        )
+
+        let existingLeaf = DwindleNode(kind: .leaf(handle: existingHandle, fullscreen: fullscreen))
+        let newLeaf = DwindleNode(kind: .leaf(handle: newWindow, fullscreen: false))
+
+        leaf.kind = .split(orientation: orientation, ratio: settings.defaultSplitRatio)
+
+        if newFirst {
+            leaf.replaceChildren(first: newLeaf, second: existingLeaf)
+        } else {
+            leaf.replaceChildren(first: existingLeaf, second: newLeaf)
+        }
+
+        if let existingHandle {
+            windowToNode[existingHandle] = existingLeaf
+        }
+
+        return newLeaf
+    }
+
+    private func planSplit(
+        targetRect: CGRect?,
+        activeWindowFrame: CGRect?
+    ) -> (orientation: DwindleOrientation, newFirst: Bool) {
+        guard settings.smartSplit,
+              let targetRect,
+              let activeFrame = activeWindowFrame else {
+            return (aspectOrientation(for: targetRect), false)
+        }
+
+        let targetCenter = CGPoint(x: targetRect.midX, y: targetRect.midY)
+        let activeCenter = CGPoint(x: activeFrame.midX, y: activeFrame.midY)
+
+        let deltaX = activeCenter.x - targetCenter.x
+        let deltaY = activeCenter.y - targetCenter.y
+
+        let slope: CGFloat
+        if abs(deltaX) < 0.001 {
+            slope = .infinity
+        } else {
+            slope = deltaY / deltaX
+        }
+
+        let aspect: CGFloat
+        if abs(targetRect.width) < 0.001 {
+            aspect = .infinity
+        } else {
+            aspect = targetRect.height / targetRect.width
+        }
+
+        if abs(slope) < aspect {
+            return (.horizontal, deltaX < 0)
+        } else {
+            return (.vertical, deltaY < 0)
+        }
+    }
+
+    private func aspectOrientation(for rect: CGRect?) -> DwindleOrientation {
+        guard let rect else { return .horizontal }
+        if rect.height * settings.splitWidthMultiplier > rect.width {
+            return .vertical
+        }
+        return .horizontal
+    }
+
+    func removeWindow(handle: WindowHandle, from workspaceId: WorkspaceDescriptor.ID) {
+        guard let node = windowToNode.removeValue(forKey: handle) else { return }
+
+        if case .leaf = node.kind {
+            node.kind = .leaf(handle: nil, fullscreen: false)
+        }
+
+        cleanupAfterRemoval(node, in: workspaceId)
+    }
+
+    private func cleanupAfterRemoval(_ node: DwindleNode, in workspaceId: WorkspaceDescriptor.ID) {
+        guard let parent = node.parent else {
+            if let root = roots[workspaceId], root.id == node.id {
+                if case let .leaf(handle, _) = node.kind, handle == nil {
+                    return
+                }
+            }
+            return
+        }
+
+        guard let sibling = node.sibling() else { return }
+
+        node.detach()
+
+        parent.kind = sibling.kind
+        parent.children = sibling.children
+        for child in parent.children {
+            child.parent = parent
+        }
+
+        for window in sibling.collectAllWindows() {
+            if let leafNode = findLeafContaining(window, in: parent) {
+                windowToNode[window] = leafNode
+            }
+        }
+
+        if let selectedId = selectedNodeId[workspaceId], selectedId == node.id {
+            let newSelected = parent.descendToFirstLeaf()
+            selectedNodeId[workspaceId] = newSelected.id
+        }
+    }
+
+    private func findLeafContaining(_ handle: WindowHandle, in root: DwindleNode) -> DwindleNode? {
+        if case let .leaf(h, _) = root.kind, h === handle {
+            return root
+        }
+        for child in root.children {
+            if let found = findLeafContaining(handle, in: child) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    func syncWindows(
+        _ handles: [WindowHandle],
+        in workspaceId: WorkspaceDescriptor.ID,
+        focusedHandle: WindowHandle?
+    ) -> Set<WindowHandle> {
+        let existingWindows = Set(roots[workspaceId]?.collectAllWindows() ?? [])
+        let newWindows = Set(handles)
+
+        let toRemove = existingWindows.subtracting(newWindows)
+        let toAdd = newWindows.subtracting(existingWindows)
+
+        for handle in toRemove {
+            removeWindow(handle: handle, from: workspaceId)
+        }
+
+        var activeFrame: CGRect?
+        if let focused = focusedHandle, let node = windowToNode[focused] {
+            activeFrame = node.cachedFrame
+        }
+
+        for handle in toAdd {
+            addWindow(handle: handle, to: workspaceId, activeWindowFrame: activeFrame)
+            if let newNode = windowToNode[handle] {
+                activeFrame = newNode.cachedFrame
+            }
+        }
+
+        return toRemove
+    }
+
+    func calculateLayout(
+        for workspaceId: WorkspaceDescriptor.ID,
+        screen: CGRect
+    ) -> [WindowHandle: CGRect] {
+        guard let root = roots[workspaceId] else { return [:] }
+
+        let windowCount = root.collectAllWindows().count
+        if windowCount == 0 {
+            return [:]
+        }
+
+        var output: [WindowHandle: CGRect] = [:]
+        let tilingArea = DwindleGapCalculator.applyOuterGapsOnly(rect: screen, settings: settings)
+
+        if windowCount == 1 {
+            let leaf = root.descendToFirstLeaf()
+            if case let .leaf(handle, fullscreen) = leaf.kind,
+               let handle {
+                let rect: CGRect
+                if fullscreen {
+                    rect = screen
+                } else {
+                    rect = singleWindowRect(screen: tilingArea)
+                }
+                output[handle] = rect
+                leaf.cachedFrame = rect
+            }
+        } else {
+            calculateLayoutRecursive(
+                node: root,
+                rect: tilingArea,
+                tilingArea: tilingArea,
+                output: &output
+            )
+        }
+
+        return output
+    }
+
+    private func calculateLayoutRecursive(
+        node: DwindleNode,
+        rect: CGRect,
+        tilingArea: CGRect,
+        output: inout [WindowHandle: CGRect]
+    ) {
+        switch node.kind {
+        case let .leaf(handle, fullscreen):
+            guard let handle else { return }
+
+            let target: CGRect
+            if fullscreen {
+                target = tilingArea
+            } else {
+                target = DwindleGapCalculator.applyGaps(
+                    nodeRect: rect,
+                    tilingArea: tilingArea,
+                    settings: settings
+                )
+            }
+            output[handle] = target
+            node.cachedFrame = target
+
+        case let .split(orientation, ratio):
+            node.cachedFrame = rect
+            let (r1, r2) = splitRect(rect, orientation: orientation, ratio: ratio)
+
+            if let first = node.firstChild() {
+                calculateLayoutRecursive(node: first, rect: r1, tilingArea: tilingArea, output: &output)
+            }
+            if let second = node.secondChild() {
+                calculateLayoutRecursive(node: second, rect: r2, tilingArea: tilingArea, output: &output)
+            }
+        }
+    }
+
+    private func splitRect(
+        _ rect: CGRect,
+        orientation: DwindleOrientation,
+        ratio: CGFloat
+    ) -> (CGRect, CGRect) {
+        let fraction = settings.ratioToFraction(ratio)
+
+        switch orientation {
+        case .horizontal:
+            let firstW = rect.width * fraction
+            let secondW = rect.width - firstW
+            let r1 = CGRect(x: rect.minX, y: rect.minY, width: firstW, height: rect.height)
+            let r2 = CGRect(x: rect.minX + firstW, y: rect.minY, width: secondW, height: rect.height)
+            return (r1, r2)
+
+        case .vertical:
+            let firstH = rect.height * fraction
+            let secondH = rect.height - firstH
+            let r1 = CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: firstH)
+            let r2 = CGRect(x: rect.minX, y: rect.minY + firstH, width: rect.width, height: secondH)
+            return (r1, r2)
+        }
+    }
+
+    private func singleWindowRect(screen: CGRect) -> CGRect {
+        let targetRatio = settings.singleWindowAspectRatio.width / settings.singleWindowAspectRatio.height
+        let currentRatio = screen.width / screen.height
+
+        if abs(targetRatio - currentRatio) < settings.singleWindowAspectRatioTolerance {
+            return screen
+        }
+
+        var width = screen.width
+        var height = screen.height
+
+        if currentRatio > targetRatio {
+            width = height * targetRatio
+        } else {
+            height = width / targetRatio
+        }
+
+        return CGRect(
+            x: screen.minX + (screen.width - width) / 2,
+            y: screen.minY + (screen.height - height) / 2,
+            width: width,
+            height: height
+        )
+    }
+
+    func findNeighbor(from node: DwindleNode, direction: Direction) -> DwindleNode? {
+        let targetOrientation = direction.dwindleOrientation
+        let goToSecond = direction.isPositive
+
+        var current = node
+        while let parent = current.parent {
+            guard case let .split(orientation, _) = parent.kind else {
+                current = parent
+                continue
+            }
+
+            if orientation == targetOrientation {
+                let isFirst = current.isFirstChild(of: parent)
+                if goToSecond && isFirst {
+                    if let second = parent.secondChild() {
+                        return descendInDirection(second, direction: direction.opposite)
+                    }
+                } else if !goToSecond && !isFirst {
+                    if let first = parent.firstChild() {
+                        return descendInDirection(first, direction: direction.opposite)
+                    }
+                }
+            }
+            current = parent
+        }
+
+        return nil
+    }
+
+    private func descendInDirection(_ node: DwindleNode, direction: Direction) -> DwindleNode {
+        var current = node
+        let targetOrientation = direction.dwindleOrientation
+        let preferSecond = direction.isPositive
+
+        while !current.isLeaf {
+            guard case let .split(orientation, _) = current.kind else { break }
+
+            if orientation == targetOrientation {
+                if preferSecond, let second = current.secondChild() {
+                    current = second
+                } else if let first = current.firstChild() {
+                    current = first
+                } else {
+                    break
+                }
+            } else {
+                if let first = current.firstChild() {
+                    current = first
+                } else {
+                    break
+                }
+            }
+        }
+
+        return current
+    }
+
+    func moveFocus(direction: Direction, in workspaceId: WorkspaceDescriptor.ID) -> WindowHandle? {
+        guard let current = selectedNode(in: workspaceId) else {
+            if let root = roots[workspaceId] {
+                let firstLeaf = root.descendToFirstLeaf()
+                selectedNodeId[workspaceId] = firstLeaf.id
+                return firstLeaf.windowHandle
+            }
+            return nil
+        }
+
+        guard let neighbor = findNeighbor(from: current, direction: direction) else {
+            return nil
+        }
+
+        selectedNodeId[workspaceId] = neighbor.id
+        return neighbor.windowHandle
+    }
+
+    func swapWindows(direction: Direction, in workspaceId: WorkspaceDescriptor.ID) -> Bool {
+        guard let current = selectedNode(in: workspaceId),
+              case let .leaf(currentHandle, currentFullscreen) = current.kind,
+              let neighbor = findNeighbor(from: current, direction: direction),
+              case let .leaf(neighborHandle, neighborFullscreen) = neighbor.kind else {
+            return false
+        }
+
+        current.kind = .leaf(handle: neighborHandle, fullscreen: neighborFullscreen)
+        neighbor.kind = .leaf(handle: currentHandle, fullscreen: currentFullscreen)
+
+        if let ch = currentHandle {
+            windowToNode[ch] = neighbor
+        }
+        if let nh = neighborHandle {
+            windowToNode[nh] = current
+        }
+
+        selectedNodeId[workspaceId] = neighbor.id
+
+        return true
+    }
+
+    func toggleOrientation(in workspaceId: WorkspaceDescriptor.ID) {
+        guard let selected = selectedNode(in: workspaceId),
+              let parent = selected.parent,
+              case let .split(orientation, ratio) = parent.kind else {
+            return
+        }
+
+        parent.kind = .split(orientation: orientation.perpendicular, ratio: ratio)
+    }
+
+    func toggleFullscreen(in workspaceId: WorkspaceDescriptor.ID) -> WindowHandle? {
+        guard let selected = selectedNode(in: workspaceId),
+              case let .leaf(handle, fullscreen) = selected.kind else {
+            return nil
+        }
+
+        selected.kind = .leaf(handle: handle, fullscreen: !fullscreen)
+        return handle
+    }
+
+    func resizeSelected(
+        by delta: CGFloat,
+        direction: Direction,
+        in workspaceId: WorkspaceDescriptor.ID
+    ) {
+        guard let selected = selectedNode(in: workspaceId) else { return }
+
+        let targetOrientation = direction.dwindleOrientation
+        let increaseFirst = !direction.isPositive
+
+        var current = selected
+        while let parent = current.parent {
+            guard case let .split(orientation, ratio) = parent.kind else {
+                current = parent
+                continue
+            }
+
+            if orientation == targetOrientation {
+                let isFirst = current.isFirstChild(of: parent)
+                var newRatio = ratio
+
+                if (isFirst && increaseFirst) || (!isFirst && !increaseFirst) {
+                    newRatio += delta
+                } else {
+                    newRatio -= delta
+                }
+
+                parent.kind = .split(orientation: orientation, ratio: settings.clampedRatio(newRatio))
+                return
+            }
+
+            current = parent
+        }
+    }
+
+    func balanceSizes(in workspaceId: WorkspaceDescriptor.ID) {
+        guard let root = roots[workspaceId] else { return }
+        balanceSizesRecursive(root)
+    }
+
+    private func balanceSizesRecursive(_ node: DwindleNode) {
+        guard case let .split(orientation, _) = node.kind else { return }
+        node.kind = .split(orientation: orientation, ratio: 1.0)
+        for child in node.children {
+            balanceSizesRecursive(child)
+        }
+    }
+
+    func tickAnimations(at time: TimeInterval, in workspaceId: WorkspaceDescriptor.ID) {
+        guard let root = roots[workspaceId] else { return }
+        tickAnimationsRecursive(root, at: time)
+    }
+
+    private func tickAnimationsRecursive(_ node: DwindleNode, at time: TimeInterval) {
+        node.tickAnimations(at: time)
+        for child in node.children {
+            tickAnimationsRecursive(child, at: time)
+        }
+    }
+
+    func hasActiveAnimations(in workspaceId: WorkspaceDescriptor.ID, at time: TimeInterval) -> Bool {
+        guard let root = roots[workspaceId] else { return false }
+        return hasActiveAnimationsRecursive(root, at: time)
+    }
+
+    private func hasActiveAnimationsRecursive(_ node: DwindleNode, at time: TimeInterval) -> Bool {
+        if node.hasActiveAnimations(at: time) { return true }
+        for child in node.children {
+            if hasActiveAnimationsRecursive(child, at: time) { return true }
+        }
+        return false
+    }
+
+    func animateWindowMovements(
+        oldFrames: [WindowHandle: CGRect],
+        newFrames: [WindowHandle: CGRect]
+    ) {
+        for (handle, newFrame) in newFrames {
+            guard let oldFrame = oldFrames[handle],
+                  let node = windowToNode[handle] else { continue }
+
+            let moved = abs(oldFrame.origin.x - newFrame.origin.x) > 1 ||
+                        abs(oldFrame.origin.y - newFrame.origin.y) > 1
+
+            if moved {
+                node.animateFrom(
+                    oldFrame: oldFrame,
+                    newFrame: newFrame,
+                    clock: animationClock,
+                    config: windowMovementAnimationConfig
+                )
+            }
+        }
+    }
+
+    func calculateAnimatedFrames(
+        baseFrames: [WindowHandle: CGRect],
+        in workspaceId: WorkspaceDescriptor.ID,
+        at time: TimeInterval
+    ) -> [WindowHandle: CGRect] {
+        var result = baseFrames
+
+        for (handle, frame) in baseFrames {
+            guard let node = windowToNode[handle] else { continue }
+            let offset = node.renderOffset(at: time)
+            if abs(offset.x) > 0.1 || abs(offset.y) > 0.1 {
+                result[handle] = CGRect(
+                    x: frame.origin.x + offset.x,
+                    y: frame.origin.y + offset.y,
+                    width: frame.width,
+                    height: frame.height
+                )
+            }
+        }
+
+        return result
+    }
+}
