@@ -15,6 +15,9 @@ final class LayoutRefreshController {
     private var activeDisplayId: CGDirectDisplayID?
     private var scrollAnimationWorkspaceId: WorkspaceDescriptor.ID?
     private var isScrollAnimationRunning: Bool = false
+    private var dwindleAnimationWorkspaceId: WorkspaceDescriptor.ID?
+    private var isDwindleAnimationRunning: Bool = false
+    private var dwindleAnimationMonitor: Monitor?
     private var refreshRateByDisplay: [CGDirectDisplayID: Double] = [:]
     private var screenChangeObserver: NSObjectProtocol?
     private var hasCompletedInitialRefresh: Bool = false
@@ -87,6 +90,7 @@ final class LayoutRefreshController {
 
     @objc private func displayLinkFired(_ displayLink: CADisplayLink) {
         tickScrollAnimation(targetTime: displayLink.targetTimestamp)
+        tickDwindleAnimation(targetTime: displayLink.targetTimestamp)
     }
 
     func startScrollAnimation(for workspaceId: WorkspaceDescriptor.ID) {
@@ -111,9 +115,75 @@ final class LayoutRefreshController {
     }
 
     func stopScrollAnimation() {
-        activeDisplayLink?.remove(from: .main, forMode: .common)
         isScrollAnimationRunning = false
         scrollAnimationWorkspaceId = nil
+        stopDisplayLinkIfIdle()
+    }
+
+    func startDwindleAnimation(for workspaceId: WorkspaceDescriptor.ID, monitor: Monitor) {
+        dwindleAnimationWorkspaceId = workspaceId
+        dwindleAnimationMonitor = monitor
+        if isDwindleAnimationRunning { return }
+        isDwindleAnimationRunning = true
+
+        let targetDisplayId = monitor.id.displayId
+        if let displayLink = getOrCreateDisplayLink(for: targetDisplayId) {
+            displayLink.add(to: .main, forMode: .common)
+        }
+    }
+
+    func stopDwindleAnimation() {
+        isDwindleAnimationRunning = false
+        dwindleAnimationWorkspaceId = nil
+        dwindleAnimationMonitor = nil
+        stopDisplayLinkIfIdle()
+    }
+
+    private func stopDisplayLinkIfIdle() {
+        if !isScrollAnimationRunning && !isDwindleAnimationRunning {
+            activeDisplayLink?.remove(from: .main, forMode: .common)
+        }
+    }
+
+    private func tickDwindleAnimation(targetTime: CFTimeInterval) {
+        guard isDwindleAnimationRunning else { return }
+        guard let controller,
+              let wsId = dwindleAnimationWorkspaceId,
+              let monitor = dwindleAnimationMonitor,
+              let engine = controller.internalDwindleEngine else {
+            stopDwindleAnimation()
+            return
+        }
+
+        engine.tickAnimations(at: targetTime, in: wsId)
+
+        let insetFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+        let baseFrames = engine.calculateLayout(for: wsId, screen: insetFrame)
+        let animatedFrames = engine.calculateAnimatedFrames(
+            baseFrames: baseFrames,
+            in: wsId,
+            at: targetTime
+        )
+
+        var frameUpdates: [(pid: pid_t, windowId: Int, frame: CGRect)] = []
+        let workspaceManager = controller.internalWorkspaceManager
+
+        for (handle, frame) in animatedFrames {
+            if let entry = workspaceManager.entry(for: handle) {
+                frameUpdates.append((handle.pid, entry.windowId, frame))
+            }
+        }
+
+        controller.internalAXManager.applyFramesParallel(frameUpdates)
+
+        if !engine.hasActiveAnimations(in: wsId, at: targetTime) {
+            if let focusedHandle = controller.internalFocusedHandle,
+               let frame = animatedFrames[focusedHandle],
+               let entry = workspaceManager.entry(for: focusedHandle) {
+                controller.updateBorderIfAllowed(handle: focusedHandle, frame: frame, windowId: entry.windowId)
+            }
+            stopDwindleAnimation()
+        }
     }
 
     private func tickScrollAnimation(targetTime: CFTimeInterval) {
@@ -831,6 +901,8 @@ final class LayoutRefreshController {
             let layoutType = controller.internalSettings.layoutType(for: wsName)
             guard layoutType == .dwindle else { continue }
 
+            let oldFrames = engine.currentFrames(in: wsId)
+
             let windowHandles = workspaceManager.entries(in: wsId).map(\.handle)
             let focusedHandle = controller.internalFocusedHandle
 
@@ -838,10 +910,10 @@ final class LayoutRefreshController {
 
             let insetFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
 
-            let frames = engine.calculateLayout(for: wsId, screen: insetFrame)
+            let newFrames = engine.calculateLayout(for: wsId, screen: insetFrame)
 
             for entry in workspaceManager.entries(in: wsId) {
-                if frames[entry.handle] != nil {
+                if newFrames[entry.handle] != nil {
                     unhideWindow(entry, monitor: monitor)
                 }
             }
@@ -859,20 +931,27 @@ final class LayoutRefreshController {
                 }
             }
 
-            var frameUpdates: [(pid: pid_t, windowId: Int, frame: CGRect)] = []
+            engine.animateWindowMovements(oldFrames: oldFrames, newFrames: newFrames)
 
-            for (handle, frame) in frames {
-                if let entry = workspaceManager.entry(for: handle) {
-                    frameUpdates.append((handle.pid, entry.windowId, frame))
+            let now = CACurrentMediaTime()
+            if engine.hasActiveAnimations(in: wsId, at: now) {
+                startDwindleAnimation(for: wsId, monitor: monitor)
+            } else {
+                var frameUpdates: [(pid: pid_t, windowId: Int, frame: CGRect)] = []
+
+                for (handle, frame) in newFrames {
+                    if let entry = workspaceManager.entry(for: handle) {
+                        frameUpdates.append((handle.pid, entry.windowId, frame))
+                    }
                 }
-            }
 
-            controller.internalAXManager.applyFramesParallel(frameUpdates)
+                controller.internalAXManager.applyFramesParallel(frameUpdates)
 
-            if let focusedHandle = controller.internalFocusedHandle,
-               let frame = frames[focusedHandle],
-               let entry = workspaceManager.entry(for: focusedHandle) {
-                controller.updateBorderIfAllowed(handle: focusedHandle, frame: frame, windowId: entry.windowId)
+                if let focusedHandle = controller.internalFocusedHandle,
+                   let frame = newFrames[focusedHandle],
+                   let entry = workspaceManager.entry(for: focusedHandle) {
+                    controller.updateBorderIfAllowed(handle: focusedHandle, frame: frame, windowId: entry.windowId)
+                }
             }
 
             await Task.yield()

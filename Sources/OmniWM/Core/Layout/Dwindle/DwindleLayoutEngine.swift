@@ -36,12 +36,7 @@ final class DwindleLayoutEngine {
         return effective
     }
 
-    var windowMovementAnimationConfig: SpringConfig = SpringConfig(
-        duration: 0.35,
-        bounce: 0.0,
-        epsilon: 0.0001,
-        velocityEpsilon: 0.01
-    )
+    var windowMovementAnimationConfig: CubicConfig = CubicConfig(duration: 0.3)
 
     func root(for workspaceId: WorkspaceDescriptor.ID) -> DwindleNode? {
         roots[workspaceId]
@@ -334,6 +329,22 @@ final class DwindleLayoutEngine {
         }
 
         return output
+    }
+
+    func currentFrames(in workspaceId: WorkspaceDescriptor.ID) -> [WindowHandle: CGRect] {
+        guard let root = roots[workspaceId] else { return [:] }
+        var frames: [WindowHandle: CGRect] = [:]
+        collectCurrentFrames(node: root, into: &frames)
+        return frames
+    }
+
+    private func collectCurrentFrames(node: DwindleNode, into frames: inout [WindowHandle: CGRect]) {
+        if case let .leaf(handle, _) = node.kind, let handle, let frame = node.cachedFrame {
+            frames[handle] = frame
+        }
+        for child in node.children {
+            collectCurrentFrames(node: child, into: &frames)
+        }
     }
 
     private func calculateLayoutRecursive(
@@ -804,10 +815,12 @@ final class DwindleLayoutEngine {
             guard let oldFrame = oldFrames[handle],
                   let node = windowToNode[handle] else { continue }
 
-            let moved = abs(oldFrame.origin.x - newFrame.origin.x) > 1 ||
-                        abs(oldFrame.origin.y - newFrame.origin.y) > 1
+            let changed = abs(oldFrame.origin.x - newFrame.origin.x) > 0.5 ||
+                          abs(oldFrame.origin.y - newFrame.origin.y) > 0.5 ||
+                          abs(oldFrame.width - newFrame.width) > 0.5 ||
+                          abs(oldFrame.height - newFrame.height) > 0.5
 
-            if moved {
+            if changed {
                 node.animateFrom(
                     oldFrame: oldFrame,
                     newFrame: newFrame,
@@ -827,13 +840,18 @@ final class DwindleLayoutEngine {
 
         for (handle, frame) in baseFrames {
             guard let node = windowToNode[handle] else { continue }
-            let offset = node.renderOffset(at: time)
-            if abs(offset.x) > 0.1 || abs(offset.y) > 0.1 {
+            let posOffset = node.renderOffset(at: time)
+            let sizeOffset = node.renderSizeOffset(at: time)
+
+            let hasAnimation = abs(posOffset.x) > 0.1 || abs(posOffset.y) > 0.1 ||
+                              abs(sizeOffset.width) > 0.1 || abs(sizeOffset.height) > 0.1
+
+            if hasAnimation {
                 result[handle] = CGRect(
-                    x: frame.origin.x + offset.x,
-                    y: frame.origin.y + offset.y,
-                    width: frame.width,
-                    height: frame.height
+                    x: frame.origin.x + posOffset.x,
+                    y: frame.origin.y + posOffset.y,
+                    width: frame.width + sizeOffset.width,
+                    height: frame.height + sizeOffset.height
                 )
             }
         }

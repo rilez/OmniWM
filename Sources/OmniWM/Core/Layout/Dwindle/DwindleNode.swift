@@ -53,8 +53,10 @@ final class DwindleNode {
     var kind: DwindleNodeKind
     var cachedFrame: CGRect?
 
-    var moveXAnimation: MoveAnimation?
-    var moveYAnimation: MoveAnimation?
+    var moveXAnimation: CubicMoveAnimation?
+    var moveYAnimation: CubicMoveAnimation?
+    var sizeWAnimation: CubicMoveAnimation?
+    var sizeHAnimation: CubicMoveAnimation?
 
     init(kind: DwindleNodeKind) {
         id = UUID()
@@ -190,32 +192,56 @@ final class DwindleNode {
         collectAllLeaves().compactMap { $0.windowHandle }
     }
 
-    func animateFrom(oldFrame: CGRect, newFrame: CGRect, clock: AnimationClock?, config: SpringConfig) {
+    func animateFrom(oldFrame: CGRect, newFrame: CGRect, clock: AnimationClock?, config: CubicConfig) {
         let now = clock?.now() ?? CACurrentMediaTime()
 
         let displacementX = oldFrame.origin.x - newFrame.origin.x
         let displacementY = oldFrame.origin.y - newFrame.origin.y
+        let displacementW = oldFrame.width - newFrame.width
+        let displacementH = oldFrame.height - newFrame.height
 
         if abs(displacementX) > 0.5 {
-            let anim = SpringAnimation(
+            let anim = CubicAnimation(
                 from: 1.0,
                 to: 0.0,
                 startTime: now,
                 config: config,
                 clock: clock
             )
-            moveXAnimation = MoveAnimation(animation: anim, fromOffset: displacementX)
+            moveXAnimation = CubicMoveAnimation(animation: anim, fromOffset: displacementX)
         }
 
         if abs(displacementY) > 0.5 {
-            let anim = SpringAnimation(
+            let anim = CubicAnimation(
                 from: 1.0,
                 to: 0.0,
                 startTime: now,
                 config: config,
                 clock: clock
             )
-            moveYAnimation = MoveAnimation(animation: anim, fromOffset: displacementY)
+            moveYAnimation = CubicMoveAnimation(animation: anim, fromOffset: displacementY)
+        }
+
+        if abs(displacementW) > 0.5 {
+            let anim = CubicAnimation(
+                from: 1.0,
+                to: 0.0,
+                startTime: now,
+                config: config,
+                clock: clock
+            )
+            sizeWAnimation = CubicMoveAnimation(animation: anim, fromOffset: displacementW)
+        }
+
+        if abs(displacementH) > 0.5 {
+            let anim = CubicAnimation(
+                from: 1.0,
+                to: 0.0,
+                startTime: now,
+                config: config,
+                clock: clock
+            )
+            sizeHAnimation = CubicMoveAnimation(animation: anim, fromOffset: displacementH)
         }
     }
 
@@ -226,6 +252,13 @@ final class DwindleNode {
         )
     }
 
+    func renderSizeOffset(at time: TimeInterval) -> CGSize {
+        CGSize(
+            width: sizeWAnimation?.currentOffset(at: time) ?? 0,
+            height: sizeHAnimation?.currentOffset(at: time) ?? 0
+        )
+    }
+
     func tickAnimations(at time: TimeInterval) {
         if let anim = moveXAnimation, anim.isComplete(at: time) {
             moveXAnimation = nil
@@ -233,11 +266,19 @@ final class DwindleNode {
         if let anim = moveYAnimation, anim.isComplete(at: time) {
             moveYAnimation = nil
         }
+        if let anim = sizeWAnimation, anim.isComplete(at: time) {
+            sizeWAnimation = nil
+        }
+        if let anim = sizeHAnimation, anim.isComplete(at: time) {
+            sizeHAnimation = nil
+        }
     }
 
     func hasActiveAnimations(at time: TimeInterval) -> Bool {
         if let anim = moveXAnimation, !anim.isComplete(at: time) { return true }
         if let anim = moveYAnimation, !anim.isComplete(at: time) { return true }
+        if let anim = sizeWAnimation, !anim.isComplete(at: time) { return true }
+        if let anim = sizeHAnimation, !anim.isComplete(at: time) { return true }
         return false
     }
 }
