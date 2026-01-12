@@ -376,7 +376,16 @@ final class CommandHandler {
                 return
             }
 
-            engine.toggleColumnWidth(column, forwards: forwards)
+            guard let monitor = controller.internalWorkspaceManager.monitor(for: wsId) else { return }
+            let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+            let gaps = CGFloat(controller.internalWorkspaceManager.gaps)
+
+            engine.toggleColumnWidth(
+                column,
+                forwards: forwards,
+                workingAreaWidth: workingFrame.width,
+                gaps: gaps
+            )
             controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
         }
     }
@@ -396,7 +405,15 @@ final class CommandHandler {
                 return
             }
 
-            engine.toggleFullWidth(column)
+            guard let monitor = controller.internalWorkspaceManager.monitor(for: wsId) else { return }
+            let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+            let gaps = CGFloat(controller.internalWorkspaceManager.gaps)
+
+            engine.toggleFullWidth(
+                column,
+                workingAreaWidth: workingFrame.width,
+                gaps: gaps
+            )
             controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
         }
     }

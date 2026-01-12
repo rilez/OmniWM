@@ -674,12 +674,17 @@ final class NiriLayoutEngine {
 
     func tickAllColumnAnimations(in workspaceId: WorkspaceDescriptor.ID, at time: TimeInterval) -> Bool {
         guard let root = roots[workspaceId] else { return false }
-        return root.columns.reduce(false) { $0 || $1.tickMoveAnimation(at: time) }
+        var anyRunning = false
+        for column in root.columns {
+            if column.tickMoveAnimation(at: time) { anyRunning = true }
+            if column.tickWidthAnimation(at: time) { anyRunning = true }
+        }
+        return anyRunning
     }
 
     func hasAnyColumnAnimationsRunning(in workspaceId: WorkspaceDescriptor.ID) -> Bool {
         guard let root = roots[workspaceId] else { return false }
-        return root.columns.contains { $0.hasMoveAnimationRunning }
+        return root.columns.contains { $0.hasMoveAnimationRunning || $0.hasWidthAnimationRunning }
     }
 
     @discardableResult
@@ -2253,7 +2258,12 @@ final class NiriLayoutEngine {
         setWindowSizingMode(window, mode: newMode, in: workspaceId, state: &state)
     }
 
-    func toggleColumnWidth(_ column: NiriContainer, forwards: Bool) {
+    func toggleColumnWidth(
+        _ column: NiriContainer,
+        forwards: Bool,
+        workingAreaWidth: CGFloat,
+        gaps: CGFloat
+    ) {
         guard !presetColumnWidths.isEmpty else { return }
 
         if column.isFullWidth {
@@ -2292,24 +2302,65 @@ final class NiriLayoutEngine {
             }
         }
 
-        column.width = presetColumnWidths[nextIdx].asColumnWidth
+        let newWidth = presetColumnWidths[nextIdx].asColumnWidth
+        column.width = newWidth
         column.presetWidthIdx = nextIdx
-        column.cachedWidth = 0
+
+        let targetPixels: CGFloat
+        switch newWidth {
+        case .proportion(let p):
+            targetPixels = (workingAreaWidth - gaps) * p
+        case .fixed(let f):
+            targetPixels = f
+        }
+
+        if column.cachedWidth > 0 {
+            column.animateWidthTo(
+                newWidth: targetPixels,
+                clock: animationClock,
+                config: windowMovementAnimationConfig,
+                displayRefreshRate: displayRefreshRate
+            )
+        } else {
+            column.cachedWidth = targetPixels
+        }
     }
 
-    func toggleFullWidth(_ column: NiriContainer) {
+    func toggleFullWidth(
+        _ column: NiriContainer,
+        workingAreaWidth: CGFloat,
+        gaps: CGFloat
+    ) {
+        let targetPixels: CGFloat
         if column.isFullWidth {
             column.isFullWidth = false
             if let saved = column.savedWidth {
                 column.width = saved
                 column.savedWidth = nil
             }
+            switch column.width {
+            case .proportion(let p):
+                targetPixels = (workingAreaWidth - gaps) * p
+            case .fixed(let f):
+                targetPixels = f
+            }
         } else {
             column.savedWidth = column.width
             column.isFullWidth = true
             column.presetWidthIdx = nil
+            targetPixels = workingAreaWidth
         }
-        column.cachedWidth = 0
+
+        if column.cachedWidth > 0 {
+            column.animateWidthTo(
+                newWidth: targetPixels,
+                clock: animationClock,
+                config: windowMovementAnimationConfig,
+                displayRefreshRate: displayRefreshRate
+            )
+        } else {
+            column.cachedWidth = targetPixels
+        }
     }
 
     func setWindowHeight(_ window: NiriWindow, height: WindowHeight) {

@@ -393,6 +393,9 @@ class NiriContainer: NiriNode {
 
     var moveAnimation: MoveAnimation?
 
+    var widthAnimation: SpringAnimation?
+    var targetWidth: CGFloat?
+
     private var _cachedWindowNodes: [NiriWindow]?
 
     override init() {
@@ -455,6 +458,46 @@ class NiriContainer: NiriNode {
                 fromOffset: anim.fromOffset + offsetX / CGFloat(value)
             )
         }
+    }
+
+    func animateWidthTo(
+        newWidth: CGFloat,
+        clock: AnimationClock?,
+        config: SpringConfig,
+        displayRefreshRate: Double = 60.0
+    ) {
+        let now = clock?.now() ?? CACurrentMediaTime()
+        let currentWidth = cachedWidth > 0 ? cachedWidth : newWidth
+
+        widthAnimation = SpringAnimation(
+            from: Double(currentWidth),
+            to: Double(newWidth),
+            startTime: now,
+            config: config,
+            clock: clock,
+            displayRefreshRate: displayRefreshRate
+        )
+        targetWidth = newWidth
+    }
+
+    func tickWidthAnimation(at time: TimeInterval) -> Bool {
+        guard let anim = widthAnimation else { return false }
+
+        cachedWidth = CGFloat(anim.value(at: time))
+
+        if anim.isComplete(at: time) {
+            if let target = targetWidth {
+                cachedWidth = target
+            }
+            widthAnimation = nil
+            targetWidth = nil
+            return false
+        }
+        return true
+    }
+
+    var hasWidthAnimationRunning: Bool {
+        widthAnimation != nil
     }
 
     func resolveAndCacheWidth(workingAreaWidth: CGFloat, gaps: CGFloat) {
