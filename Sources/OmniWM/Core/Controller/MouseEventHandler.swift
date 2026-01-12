@@ -289,8 +289,21 @@ final class MouseEventHandler {
 
         guard isResizing else { return }
 
-        if let engine = controller.internalNiriEngine {
-            engine.interactiveResizeEnd()
+        if let engine = controller.internalNiriEngine,
+           let wsId = controller.activeWorkspace()?.id,
+           let monitor = controller.internalWorkspaceManager.monitor(for: wsId)
+        {
+            var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+            let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+            let gaps = CGFloat(controller.internalWorkspaceManager.gaps)
+
+            engine.interactiveResizeEnd(
+                state: &state,
+                workingFrame: workingFrame,
+                gaps: gaps
+            )
+            controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
+            controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
         }
 
         isResizing = false

@@ -367,7 +367,7 @@ final class CommandHandler {
         controller.internalLayoutRefreshController?.runLightSession {
             guard let engine = controller.internalNiriEngine else { return }
             guard let wsId = controller.activeWorkspace()?.id else { return }
-            let state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+            var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
 
             guard let currentId = state.selectedNodeId,
                   let windowNode = engine.findNode(by: currentId) as? NiriWindow,
@@ -383,10 +383,13 @@ final class CommandHandler {
             engine.toggleColumnWidth(
                 column,
                 forwards: forwards,
-                workingAreaWidth: workingFrame.width,
+                in: wsId,
+                state: &state,
+                workingFrame: workingFrame,
                 gaps: gaps
             )
-            controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
+            controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
+            controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
         }
     }
 
@@ -396,7 +399,7 @@ final class CommandHandler {
         controller.internalLayoutRefreshController?.runLightSession {
             guard let engine = controller.internalNiriEngine else { return }
             guard let wsId = controller.activeWorkspace()?.id else { return }
-            let state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+            var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
 
             guard let currentId = state.selectedNodeId,
                   let windowNode = engine.findNode(by: currentId) as? NiriWindow,
@@ -411,10 +414,13 @@ final class CommandHandler {
 
             engine.toggleFullWidth(
                 column,
-                workingAreaWidth: workingFrame.width,
+                in: wsId,
+                state: &state,
+                workingFrame: workingFrame,
                 gaps: gaps
             )
-            controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
+            controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
+            controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
         }
     }
 

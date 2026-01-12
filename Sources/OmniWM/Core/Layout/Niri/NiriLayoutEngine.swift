@@ -1945,12 +1945,12 @@ final class NiriLayoutEngine {
         guard let resize = interactiveResize else { return false }
 
         guard let windowNode = findNode(by: resize.windowId) as? NiriWindow else {
-            interactiveResizeEnd()
+            clearInteractiveResize()
             return false
         }
 
         guard let column = findColumn(containing: windowNode, in: resize.workspaceId) else {
-            interactiveResizeEnd()
+            clearInteractiveResize()
             return false
         }
 
@@ -2003,11 +2003,32 @@ final class NiriLayoutEngine {
         return changed
     }
 
-    func interactiveResizeEnd(windowId: NodeId? = nil) {
+    private func clearInteractiveResize() {
+        interactiveResize = nil
+    }
+
+    func interactiveResizeEnd(
+        windowId: NodeId? = nil,
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
+    ) {
         guard let resize = interactiveResize else { return }
 
         if let windowId, windowId != resize.windowId {
             return
+        }
+
+        if let windowNode = findNode(by: resize.windowId) as? NiriWindow {
+            ensureSelectionVisible(
+                node: windowNode,
+                in: resize.workspaceId,
+                state: &state,
+                edge: .left,
+                workingFrame: workingFrame,
+                gaps: gaps,
+                alwaysCenterSingleColumn: alwaysCenterSingleColumn
+            )
         }
 
         interactiveResize = nil
@@ -2282,7 +2303,9 @@ final class NiriLayoutEngine {
     func toggleColumnWidth(
         _ column: NiriContainer,
         forwards: Bool,
-        workingAreaWidth: CGFloat,
+        in workspaceId: WorkspaceDescriptor.ID,
+        state: inout ViewportState,
+        workingFrame: CGRect,
         gaps: CGFloat
     ) {
         guard !presetColumnWidths.isEmpty else { return }
@@ -2327,6 +2350,7 @@ final class NiriLayoutEngine {
         column.width = newWidth
         column.presetWidthIdx = nextIdx
 
+        let workingAreaWidth = workingFrame.width
         let targetPixels: CGFloat
         switch newWidth {
         case .proportion(let p):
@@ -2345,13 +2369,28 @@ final class NiriLayoutEngine {
         } else {
             column.cachedWidth = targetPixels
         }
+
+        if let window = column.windowNodes.first {
+            ensureSelectionVisible(
+                node: window,
+                in: workspaceId,
+                state: &state,
+                edge: .left,
+                workingFrame: workingFrame,
+                gaps: gaps,
+                alwaysCenterSingleColumn: alwaysCenterSingleColumn
+            )
+        }
     }
 
     func toggleFullWidth(
         _ column: NiriContainer,
-        workingAreaWidth: CGFloat,
+        in workspaceId: WorkspaceDescriptor.ID,
+        state: inout ViewportState,
+        workingFrame: CGRect,
         gaps: CGFloat
     ) {
+        let workingAreaWidth = workingFrame.width
         let targetPixels: CGFloat
         if column.isFullWidth {
             column.isFullWidth = false
@@ -2382,6 +2421,18 @@ final class NiriLayoutEngine {
         } else {
             column.cachedWidth = targetPixels
         }
+
+        if let window = column.windowNodes.first {
+            ensureSelectionVisible(
+                node: window,
+                in: workspaceId,
+                state: &state,
+                edge: .left,
+                workingFrame: workingFrame,
+                gaps: gaps,
+                alwaysCenterSingleColumn: alwaysCenterSingleColumn
+            )
+        }
     }
 
     func setWindowHeight(_ window: NiriWindow, height: WindowHeight) {
@@ -2411,7 +2462,7 @@ final class NiriLayoutEngine {
            let resizeColumn = findColumn(containing: resizeWindow, in: resize.workspaceId),
            resizeColumn.id == column.id
         {
-            interactiveResizeEnd()
+            clearInteractiveResize()
         }
 
         let windows = column.windowNodes
