@@ -1329,17 +1329,32 @@ final class NiriLayoutEngine {
         }
     }
 
-    func balanceSizes(in workspaceId: WorkspaceDescriptor.ID) {
+    func balanceSizes(
+        in workspaceId: WorkspaceDescriptor.ID,
+        workingAreaWidth: CGFloat,
+        gaps: CGFloat
+    ) {
         let cols = columns(in: workspaceId)
         guard !cols.isEmpty else { return }
 
         let balancedWidth = 1.0 / CGFloat(maxVisibleColumns)
+        let targetPixels = (workingAreaWidth - gaps) * balancedWidth
 
         for column in cols {
             column.width = .proportion(balancedWidth)
             column.isFullWidth = false
             column.presetWidthIdx = nil
-            column.cachedWidth = 0
+
+            if column.cachedWidth > 0 {
+                column.animateWidthTo(
+                    newWidth: targetPixels,
+                    clock: animationClock,
+                    config: windowMovementAnimationConfig,
+                    displayRefreshRate: displayRefreshRate
+                )
+            } else {
+                column.cachedWidth = targetPixels
+            }
 
             for window in column.windowNodes {
                 window.size = 1.0

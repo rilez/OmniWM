@@ -753,7 +753,15 @@ final class CommandHandler {
             guard let engine = controller.internalNiriEngine else { return }
             guard let wsId = controller.activeWorkspace()?.id else { return }
 
-            engine.balanceSizes(in: wsId)
+            guard let monitor = controller.internalWorkspaceManager.monitor(for: wsId) else { return }
+            let workingFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
+            let gaps = CGFloat(controller.internalWorkspaceManager.gaps)
+
+            engine.balanceSizes(
+                in: wsId,
+                workingAreaWidth: workingFrame.width,
+                gaps: gaps
+            )
             controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
         }
     }
