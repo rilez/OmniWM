@@ -4,13 +4,10 @@ import QuartzCore
 final class AnimationClock {
     private var currentTime: TimeInterval
     private var lastSeenTime: TimeInterval
-    let rate: Double = 1.0
-    private(set) var shouldCompleteInstantly: Bool
 
     init(time: TimeInterval = CACurrentMediaTime()) {
         currentTime = time
         lastSeenTime = time
-        shouldCompleteInstantly = false
     }
 
     func now() -> TimeInterval {
@@ -21,9 +18,5 @@ final class AnimationClock {
         currentTime += delta
         lastSeenTime = time
         return currentTime
-    }
-
-    func setCompleteInstantly(_ value: Bool) {
-        shouldCompleteInstantly = value
     }
 }

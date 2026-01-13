@@ -4,7 +4,6 @@ import Foundation
 
 final class AppAXContext: @unchecked Sendable {
     let pid: pid_t
-    let bundleId: String?
     let nsApp: NSRunningApplication
 
     private let axApp: ThreadGuardedValue<AXUIElement>
@@ -14,11 +13,6 @@ final class AppAXContext: @unchecked Sendable {
     private let axObserver: ThreadGuardedValue<AXObserver?>
     private let subscribedWindowIds: ThreadGuardedValue<Set<Int>>
 
-    var lastNativeFocusedWindowId: Int?
-
-    private var windowsCount: Int = 0
-
-    @MainActor private static var focusJob: RunLoopJob?
     @MainActor static var onWindowDestroyed: ((pid_t, Int) -> Void)?
     @MainActor static var onWindowDestroyedUnknown: (() -> Void)?
     @MainActor static var onFocusedWindowChanged: ((pid_t) -> Void)?
@@ -36,7 +30,6 @@ final class AppAXContext: @unchecked Sendable {
     ) {
         self.nsApp = nsApp
         pid = nsApp.processIdentifier
-        bundleId = nsApp.bundleIdentifier
         self.axApp = .init(axApp)
         windows = .init([:])
         axObserver = .init(observer)
@@ -232,17 +225,7 @@ final class AppAXContext: @unchecked Sendable {
             setFrameJobs.removeValue(forKey: deadWindowId)?.cancel()
         }
 
-        windowsCount = results.count
         return results
-    }
-
-    func setFrame(windowId: Int, frame: CGRect) {
-        setFrameJobs[windowId]?.cancel()
-        setFrameJobs[windowId] = thread?.runInLoopAsync { [windows] _ in
-            guard let element = windows[windowId] else { return }
-            let axRef = AXWindowRef(element: element, windowId: windowId)
-            try? AXWindowService.setFrame(axRef, frame: frame)
-        }
     }
 
     func setFramesBatch(_ frames: [(windowId: Int, frame: CGRect)]) {
@@ -285,17 +268,6 @@ final class AppAXContext: @unchecked Sendable {
         }
     }
 
-    @MainActor
-    func focus(windowId: Int) {
-        AppAXContext.focusJob?.cancel()
-        lastNativeFocusedWindowId = windowId
-        let wid = UInt32(windowId)
-        var psn = ProcessSerialNumber()
-        guard GetProcessForPID(pid, &psn) == noErr else { return }
-        _ = _SLPSSetFrontProcessWithOptions(&psn, wid, kCPSUserGenerated)
-        makeKeyWindow(psn: &psn, windowId: wid)
-    }
-
     func destroy() async {
         _ = await Task { @MainActor [pid] in
             _ = AppAXContext.contexts.removeValue(forKey: pid)
@@ -328,9 +300,6 @@ final class AppAXContext: @unchecked Sendable {
         }
     }
 }
-
-@_silgen_name("_AXUIElementGetWindow")
-private func _AXUIElementGetWindow(_ element: AXUIElement, _ out: UnsafeMutablePointer<Int>) -> AXError
 
 private func axWindowDestroyedCallback(
     _: AXObserver,

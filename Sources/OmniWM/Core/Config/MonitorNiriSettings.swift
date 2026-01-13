@@ -30,24 +30,6 @@ struct MonitorNiriSettings: Codable, Identifiable, Equatable {
         self.singleWindowAspectRatio = singleWindowAspectRatio
         self.infiniteLoop = infiniteLoop
     }
-
-    var isUsingAllGlobalDefaults: Bool {
-        maxVisibleColumns == nil &&
-            maxWindowsPerColumn == nil &&
-            centerFocusedColumn == nil &&
-            alwaysCenterSingleColumn == nil &&
-            singleWindowAspectRatio == nil &&
-            infiniteLoop == nil
-    }
-
-    mutating func resetToGlobalDefaults() {
-        maxVisibleColumns = nil
-        maxWindowsPerColumn = nil
-        centerFocusedColumn = nil
-        alwaysCenterSingleColumn = nil
-        singleWindowAspectRatio = nil
-        infiniteLoop = nil
-    }
 }
 
 struct ResolvedNiriSettings: Equatable {

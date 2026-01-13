@@ -37,8 +37,6 @@ final class SkyLight {
     private typealias ReenableUpdateFunc = @convention(c) (Int32) -> Void
     private typealias MoveWindowFunc = @convention(c) (Int32, UInt32, UnsafePointer<CGPoint>) -> CGError
     private typealias GetWindowBoundsFunc = @convention(c) (Int32, UInt32, UnsafeMutablePointer<CGRect>) -> CGError
-    private typealias WindowIsOrderedInFunc = @convention(c) (Int32, UInt32, UnsafeMutablePointer<UInt8>) -> CGError
-    private typealias GetWindowLevelFunc = @convention(c) (Int32, UInt32, UnsafeMutablePointer<Int32>) -> CGError
     private typealias NewWindowFunc = @convention(c) (Int32, Int32, Float, Float, CFTypeRef, UnsafeMutablePointer<UInt32>) -> CGError
     private typealias ReleaseWindowFunc = @convention(c) (Int32, UInt32) -> CGError
     private typealias WindowContextCreateFunc = @convention(c) (Int32, UInt32, CFDictionary?) -> CGContext?
@@ -47,7 +45,6 @@ final class SkyLight {
     private typealias SetWindowOpacityFunc = @convention(c) (Int32, UInt32, Int32) -> CGError
     private typealias SetWindowAlphaFunc = @convention(c) (Int32, UInt32, Float) -> CGError
     private typealias SetWindowTagsFunc = @convention(c) (Int32, UInt32, UnsafePointer<UInt64>, Int32) -> CGError
-    private typealias ClearWindowTagsFunc = @convention(c) (Int32, UInt32, UnsafePointer<UInt64>, Int32) -> CGError
     private typealias FlushWindowContentRegionFunc = @convention(c) (Int32, UInt32, CFTypeRef?) -> CGError
     private typealias NewRegionWithRectFunc = @convention(c) (UnsafePointer<CGRect>, UnsafeMutablePointer<CFTypeRef?>) -> CGError
     private typealias TransactionSetWindowLevelFunc = @convention(c) (CFTypeRef, UInt32, Int32) -> CGError
@@ -109,8 +106,6 @@ final class SkyLight {
     private let reenableUpdate: ReenableUpdateFunc
     private let moveWindow: MoveWindowFunc?
     private let getWindowBounds: GetWindowBoundsFunc?
-    private let windowIsOrderedIn: WindowIsOrderedInFunc?
-    private let getWindowLevel: GetWindowLevelFunc?
     private let registerConnectionNotifyProc: RegisterConnectionNotifyProcFunc?
     private let unregisterConnectionNotifyProc: UnregisterConnectionNotifyProcFunc?
     private let requestNotificationsForWindows: RequestNotificationsForWindowsFunc?
@@ -123,7 +118,6 @@ final class SkyLight {
     private let setWindowOpacity: SetWindowOpacityFunc?
     private let setWindowAlpha: SetWindowAlphaFunc?
     private let setWindowTags: SetWindowTagsFunc?
-    private let clearWindowTags: ClearWindowTagsFunc?
     private let flushWindowContentRegion: FlushWindowContentRegionFunc?
     private let newRegionWithRect: NewRegionWithRectFunc?
     private let transactionSetWindowLevel: TransactionSetWindowLevelFunc?
@@ -190,8 +184,6 @@ final class SkyLight {
         )
         moveWindow = unsafeBitCast(dlsym(lib, "SLSMoveWindow"), to: MoveWindowFunc?.self)
         getWindowBounds = unsafeBitCast(dlsym(lib, "SLSGetWindowBounds"), to: GetWindowBoundsFunc?.self)
-        windowIsOrderedIn = unsafeBitCast(dlsym(lib, "SLSWindowIsOrderedIn"), to: WindowIsOrderedInFunc?.self)
-        getWindowLevel = unsafeBitCast(dlsym(lib, "SLSGetWindowLevel"), to: GetWindowLevelFunc?.self)
 
         windowIteratorGetBounds = unsafeBitCast(
             dlsym(lib, "SLSWindowIteratorGetBounds"),
@@ -247,13 +239,10 @@ final class SkyLight {
         setWindowOpacity = unsafeBitCast(dlsym(lib, "SLSSetWindowOpacity"), to: SetWindowOpacityFunc?.self)
         setWindowAlpha = unsafeBitCast(dlsym(lib, "SLSSetWindowAlpha"), to: SetWindowAlphaFunc?.self)
         setWindowTags = unsafeBitCast(dlsym(lib, "SLSSetWindowTags"), to: SetWindowTagsFunc?.self)
-        clearWindowTags = unsafeBitCast(dlsym(lib, "SLSClearWindowTags"), to: ClearWindowTagsFunc?.self)
         flushWindowContentRegion = unsafeBitCast(dlsym(lib, "SLSFlushWindowContentRegion"), to: FlushWindowContentRegionFunc?.self)
         newRegionWithRect = unsafeBitCast(dlsym(lib, "CGSNewRegionWithRect"), to: NewRegionWithRectFunc?.self)
         transactionSetWindowLevel = unsafeBitCast(dlsym(lib, "SLSTransactionSetWindowLevel"), to: TransactionSetWindowLevelFunc?.self)
     }
-
-    var cid: Int32 { getMainConnectionID() }
 
     func getMainConnectionID() -> Int32 {
         mainConnectionID()
@@ -291,85 +280,12 @@ final class SkyLight {
         return CGFloat(radius)
     }
 
-    func cornerRadii(forWindowId wid: Int) -> CornerRadius? {
-        let cid = getMainConnectionID()
-        guard cid != 0 else { return nil }
-
-        var widValue = Int32(wid)
-        let widNumber = CFNumberCreate(nil, .sInt32Type, &widValue)!
-        defer { cfRelease(widNumber) }
-        let windowArray = [widNumber] as CFArray
-
-        guard let query = windowQueryWindows(cid, windowArray, 0) else { return nil }
-        defer { cfRelease(query) }
-        guard let iterator = windowQueryResultCopyWindows(query) else { return nil }
-        defer { cfRelease(iterator) }
-
-        guard windowIteratorGetCount(iterator) > 0,
-              windowIteratorAdvance(iterator),
-              let radii = windowIteratorGetCornerRadii(iterator)
-        else {
-            return nil
-        }
-
-        let count = CFArrayGetCount(radii)
-        guard count > 0 else { return nil }
-
-        func getRadius(at index: Int) -> CGFloat {
-            guard index < count else { return 0 }
-            var radius: Int32 = 0
-            let value = CFArrayGetValueAtIndex(radii, index)
-            if CFNumberGetValue(unsafeBitCast(value, to: CFNumber.self), .sInt32Type, &radius), radius >= 0 {
-                return CGFloat(radius)
-            }
-            return 0
-        }
-
-        if count >= 4 {
-            return CornerRadius(
-                topLeft: getRadius(at: 0),
-                topRight: getRadius(at: 1),
-                bottomLeft: getRadius(at: 2),
-                bottomRight: getRadius(at: 3)
-            )
-        } else {
-            let uniform = getRadius(at: 0)
-            return CornerRadius(uniform: uniform)
-        }
-    }
-
-    func disableUpdates() {
-        let cid = getMainConnectionID()
-        disableUpdate(cid)
-    }
-
-    func reenableUpdates() {
-        let cid = getMainConnectionID()
-        reenableUpdate(cid)
-    }
-
     func orderWindow(_ wid: UInt32, relativeTo targetWid: UInt32, order: SkyLightWindowOrder = .above) {
         let cid = getMainConnectionID()
         guard let transaction = transactionCreate(cid) else {
             fatalError("Failed to create SkyLight transaction")
         }
         defer { cfRelease(transaction) }
-        transactionOrderWindow(transaction, wid, order.rawValue, targetWid)
-        _ = transactionCommit(transaction, 0)
-    }
-
-    func moveAndOrderWindow(
-        _ wid: UInt32,
-        to origin: CGPoint,
-        relativeTo targetWid: UInt32,
-        order: SkyLightWindowOrder = .above
-    ) {
-        let cid = getMainConnectionID()
-        guard let transaction = transactionCreate(cid) else { return }
-        defer { cfRelease(transaction) }
-        if let transactionMoveWindowWithGroup {
-            _ = transactionMoveWindowWithGroup(transaction, wid, origin)
-        }
         transactionOrderWindow(transaction, wid, order.rawValue, targetWid)
         _ = transactionCommit(transaction, 0)
     }
@@ -391,35 +307,6 @@ final class SkyLight {
         let result = getWindowBounds(cid, wid, &rect)
         guard result == .success else { return nil }
         return rect
-    }
-
-    func isWindowOrderedIn(_ wid: UInt32) -> Bool {
-        guard let windowIsOrderedIn else { return true }
-        let cid = getMainConnectionID()
-        guard cid != 0 else { return true }
-        var ordered: UInt8 = 0
-        let result = windowIsOrderedIn(cid, wid, &ordered)
-        guard result == .success else { return true }
-        return ordered != 0
-    }
-
-    func windowLevel(_ wid: UInt32) -> Int32? {
-        guard let getWindowLevel else { return nil }
-        let cid = getMainConnectionID()
-        guard cid != 0 else { return nil }
-        var level: Int32 = 0
-        let result = getWindowLevel(cid, wid, &level)
-        guard result == .success else { return nil }
-        return level
-    }
-
-    func createTransaction() -> CFTypeRef? {
-        let cid = getMainConnectionID()
-        return transactionCreate(cid)
-    }
-
-    func commitTransaction(_ transaction: CFTypeRef) {
-        _ = transactionCommit(transaction, 0)
     }
 
     func batchMoveWindows(_ positions: [(windowId: UInt32, origin: CGPoint)]) {
@@ -609,30 +496,6 @@ final class SkyLight {
         return title
     }
 
-    func getAllWindowTitles() -> [UInt32: String] {
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
-        else { return [:] }
-
-        var titles: [UInt32: String] = [:]
-        for info in windowList {
-            guard let windowId = info[kCGWindowNumber as String] as? UInt32,
-                  let title = info[kCGWindowName as String] as? String,
-                  !title.isEmpty
-            else { continue }
-            titles[windowId] = title
-        }
-        return titles
-    }
-
-    func createRegion(for rect: CGRect) -> CFTypeRef? {
-        guard let newRegionWithRect else { return nil }
-        var region: CFTypeRef?
-        var r = rect
-        _ = newRegionWithRect(&r, &region)
-        return region
-    }
-
     func createBorderWindow(frame: CGRect) -> UInt32 {
         guard let newWindow, let newRegionWithRect else { return 0 }
         let cid = getMainConnectionID()
@@ -734,17 +597,9 @@ enum CGSEventType: UInt32 {
     case windowClosed = 804
     case windowMoved = 806
     case windowResized = 807
-    case windowReordered = 808
-    case windowLevelChanged = 811
-    case windowUnhidden = 815
-    case windowHidden = 816
     case windowTitleChanged = 1322
     case spaceWindowCreated = 1325
     case spaceWindowDestroyed = 1326
-    case spaceCreated = 1327
-    case spaceDestroyed = 1328
-    case workspaceWillChange = 1400
-    case workspaceDidChange = 1401
     case frontmostApplicationChanged = 1508
     case all = 0xFFFF_FFFF
 }
@@ -760,12 +615,3 @@ struct WindowServerInfo {
     var title: String?
 }
 
-struct SLSWindowTags: OptionSet, Sendable {
-    let rawValue: UInt64
-
-    static let document = SLSWindowTags(rawValue: 1 << 0)
-    static let floating = SLSWindowTags(rawValue: 1 << 1)
-    static let attached = SLSWindowTags(rawValue: 1 << 7)
-    static let sticky = SLSWindowTags(rawValue: 1 << 11)
-    static let modal = SLSWindowTags(rawValue: 1 << 31)
-}

@@ -45,34 +45,6 @@ struct MonitorBarSettings: Codable, Identifiable, Equatable {
         self.xOffset = xOffset
         self.yOffset = yOffset
     }
-
-    var isUsingAllGlobalDefaults: Bool {
-        enabled == nil &&
-            showLabels == nil &&
-            deduplicateAppIcons == nil &&
-            hideEmptyWorkspaces == nil &&
-            notchAware == nil &&
-            position == nil &&
-            windowLevel == nil &&
-            height == nil &&
-            backgroundOpacity == nil &&
-            xOffset == nil &&
-            yOffset == nil
-    }
-
-    mutating func resetToGlobalDefaults() {
-        enabled = nil
-        showLabels = nil
-        deduplicateAppIcons = nil
-        hideEmptyWorkspaces = nil
-        notchAware = nil
-        position = nil
-        windowLevel = nil
-        height = nil
-        backgroundOpacity = nil
-        xOffset = nil
-        yOffset = nil
-    }
 }
 
 struct ResolvedBarSettings {

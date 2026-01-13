@@ -39,11 +39,6 @@ final class SwipeTracker {
         return position - v / coeff
     }
 
-    func reset() {
-        history.removeAll()
-        position = 0
-    }
-
     private func trimHistory(currentTime: TimeInterval) {
         let cutoff = currentTime - Self.historyLimit
         history.removeAll { $0.timestamp < cutoff }

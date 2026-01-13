@@ -32,32 +32,12 @@ enum AXErrorWrapper: Error {
     case cannotSetFrame
     case cannotGetAttribute
     case cannotGetWindowId
-    case cannotGetRole
 }
 
 enum AXWindowService {
-    static func role(_ window: AXWindowRef) throws(AXErrorWrapper) -> String {
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(window.element, kAXRoleAttribute as CFString, &value)
-        guard result == .success, let role = value as? String else { throw .cannotGetRole }
-        return role
-    }
-
-    static func title(_ window: AXWindowRef) throws(AXErrorWrapper) -> String {
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(window.element, kAXTitleAttribute as CFString, &value)
-        guard result == .success, let title = value as? String else { throw .cannotGetAttribute }
-        return title
-    }
-
     @MainActor
     static func titlePreferFast(windowId: UInt32) -> String? {
         SkyLight.shared.getWindowTitle(windowId)
-    }
-
-    @MainActor
-    static func titlePreferFast(_ window: AXWindowRef) -> String? {
-        SkyLight.shared.getWindowTitle(UInt32(windowId(window)))
     }
 
     static func windowId(_ window: AXWindowRef) -> Int {
@@ -80,11 +60,6 @@ enum AXWindowService {
         guard AXValueGetValue(posRaw as! AXValue, .cgPoint, &pos),
               AXValueGetValue(sizeRaw as! AXValue, .cgSize, &size) else { throw .cannotGetAttribute }
         return convertFromAX(CGRect(origin: pos, size: size))
-    }
-
-    @MainActor
-    static func fastFrame(windowId: UInt32) -> CGRect? {
-        SkyLight.shared.getWindowBounds(windowId)
     }
 
     @MainActor
@@ -124,10 +99,6 @@ enum AXWindowService {
         return frame
     }
 
-    static func invalidateGlobalFrameCache() {
-        _cachedGlobalFrame = nil
-    }
-
     private static func convertFromAX(_ rect: CGRect) -> CGRect {
         let global = globalFrame
         let flippedY = global.maxY - (rect.origin.y + rect.size.height)
@@ -145,55 +116,6 @@ enum AXWindowService {
         let result = AXUIElementCopyAttributeValue(window.element, kAXSubroleAttribute as CFString, &value)
         guard result == .success, let subrole = value as? String else { return nil }
         return subrole
-    }
-
-    static func hasButton(_ window: AXWindowRef, button: CFString) -> Bool {
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(window.element, button, &value)
-        return result == .success && value != nil
-    }
-
-    static func isButtonEnabled(_ window: AXWindowRef, button: CFString) -> Bool {
-        var buttonValue: CFTypeRef?
-        let buttonResult = AXUIElementCopyAttributeValue(window.element, button, &buttonValue)
-        guard buttonResult == .success, let buttonElement = buttonValue else { return false }
-
-        var enabledValue: CFTypeRef?
-        let enabledResult = AXUIElementCopyAttributeValue(
-            buttonElement as! AXUIElement,
-            kAXEnabledAttribute as CFString,
-            &enabledValue
-        )
-        guard enabledResult == .success, let enabled = enabledValue as? Bool else { return false }
-        return enabled
-    }
-
-    static func hasFullscreenButton(_ window: AXWindowRef) -> Bool {
-        isButtonEnabled(window, button: kAXFullScreenButtonAttribute as CFString)
-    }
-
-    static func hasCloseButton(_ window: AXWindowRef) -> Bool {
-        hasButton(window, button: kAXCloseButtonAttribute as CFString)
-    }
-
-    static func isPopup(_ window: AXWindowRef, appPolicy: NSApplication.ActivationPolicy?) -> Bool {
-        if appPolicy == .accessory && !hasButton(window, button: kAXCloseButtonAttribute as CFString) {
-            return true
-        }
-
-        let hasAnyButton = hasButton(window, button: kAXCloseButtonAttribute as CFString) ||
-            hasButton(window, button: kAXFullScreenButtonAttribute as CFString) ||
-            hasButton(window, button: kAXZoomButtonAttribute as CFString) ||
-            hasButton(window, button: kAXMinimizeButtonAttribute as CFString)
-
-        if !hasAnyButton {
-            let sub = subrole(window)
-            if sub != kAXStandardWindowSubrole as String {
-                return true
-            }
-        }
-
-        return false
     }
 
     static func isFullscreen(_ window: AXWindowRef) -> Bool {
@@ -225,31 +147,6 @@ enum AXWindowService {
             window.element,
             fullScreenAttribute,
             fullscreen as CFBoolean
-        )
-        return result == .success
-    }
-
-    static func isMinimized(_ window: AXWindowRef) -> Bool {
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(
-            window.element,
-            kAXMinimizedAttribute as CFString,
-            &value
-        )
-        guard result == .success, let boolValue = value as? Bool else { return false }
-        return boolValue
-    }
-
-    @MainActor
-    static func isMinimizedPreferFast(_ window: AXWindowRef) -> Bool {
-        !SkyLight.shared.isWindowOrderedIn(UInt32(windowId(window)))
-    }
-
-    static func setMinimized(_ window: AXWindowRef, minimized: Bool) -> Bool {
-        let result = AXUIElementSetAttributeValue(
-            window.element,
-            kAXMinimizedAttribute as CFString,
-            minimized as CFBoolean
         )
         return result == .success
     }
@@ -326,34 +223,6 @@ enum AXWindowService {
         }
 
         return .tiling
-    }
-
-    static func isResizable(_ window: AXWindowRef) -> Bool {
-        var value: CFTypeRef?
-
-        let growResult = AXUIElementCopyAttributeValue(
-            window.element,
-            "AXGrowArea" as CFString,
-            &value
-        )
-        if growResult == .success, value != nil {
-            return true
-        }
-
-        let zoomResult = AXUIElementCopyAttributeValue(
-            window.element,
-            kAXZoomButtonAttribute as CFString,
-            &value
-        )
-        if zoomResult == .success, value != nil {
-            return true
-        }
-
-        if let subrole = subrole(window), subrole == (kAXStandardWindowSubrole as String) {
-            return true
-        }
-
-        return false
     }
 
     static func sizeConstraints(_ window: AXWindowRef, currentSize: CGSize? = nil) -> WindowSizeConstraints {

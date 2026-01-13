@@ -29,23 +29,7 @@ final class AppInfoCache {
         info(for: pid)?.name
     }
 
-    func icon(for pid: pid_t) -> NSImage? {
-        info(for: pid)?.icon
-    }
-
     func bundleId(for pid: pid_t) -> String? {
         info(for: pid)?.bundleId
-    }
-
-    func activationPolicy(for pid: pid_t) -> NSApplication.ActivationPolicy? {
-        info(for: pid)?.activationPolicy
-    }
-
-    func invalidate(pid: pid_t) {
-        cache.removeValue(forKey: pid)
-    }
-
-    func invalidateAll() {
-        cache.removeAll()
     }
 }

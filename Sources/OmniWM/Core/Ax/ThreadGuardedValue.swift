@@ -57,14 +57,6 @@ final class ThreadGuardedValue<Value>: Sendable {
     }
 
     @inlinable
-    func withValue<R>(_ body: (inout Value) -> R) -> R {
-        #if DEBUG
-        threadToken.checkEquals(appThreadToken)
-        #endif
-        return body(&_value!)
-    }
-
-    @inlinable
     subscript<K: Hashable, V>(key: K) -> V? where Value == [K: V] {
         get {
             #if DEBUG
@@ -108,28 +100,10 @@ final class ThreadGuardedValue<Value>: Sendable {
 
 extension ThreadGuardedValue {
     @inlinable
-    func dictKeys<K: Hashable, V>() -> Dictionary<K, V>.Keys where Value == [K: V] {
-        #if DEBUG
-        threadToken.checkEquals(appThreadToken)
-        #endif
-        return _value!.keys
-    }
-
-    @inlinable
     func forEachKey<K: Hashable, V>(_ body: (K) -> Void) where Value == [K: V] {
         #if DEBUG
         threadToken.checkEquals(appThreadToken)
         #endif
         _value?.keys.forEach(body)
-    }
-}
-
-extension ThreadGuardedValue where Value: Collection {
-    @inlinable
-    var keyCount: Int {
-        #if DEBUG
-        threadToken.checkEquals(appThreadToken)
-        #endif
-        return _value?.count ?? 0
     }
 }

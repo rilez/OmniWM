@@ -11,16 +11,4 @@ enum SettingsMigration {
         let applied = Patches(rawValue: defaults.integer(forKey: patchesKey))
         _ = applied
     }
-
-    private static func runPatch(
-        _ patch: Patches,
-        applied: Patches,
-        defaults: UserDefaults,
-        action: () -> Void
-    ) {
-        guard !applied.contains(patch) else { return }
-        action()
-        let newApplied = applied.union(patch)
-        defaults.set(newApplied.rawValue, forKey: patchesKey)
-    }
 }

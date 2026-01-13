@@ -4,18 +4,15 @@ struct BorderConfig: Equatable {
     var enabled: Bool
     var width: CGFloat
     var color: NSColor
-    var thickenCorners: Bool
 
     init(
         enabled: Bool = false,
         width: CGFloat = 4.0,
-        color: NSColor = .systemBlue,
-        thickenCorners: Bool = true
+        color: NSColor = .systemBlue
     ) {
         self.enabled = enabled
         self.width = width
         self.color = color
-        self.thickenCorners = thickenCorners
     }
 
     @MainActor static func from(settings: SettingsStore) -> BorderConfig {
@@ -28,8 +25,7 @@ struct BorderConfig: Equatable {
         return BorderConfig(
             enabled: settings.bordersEnabled,
             width: CGFloat(settings.borderWidth),
-            color: color,
-            thickenCorners: true
+            color: color
         )
     }
 }

@@ -19,12 +19,6 @@ final class RunLoopJob: Sendable {
         }
     }
 
-    static let cancelled: RunLoopJob = {
-        let job = RunLoopJob()
-        job.cancel()
-        return job
-    }()
-
     func checkCancellation() throws {
         if isCancelled {
             throw CancellationError()

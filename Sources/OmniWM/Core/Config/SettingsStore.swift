@@ -590,15 +590,6 @@ final class SettingsStore {
         monitorBarSettings.first { $0.monitorName == monitorName }
     }
 
-    func getOrCreateBarSettings(for monitorName: String) -> MonitorBarSettings {
-        if let existing = barSettings(for: monitorName) {
-            return existing
-        }
-        let newSettings = MonitorBarSettings(monitorName: monitorName)
-        monitorBarSettings.append(newSettings)
-        return newSettings
-    }
-
     func updateBarSettings(_ settings: MonitorBarSettings) {
         if let index = monitorBarSettings.firstIndex(where: { $0.monitorName == settings.monitorName }) {
             monitorBarSettings[index] = settings

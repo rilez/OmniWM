@@ -141,11 +141,6 @@ final class BorderWindow {
         SkyLight.shared.transactionHide(wid)
     }
 
-    func show(relativeTo targetWid: UInt32) {
-        guard wid != 0 else { return }
-        moveAndOrder(relativeTo: targetWid)
-    }
-
     func updateConfig(_ newConfig: BorderConfig) {
         let needsRedrawForColor = config.color != newConfig.color
         let needsRedrawForWidth = config.width != newConfig.width

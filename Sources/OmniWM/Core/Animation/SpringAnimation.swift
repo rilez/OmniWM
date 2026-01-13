@@ -27,7 +27,6 @@ final class SpringAnimation {
     private let initialVelocity: Double
     private let startTime: TimeInterval
     let config: SpringConfig
-    private let clock: AnimationClock?
     private let displayRefreshRate: Double
 
     private let spring: Spring
@@ -46,21 +45,14 @@ final class SpringAnimation {
         target = to
         self.startTime = startTime
         self.config = config
-        self.clock = clock
         self.displayRefreshRate = displayRefreshRate
-
-        let scaledVelocity = initialVelocity / max(clock?.rate ?? 1.0, 0.001)
-        self.initialVelocity = scaledVelocity
+        self.initialVelocity = initialVelocity
 
         spring = config.appleSpring
         displacement = to - from
     }
 
     func value(at time: TimeInterval) -> Double {
-        if clock?.shouldCompleteInstantly ?? false {
-            return target
-        }
-
         let elapsed = max(0, time - startTime)
 
         let springValue = spring.value(
@@ -73,10 +65,6 @@ final class SpringAnimation {
     }
 
     func isComplete(at time: TimeInterval) -> Bool {
-        if clock?.shouldCompleteInstantly ?? false {
-            return true
-        }
-
         let position = value(at: time)
         let currentVelocity = velocity(at: time)
 
@@ -88,10 +76,6 @@ final class SpringAnimation {
         let velocitySettled = abs(currentVelocity) < scaledVelocityEpsilon
 
         return positionSettled && velocitySettled
-    }
-
-    func duration() -> TimeInterval {
-        spring.settlingDuration
     }
 
     func velocity(at time: TimeInterval) -> Double {

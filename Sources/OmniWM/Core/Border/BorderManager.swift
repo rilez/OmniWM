@@ -5,7 +5,6 @@ import Foundation
 final class BorderManager {
     private var borderWindow: BorderWindow?
     private var config: BorderConfig
-    private var currentWindowId: Int?
     private var lastAppliedFrame: CGRect?
     private var lastAppliedWindowId: Int?
 
@@ -58,7 +57,6 @@ final class BorderManager {
 
         let targetWid = UInt32(windowId)
         borderWindow?.update(frame: frame, targetWid: targetWid)
-        currentWindowId = windowId
         lastAppliedFrame = frame
         lastAppliedWindowId = windowId
     }

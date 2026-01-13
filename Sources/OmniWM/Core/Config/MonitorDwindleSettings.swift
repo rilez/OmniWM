@@ -43,32 +43,6 @@ struct MonitorDwindleSettings: Codable, Identifiable, Equatable {
         self.outerGapLeft = outerGapLeft
         self.outerGapRight = outerGapRight
     }
-
-    var isUsingAllGlobalDefaults: Bool {
-        smartSplit == nil &&
-            defaultSplitRatio == nil &&
-            splitWidthMultiplier == nil &&
-            singleWindowAspectRatio == nil &&
-            useGlobalGaps == nil &&
-            innerGap == nil &&
-            outerGapTop == nil &&
-            outerGapBottom == nil &&
-            outerGapLeft == nil &&
-            outerGapRight == nil
-    }
-
-    mutating func resetToGlobalDefaults() {
-        smartSplit = nil
-        defaultSplitRatio = nil
-        splitWidthMultiplier = nil
-        singleWindowAspectRatio = nil
-        useGlobalGaps = nil
-        innerGap = nil
-        outerGapTop = nil
-        outerGapBottom = nil
-        outerGapLeft = nil
-        outerGapRight = nil
-    }
 }
 
 struct ResolvedDwindleSettings: Equatable {

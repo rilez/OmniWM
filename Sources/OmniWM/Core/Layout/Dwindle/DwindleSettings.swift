@@ -24,8 +24,4 @@ struct DwindleSettings {
         let clamped = clampedRatio(ratio)
         return min(max(clamped / 2.0, 0.05), 0.95)
     }
-
-    func fractionToRatio(_ fraction: CGFloat) -> CGFloat {
-        clampedRatio(fraction * 2.0)
-    }
 }
