@@ -53,6 +53,8 @@ final class DwindleNode {
     var kind: DwindleNodeKind
     var cachedFrame: CGRect?
 
+    var cachedMinSize: CGSize?
+
     var moveXAnimation: CubicMoveAnimation?
     var moveYAnimation: CubicMoveAnimation?
     var sizeWAnimation: CubicMoveAnimation?

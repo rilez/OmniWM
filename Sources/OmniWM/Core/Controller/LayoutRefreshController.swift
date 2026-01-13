@@ -914,6 +914,30 @@ final class LayoutRefreshController {
 
             _ = engine.syncWindows(windowHandles, in: wsId, focusedHandle: focusedHandle)
 
+            for entry in workspaceManager.entries(in: wsId) {
+                let currentSize = (AXWindowService.framePreferFast(entry.axRef))?.size
+                var constraints: WindowSizeConstraints
+                if let cached = workspaceManager.cachedConstraints(for: entry.handle) {
+                    constraints = cached
+                } else {
+                    constraints = AXWindowService.sizeConstraints(entry.axRef, currentSize: currentSize)
+                    workspaceManager.setCachedConstraints(constraints, for: entry.handle)
+                }
+
+                if let bundleId = controller.appInfoCache.bundleId(for: entry.handle.pid),
+                   let rule = controller.internalAppRulesByBundleId[bundleId]
+                {
+                    if let minW = rule.minWidth {
+                        constraints.minSize.width = max(constraints.minSize.width, minW)
+                    }
+                    if let minH = rule.minHeight {
+                        constraints.minSize.height = max(constraints.minSize.height, minH)
+                    }
+                }
+
+                engine.updateWindowConstraints(for: entry.handle, constraints: constraints)
+            }
+
             let insetFrame = controller.insetWorkingFrame(from: monitor.visibleFrame)
 
             let newFrames = engine.calculateLayout(for: wsId, screen: insetFrame)
