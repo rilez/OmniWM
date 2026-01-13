@@ -678,6 +678,10 @@ final class DwindleLayoutEngine {
         current.kind = .leaf(handle: nh, fullscreen: neighborFullscreen)
         neighbor.kind = .leaf(handle: currentHandle, fullscreen: currentFullscreen)
 
+        let currentCachedFrame = current.cachedFrame
+        current.cachedFrame = neighbor.cachedFrame
+        neighbor.cachedFrame = currentCachedFrame
+
         windowToNode[ch] = neighbor
         if let nh {
             windowToNode[nh] = current
