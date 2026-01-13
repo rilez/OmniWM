@@ -113,6 +113,13 @@ final class WindowModel {
         return entries[handle]
     }
 
+    func entry(forWindowId windowId: Int, inVisibleWorkspaces visibleIds: Set<WorkspaceDescriptor.ID>) -> Entry? {
+        guard let handle = windowIdToHandle[windowId] else { return nil }
+        guard let entry = entries[handle] else { return nil }
+        guard visibleIds.contains(entry.workspaceId) else { return nil }
+        return entry
+    }
+
     func allEntries() -> [Entry] {
         Array(entries.values)
     }

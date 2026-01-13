@@ -186,6 +186,13 @@ final class WorkspaceManager {
         windows.entry(forWindowId: windowId)
     }
 
+    func entry(forWindowId windowId: Int, inVisibleWorkspaces: Bool) -> WindowModel.Entry? {
+        guard inVisibleWorkspaces else {
+            return windows.entry(forWindowId: windowId)
+        }
+        return windows.entry(forWindowId: windowId, inVisibleWorkspaces: visibleWorkspaceIds())
+    }
+
     func allEntries() -> [WindowModel.Entry] {
         windows.allEntries()
     }

@@ -139,6 +139,10 @@ final class LayoutRefreshController {
         stopDisplayLinkIfIdle()
     }
 
+    func hasDwindleAnimationRunning(in workspaceId: WorkspaceDescriptor.ID) -> Bool {
+        isDwindleAnimationRunning && dwindleAnimationWorkspaceId == workspaceId
+    }
+
     private func stopDisplayLinkIfIdle() {
         if !isScrollAnimationRunning && !isDwindleAnimationRunning {
             activeDisplayLink?.remove(from: .main, forMode: .common)
@@ -938,6 +942,12 @@ final class LayoutRefreshController {
             let now = CACurrentMediaTime()
             if engine.hasActiveAnimations(in: wsId, at: now) {
                 startDwindleAnimation(for: wsId, monitor: monitor)
+
+                if let focusedHandle = controller.internalFocusedHandle,
+                   let frame = newFrames[focusedHandle],
+                   let entry = workspaceManager.entry(for: focusedHandle) {
+                    controller.internalBorderManager.updateFocusedWindow(frame: frame, windowId: entry.windowId)
+                }
             } else {
                 var frameUpdates: [(pid: pid_t, windowId: Int, frame: CGRect)] = []
 

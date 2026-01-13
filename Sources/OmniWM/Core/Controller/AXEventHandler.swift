@@ -87,9 +87,14 @@ final class AXEventHandler: CGSEventDelegate {
     private func handleCGSWindowDestroyed(windowId: UInt32) {
         guard let controller else { return }
 
-        if let entry = controller.internalWorkspaceManager.entry(forWindowId: Int(windowId)) {
-            handleRemoved(pid: entry.handle.pid, winId: Int(windowId))
+        guard let entry = controller.internalWorkspaceManager.entry(
+            forWindowId: Int(windowId),
+            inVisibleWorkspaces: true
+        ) else {
+            return
         }
+
+        handleRemoved(pid: entry.handle.pid, winId: Int(windowId))
     }
 
     func subscribeToManagedWindows() {
@@ -155,6 +160,24 @@ final class AXEventHandler: CGSEventDelegate {
         let affectedWorkspaceId = entry?.workspaceId
         let removedHandle = entry?.handle
 
+        let needsFocusRecovery = removedHandle?.id == controller.internalFocusedHandle?.id
+
+        if let removed = removedHandle {
+            if pendingFocusHandle?.id == removed.id {
+                pendingFocusHandle = nil
+            }
+            if deferredFocusHandle?.id == removed.id {
+                deferredFocusHandle = nil
+            }
+            if controller.internalFocusedHandle?.id == removed.id {
+                controller.internalFocusedHandle = nil
+            }
+            if let wsId = affectedWorkspaceId,
+               controller.internalLastFocusedByWorkspace[wsId]?.id == removed.id {
+                controller.internalLastFocusedByWorkspace[wsId] = nil
+            }
+        }
+
         var oldFrames: [WindowHandle: CGRect] = [:]
         var removedNodeId: NodeId?
         if let wsId = affectedWorkspaceId, let engine = controller.internalNiriEngine {
@@ -166,9 +189,13 @@ final class AXEventHandler: CGSEventDelegate {
 
         controller.internalWorkspaceManager.removeWindow(pid: pid, windowId: winId)
 
+        if needsFocusRecovery, let wsId = affectedWorkspaceId {
+            ensureFocusedHandleValid(in: wsId)
+        }
+
         if let wsId = affectedWorkspaceId {
-            Task { @MainActor [weak self, weak controller] in
-                guard let self, let controller else { return }
+            Task { @MainActor [weak controller] in
+                guard let controller else { return }
 
                 await controller.internalLayoutRefreshController?.layoutWithNiriEngine(
                     activeWorkspaces: [wsId],
@@ -189,10 +216,6 @@ final class AXEventHandler: CGSEventDelegate {
                     if animationsTriggered || hasWindowAnimations || hasColumnAnimations {
                         controller.internalLayoutRefreshController?.startScrollAnimation(for: wsId)
                     }
-                }
-
-                if let removed = removedHandle, removed.id == controller.internalFocusedHandle?.id {
-                    self.ensureFocusedHandleValid(in: wsId)
                 }
             }
         }
@@ -339,7 +362,9 @@ final class AXEventHandler: CGSEventDelegate {
             isFocusOperationPending = false
             if let deferred = deferredFocusHandle, deferred != handle {
                 deferredFocusHandle = nil
-                focusWindow(deferred)
+                if controller.internalWorkspaceManager.entry(for: deferred) != nil {
+                    focusWindow(deferred)
+                }
             }
         }
     }
@@ -372,6 +397,7 @@ final class AXEventHandler: CGSEventDelegate {
                 state.selectedNodeId = node.id
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: workspaceId)
             }
+            focusWindow(remembered)
             return
         }
         let newHandle = controller.internalWorkspaceManager.entries(in: workspaceId).first?.handle
@@ -385,6 +411,7 @@ final class AXEventHandler: CGSEventDelegate {
                 state.selectedNodeId = node.id
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: workspaceId)
             }
+            focusWindow(focusedHandle)
         }
     }
 
@@ -425,6 +452,11 @@ final class AXEventHandler: CGSEventDelegate {
 
         let state = controller.internalWorkspaceManager.niriViewportState(for: workspaceId)
         if state.viewOffsetPixels.isAnimating {
+            return true
+        }
+
+        if let layoutRefreshController = controller.internalLayoutRefreshController,
+           layoutRefreshController.hasDwindleAnimationRunning(in: workspaceId) {
             return true
         }
 
