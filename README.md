@@ -2,13 +2,25 @@
 
 A powerful tiling window manager for macOS.
 
-![macOS](https://img.shields.io/badge/macOS-26.0%2B-green?logo=apple&logoColor=white)
-![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-supported-green?logo=apple&logoColor=white)
-![Intel](https://img.shields.io/badge/X86/X64-supported-green?logo=intel&logoColor=white)
-![Claude Code](https://img.shields.io/badge/Claude%20Code-Assisted-green?logo=claude&logoColor=white)
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-26.0%2B-green?logo=apple&logoColor=white" alt="macOS">
+  <img src="https://img.shields.io/badge/Apple%20Silicon-supported-green?logo=apple&logoColor=white" alt="Apple Silicon">
+  <img src="https://img.shields.io/badge/X86/X64-supported-green?logo=intel&logoColor=white" alt="Intel">
+  <img src="https://img.shields.io/badge/Claude%20Code-Assisted-green?logo=claude&logoColor=white" alt="Claude Code">
+</p>
 
-![Image](https://github.com/BarutSRB/OmniWM/blob/f64cedf72a55c14758f5f18fed4ffae75f1b3bed/assets/tabs.gif)]
-![Image](https://github.com/BarutSRB/OmniWM/blob/f64cedf72a55c14758f5f18fed4ffae75f1b3bed/assets/animation.gif)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/BarutSRB/OmniWM/main/assets/semidemo.gif" alt="OmniWM demo">
+</p>
+
+Small demo, not fully showing everything, gif recorded at 30fps due to size, features shown:
+- real quake-style temrinal using ghostty framework
+- window finder/jumper
+- searchable and usable command pallet for any app
+- App menu anywhere
+- Niri tabs
+- Niri and Dwindle layout (some animations shown)
+A lot more features not show in the gif.
 
 ## Features
 
