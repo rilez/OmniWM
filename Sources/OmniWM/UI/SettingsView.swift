@@ -23,6 +23,7 @@ struct SettingsView: View {
 struct GeneralSettingsTab: View {
     @Bindable var settings: SettingsStore
     @Bindable var controller: WMController
+    @State private var exportStatus: ExportStatus?
 
     var body: some View {
         Form {
@@ -132,6 +133,39 @@ struct GeneralSettingsTab: View {
                 Text("Hold this key + scroll wheel to navigate workspaces")
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
+
+            Section("Settings Backup") {
+                HStack {
+                    Button("Export Settings") {
+                        do {
+                            try settings.exportSettings()
+                            exportStatus = .exported
+                        } catch {
+                            exportStatus = .error(error.localizedDescription)
+                        }
+                    }
+
+                    Button("Import Settings") {
+                        do {
+                            try settings.importSettings()
+                            exportStatus = .imported
+                        } catch {
+                            exportStatus = .error(error.localizedDescription)
+                        }
+                    }
+                    .disabled(!settings.settingsFileExists)
+                }
+
+                Text("~/.config/omniwm/settings.json")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+
+                if let status = exportStatus {
+                    Label(status.message, systemImage: status.icon)
+                        .foregroundColor(status.color)
+                }
             }
         }
         .formStyle(.grouped)
@@ -399,5 +433,33 @@ struct MenuAnywhereSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private enum ExportStatus {
+    case exported
+    case imported
+    case error(String)
+
+    var message: String {
+        switch self {
+        case .exported: "Settings exported"
+        case .imported: "Settings imported"
+        case .error(let msg): "Error: \(msg)"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .exported, .imported: "checkmark.circle.fill"
+        case .error: "xmark.circle.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .exported, .imported: .green
+        case .error: .red
+        }
     }
 }
