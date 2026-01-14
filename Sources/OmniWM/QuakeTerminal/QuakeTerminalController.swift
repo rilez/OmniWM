@@ -196,16 +196,7 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate {
         window.level = .popUpMenu
         window.makeKeyAndOrderFront(nil)
 
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = settings.quakeTerminalAnimationDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            position.setFinal(
-                in: window.animator(),
-                on: screen,
-                widthPercent: widthPercent,
-                heightPercent: heightPercent
-            )
-        }, completionHandler: { [weak self] in
+        let finishAnimation: @Sendable () -> Void = { [weak self] in
             Task { @MainActor in
                 guard let self, self.visible else { return }
                 window.level = .floating
@@ -219,7 +210,28 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate {
                     }
                 }
             }
-        })
+        }
+
+        if settings.animationsEnabled {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = settings.quakeTerminalAnimationDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                position.setFinal(
+                    in: window.animator(),
+                    on: screen,
+                    widthPercent: widthPercent,
+                    heightPercent: heightPercent
+                )
+            }, completionHandler: finishAnimation)
+        } else {
+            position.setFinal(
+                in: window,
+                on: screen,
+                widthPercent: widthPercent,
+                heightPercent: heightPercent
+            )
+            finishAnimation()
+        }
     }
 
     private func animateWindowOut(window: NSWindow) {
@@ -237,20 +249,32 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate {
 
         window.level = .popUpMenu
 
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = settings.quakeTerminalAnimationDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+        let finishAnimation: @Sendable () -> Void = {
+            Task { @MainActor in
+                window.orderOut(nil)
+            }
+        }
+
+        if settings.animationsEnabled {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = settings.quakeTerminalAnimationDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                position.setInitial(
+                    in: window.animator(),
+                    on: screen,
+                    widthPercent: widthPercent,
+                    heightPercent: heightPercent
+                )
+            }, completionHandler: finishAnimation)
+        } else {
             position.setInitial(
-                in: window.animator(),
+                in: window,
                 on: screen,
                 widthPercent: widthPercent,
                 heightPercent: heightPercent
             )
-        }, completionHandler: {
-            Task { @MainActor in
-                window.orderOut(nil)
-            }
-        })
+            finishAnimation()
+        }
     }
 
     private func makeWindowKey(_ window: NSWindow, retries: UInt8 = 0) {

@@ -52,7 +52,11 @@ struct SponsorsView: View {
         .scaleEffect(appeared ? 1.0 : 0.95)
         .opacity(appeared ? 1.0 : 0.0)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.2)) {
+            if AppDelegate.sharedSettings?.animationsEnabled ?? true {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    appeared = true
+                }
+            } else {
                 appeared = true
             }
         }
@@ -196,7 +200,10 @@ struct SponsorCardView: View {
                     .shadow(color: rank.glowColor.opacity(isHovered ? 0.3 : 0.1), radius: isHovered ? 12 : 6)
             )
             .scaleEffect(isHovered ? 1.02 : 1.0)
-            .animation(.easeOut(duration: 0.15), value: isHovered)
+            .animation(
+                (AppDelegate.sharedSettings?.animationsEnabled ?? true) ? .easeOut(duration: 0.15) : nil,
+                value: isHovered
+            )
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -255,8 +262,10 @@ struct GlowingAvatarView: View {
             }
         }
         .onAppear {
-            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
-                isAnimating = true
+            if AppDelegate.sharedSettings?.animationsEnabled ?? true {
+                withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
+                    isAnimating = true
+                }
             }
         }
     }

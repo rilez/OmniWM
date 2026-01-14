@@ -29,7 +29,8 @@ struct OmniWMApp: App {
             infiniteLoop: settings.niriInfiniteLoop,
             centerFocusedColumn: settings.niriCenterFocusedColumn,
             alwaysCenterSingleColumn: settings.niriAlwaysCenterSingleColumn,
-            singleWindowAspectRatio: settings.niriSingleWindowAspectRatio
+            singleWindowAspectRatio: settings.niriSingleWindowAspectRatio,
+            animationsEnabled: settings.animationsEnabled
         )
         controller.enableDwindleLayout()
         controller.updateDwindleConfig(

@@ -401,6 +401,7 @@ class NiriContainer: NiriNode {
         config: SpringConfig = .default,
         displayRefreshRate: Double = 60.0
     ) {
+        guard MainActor.assumeIsolated({ AppDelegate.sharedSettings?.animationsEnabled }) ?? true else { return }
         let now = clock?.now() ?? CACurrentMediaTime()
         let currentOffset = renderOffset(at: now)
         let currentVel = moveAnimation?.currentVelocity(at: now) ?? 0
@@ -456,6 +457,7 @@ class NiriContainer: NiriNode {
         config: SpringConfig,
         displayRefreshRate: Double = 60.0
     ) {
+        guard MainActor.assumeIsolated({ AppDelegate.sharedSettings?.animationsEnabled }) ?? true else { return }
         let now = clock?.now() ?? CACurrentMediaTime()
         let currentWidth = cachedWidth > 0 ? cachedWidth : newWidth
         let currentVel = widthAnimation?.velocity(at: now) ?? 0
@@ -662,6 +664,7 @@ class NiriWindow: NiriNode {
         config: SpringConfig = .default,
         displayRefreshRate: Double = 60.0
     ) {
+        guard MainActor.assumeIsolated({ AppDelegate.sharedSettings?.animationsEnabled }) ?? true else { return }
         let now = clock?.now() ?? CACurrentMediaTime()
         let currentOffset = renderOffset(at: now)
         let currentVelX = moveXAnimation?.currentVelocity(at: now) ?? 0
@@ -737,6 +740,8 @@ class NiriWindow: NiriNode {
         config: SpringConfig = .default,
         displayRefreshRate: Double = 60.0
     ) {
+        baseAlpha = to
+        guard MainActor.assumeIsolated({ AppDelegate.sharedSettings?.animationsEnabled }) ?? true else { return }
         let now = clock?.now() ?? CACurrentMediaTime()
         let anim = SpringAnimation(
             from: 0,
@@ -747,7 +752,6 @@ class NiriWindow: NiriNode {
             displayRefreshRate: displayRefreshRate
         )
         alphaAnimation = AlphaAnimation(animation: anim, fromAlpha: from, toAlpha: to)
-        baseAlpha = to
     }
 
     func tickAlphaAnimation(at time: TimeInterval) -> Bool {

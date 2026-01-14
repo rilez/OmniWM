@@ -957,10 +957,12 @@ final class LayoutRefreshController {
                 }
             }
 
-            engine.animateWindowMovements(oldFrames: oldFrames, newFrames: newFrames)
+            if controller.internalAnimationsEnabled {
+                engine.animateWindowMovements(oldFrames: oldFrames, newFrames: newFrames)
+            }
 
             let now = CACurrentMediaTime()
-            if engine.hasActiveAnimations(in: wsId, at: now) {
+            if controller.internalAnimationsEnabled, engine.hasActiveAnimations(in: wsId, at: now) {
                 startDwindleAnimation(for: wsId, monitor: monitor)
 
                 if let focusedHandle = controller.internalFocusedHandle,

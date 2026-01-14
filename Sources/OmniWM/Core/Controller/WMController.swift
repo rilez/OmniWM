@@ -1135,6 +1135,8 @@ extension WMController {
 
     var internalMoveMouseToFocusedWindowEnabled: Bool { moveMouseToFocusedWindowEnabled }
 
+    var internalAnimationsEnabled: Bool { settings.animationsEnabled }
+
     var internalHiddenAppPIDs: Set<pid_t> {
         get { hiddenAppPIDs }
         set { hiddenAppPIDs = newValue }
