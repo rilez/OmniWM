@@ -17,6 +17,18 @@ final class SettingsStore {
         didSet { defaults.set(moveMouseToFocusedWindow, forKey: Keys.moveMouseToFocusedWindow) }
     }
 
+    var mouseWarpEnabled: Bool {
+        didSet { defaults.set(mouseWarpEnabled, forKey: Keys.mouseWarpEnabled) }
+    }
+
+    var mouseWarpMonitorOrder: [String] {
+        didSet { saveMouseWarpMonitorOrder() }
+    }
+
+    var mouseWarpMargin: Int {
+        didSet { defaults.set(mouseWarpMargin, forKey: Keys.mouseWarpMargin) }
+    }
+
     var gapSize: Double {
         didSet { defaults.set(gapSize, forKey: Keys.gapSize) }
     }
@@ -278,6 +290,9 @@ final class SettingsStore {
         hotkeysEnabled = defaults.object(forKey: Keys.hotkeysEnabled) as? Bool ?? true
         focusFollowsMouse = defaults.object(forKey: Keys.focusFollowsMouse) as? Bool ?? false
         moveMouseToFocusedWindow = defaults.object(forKey: Keys.moveMouseToFocusedWindow) as? Bool ?? false
+        mouseWarpEnabled = defaults.object(forKey: Keys.mouseWarpEnabled) as? Bool ?? false
+        mouseWarpMonitorOrder = Self.loadMouseWarpMonitorOrder(from: defaults)
+        mouseWarpMargin = defaults.object(forKey: Keys.mouseWarpMargin) as? Int ?? 2
         gapSize = defaults.object(forKey: Keys.gapSize) as? Double ?? 8
 
         outerGapLeft = defaults.object(forKey: Keys.outerGapLeft) as? Double ?? 0
@@ -776,12 +791,29 @@ final class SettingsStore {
             outerGapRight: useGlobalGaps ? CGFloat(outerGapRight) : CGFloat(override?.outerGapRight ?? outerGapRight)
         )
     }
+
+    private static func loadMouseWarpMonitorOrder(from defaults: UserDefaults) -> [String] {
+        guard let data = defaults.data(forKey: Keys.mouseWarpMonitorOrder),
+              let order = try? JSONDecoder().decode([String].self, from: data)
+        else {
+            return []
+        }
+        return order
+    }
+
+    private func saveMouseWarpMonitorOrder() {
+        guard let data = try? JSONEncoder().encode(mouseWarpMonitorOrder) else { return }
+        defaults.set(data, forKey: Keys.mouseWarpMonitorOrder)
+    }
 }
 
 private enum Keys {
     static let hotkeysEnabled = "settings.hotkeysEnabled"
     static let focusFollowsMouse = "settings.focusFollowsMouse"
     static let moveMouseToFocusedWindow = "settings.moveMouseToFocusedWindow"
+    static let mouseWarpEnabled = "settings.mouseWarp.enabled"
+    static let mouseWarpMonitorOrder = "settings.mouseWarp.monitorOrder"
+    static let mouseWarpMargin = "settings.mouseWarp.margin"
     static let gapSize = "settings.gapSize"
 
     static let outerGapLeft = "settings.outerGapLeft"
@@ -925,6 +957,9 @@ struct SettingsExport: Codable {
     var hotkeysEnabled: Bool
     var focusFollowsMouse: Bool
     var moveMouseToFocusedWindow: Bool
+    var mouseWarpEnabled: Bool
+    var mouseWarpMonitorOrder: [String]
+    var mouseWarpMargin: Int
     var gapSize: Double
     var outerGapLeft: Double
     var outerGapRight: Double
@@ -1012,6 +1047,9 @@ extension SettingsStore {
             hotkeysEnabled: hotkeysEnabled,
             focusFollowsMouse: focusFollowsMouse,
             moveMouseToFocusedWindow: moveMouseToFocusedWindow,
+            mouseWarpEnabled: mouseWarpEnabled,
+            mouseWarpMonitorOrder: mouseWarpMonitorOrder,
+            mouseWarpMargin: mouseWarpMargin,
             gapSize: gapSize,
             outerGapLeft: outerGapLeft,
             outerGapRight: outerGapRight,
@@ -1088,6 +1126,9 @@ extension SettingsStore {
         hotkeysEnabled = export.hotkeysEnabled
         focusFollowsMouse = export.focusFollowsMouse
         moveMouseToFocusedWindow = export.moveMouseToFocusedWindow
+        mouseWarpEnabled = export.mouseWarpEnabled
+        mouseWarpMonitorOrder = export.mouseWarpMonitorOrder
+        mouseWarpMargin = export.mouseWarpMargin
         gapSize = export.gapSize
         outerGapLeft = export.outerGapLeft
         outerGapRight = export.outerGapRight

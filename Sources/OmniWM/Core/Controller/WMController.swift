@@ -64,6 +64,7 @@ final class WMController {
     private var appRulesByBundleId: [String: AppRule] = [:]
 
     private var mouseEventHandler: MouseEventHandler?
+    private var mouseWarpHandler: MouseWarpHandler?
     private var commandHandler: CommandHandler?
     private var workspaceNavigationHandler: WorkspaceNavigationHandler?
     private var axEventHandler: AXEventHandler?
@@ -457,6 +458,14 @@ final class WMController {
         moveMouseToFocusedWindowEnabled = enabled
     }
 
+    func setMouseWarpEnabled(_ enabled: Bool) {
+        if enabled {
+            mouseWarpHandler?.setup()
+        } else {
+            mouseWarpHandler?.cleanup()
+        }
+    }
+
     func insetWorkingFrame(for monitor: Monitor) -> CGRect {
         let scale = NSScreen.screens.first(where: { $0.displayId == monitor.displayId })?.backingScaleFactor ?? 2.0
         return insetWorkingFrame(from: monitor.visibleFrame, scale: scale)
@@ -532,6 +541,7 @@ final class WMController {
         layoutRefreshController = LayoutRefreshController(controller: self)
         axEventHandler = AXEventHandler(controller: self)
         mouseEventHandler = MouseEventHandler(controller: self)
+        mouseWarpHandler = MouseWarpHandler(controller: self)
         workspaceNavigationHandler = WorkspaceNavigationHandler(controller: self)
         commandHandler = CommandHandler(controller: self)
 
@@ -562,6 +572,9 @@ final class WMController {
         }
         setupWorkspaceObservation()
         mouseEventHandler?.setup()
+        if settings.mouseWarpEnabled {
+            mouseWarpHandler?.setup()
+        }
         setupDisplayObserver()
         setupAppActivationObserver()
         setupAppHideObservers()
@@ -740,6 +753,9 @@ final class WMController {
 
         mouseEventHandler?.cleanup()
         mouseEventHandler = nil
+
+        mouseWarpHandler?.cleanup()
+        mouseWarpHandler = nil
 
         workspaceNavigationHandler = nil
         axEventHandler = nil
