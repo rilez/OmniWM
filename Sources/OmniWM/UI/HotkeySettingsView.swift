@@ -205,6 +205,7 @@ struct HotkeyBindingRow: View {
                         .cornerRadius(4)
                 }
                 .buttonStyle(.plain)
+                .help(binding.binding.humanReadableString)
 
                 if !binding.binding.isUnassigned {
                     Button(action: onClear) {

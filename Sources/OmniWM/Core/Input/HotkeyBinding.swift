@@ -18,6 +18,13 @@ struct KeyBinding: Codable, Equatable, Hashable {
         return KeySymbolMapper.displayString(keyCode: keyCode, modifiers: modifiers)
     }
 
+    var humanReadableString: String {
+        if isUnassigned {
+            return "Unassigned"
+        }
+        return KeySymbolMapper.humanReadableString(keyCode: keyCode, modifiers: modifiers)
+    }
+
     func conflicts(with other: KeyBinding) -> Bool {
         guard !isUnassigned, !other.isUnassigned else { return false }
         return keyCode == other.keyCode && modifiers == other.modifiers
