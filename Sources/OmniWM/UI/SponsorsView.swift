@@ -1,52 +1,133 @@
 import AppKit
 import SwiftUI
 
+struct Sponsor: Identifiable {
+    let id = UUID()
+    let name: String
+    let githubUsername: String
+    let imageName: String
+    let imageExtension: String
+    let rank: SponsorRank
+}
+
+private let sponsors: [Sponsor] = [
+    Sponsor(name: "Christopher2K", githubUsername: "Christopher2K", imageName: "christopher2k", imageExtension: "jpg", rank: .first),
+    Sponsor(name: "Aelte", githubUsername: "aelte", imageName: "aelte", imageExtension: "png", rank: .second),
+    Sponsor(name: "captainpryce", githubUsername: "captainpryce", imageName: "captainpryce", imageExtension: "jpg", rank: .third),
+    Sponsor(name: "sgrimee", githubUsername: "sgrimee", imageName: "sgrimee", imageExtension: "jpg", rank: .fourth)
+]
+
 struct SponsorsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var appeared = false
+    @State private var currentIndex = 0
     let onClose: () -> Void
 
+    private let visibleCount = 3
+
+    private var canNavigateLeft: Bool {
+        currentIndex > 0
+    }
+
+    private var canNavigateRight: Bool {
+        currentIndex < sponsors.count - visibleCount
+    }
+
+    private var visibleSponsors: ArraySlice<Sponsor> {
+        let endIndex = min(currentIndex + visibleCount, sponsors.count)
+        return sponsors[currentIndex..<endIndex]
+    }
+
+    private func navigateLeft() {
+        guard canNavigateLeft else { return }
+        let animate = AppDelegate.sharedSettings?.animationsEnabled ?? true
+        if animate {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentIndex -= 1
+            }
+        } else {
+            currentIndex -= 1
+        }
+    }
+
+    private func navigateRight() {
+        guard canNavigateRight else { return }
+        let animate = AppDelegate.sharedSettings?.animationsEnabled ?? true
+        if animate {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentIndex += 1
+            }
+        } else {
+            currentIndex += 1
+        }
+    }
+
+    private var leftArrowButton: some View {
+        Button(action: navigateLeft) {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(GlassButtonStyle())
+        .opacity(canNavigateLeft ? 1.0 : 0.3)
+        .disabled(!canNavigateLeft)
+    }
+
+    private var rightArrowButton: some View {
+        Button(action: navigateRight) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(GlassButtonStyle())
+        .opacity(canNavigateRight ? 1.0 : 0.3)
+        .disabled(!canNavigateRight)
+    }
+
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 20) {
             headerSection
 
-            HStack(spacing: 32) {
-                SponsorCardView(
-                    name: "Christopher2K",
-                    githubUsername: "Christopher2K",
-                    imageName: "christopher2k",
-                    imageExtension: "jpg",
-                    rank: .first
-                )
+            HStack(spacing: 16) {
+                if sponsors.count > visibleCount {
+                    leftArrowButton
+                }
 
-                SponsorCardView(
-                    name: "Aelte",
-                    githubUsername: "aelte",
-                    imageName: "aelte",
-                    imageExtension: "png",
-                    rank: .second
-                )
+                HStack(spacing: 32) {
+                    ForEach(Array(visibleSponsors)) { sponsor in
+                        SponsorCardView(
+                            name: sponsor.name,
+                            githubUsername: sponsor.githubUsername,
+                            imageName: sponsor.imageName,
+                            imageExtension: sponsor.imageExtension,
+                            rank: sponsor.rank
+                        )
+                    }
+                }
 
-                SponsorCardView(
-                    name: "captainpryce",
-                    githubUsername: "captainpryce",
-                    imageName: "captainpryce",
-                    imageExtension: "jpg",
-                    rank: .third
-                )
+                if sponsors.count > visibleCount {
+                    rightArrowButton
+                }
             }
             .padding(.horizontal, 24)
 
-            Button(action: onClose) {
-                Text("Close")
-                    .font(.system(size: 14, weight: .medium))
-                    .frame(width: 100)
+            VStack(spacing: 8) {
+                Button(action: onClose) {
+                    Text("Close")
+                        .font(.system(size: 14, weight: .medium))
+                        .frame(width: 100)
+                }
+                .buttonStyle(GlassButtonStyle())
+
+                Text("Ranks reflect sponsorship order, not donation amounts")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
             }
-            .buttonStyle(GlassButtonStyle())
-            .padding(.top, 8)
         }
         .padding(32)
-        .frame(width: 700, height: 380)
+        .frame(width: 700, height: 400)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .scaleEffect(appeared ? 1.0 : 0.95)
@@ -98,6 +179,7 @@ enum SponsorRank {
     case first
     case second
     case third
+    case fourth
 
     var gradientColors: [Color] {
         switch self {
@@ -110,6 +192,9 @@ enum SponsorRank {
         case .third:
             return [Color(red: 0.82, green: 0.41, blue: 0.12),
                     Color(red: 0.42, green: 0.24, blue: 0.10)]
+        case .fourth:
+            return [Color(red: 0.3, green: 0.3, blue: 0.3),
+                    Color(red: 0.15, green: 0.15, blue: 0.15)]
         }
     }
 
@@ -121,6 +206,8 @@ enum SponsorRank {
             return Color(red: 0.6, green: 0.7, blue: 0.85)
         case .third:
             return Color(red: 0.75, green: 0.38, blue: 0.12)
+        case .fourth:
+            return Color(red: 0.4, green: 0.4, blue: 0.4)
         }
     }
 
@@ -132,6 +219,8 @@ enum SponsorRank {
             return "2nd"
         case .third:
             return "3rd"
+        case .fourth:
+            return "4th"
         }
     }
 }

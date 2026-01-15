@@ -20,6 +20,7 @@ final class WMController {
     let appInfoCache = AppInfoCache()
     private var focusedHandle: WindowHandle? {
         didSet {
+            updateActiveMonitorFromFocusedHandle(focusedHandle)
             notifyFocusChangesIfNeeded()
         }
     }
@@ -953,6 +954,22 @@ final class WMController {
             return monitor
         }
         return workspaceManager.monitors.first
+    }
+
+    private func updateActiveMonitorFromFocusedHandle(_ handle: WindowHandle?) {
+        guard let handle,
+              let workspaceId = workspaceManager.workspace(for: handle),
+              let monitorId = workspaceManager.monitor(for: workspaceId)?.id
+        else {
+            return
+        }
+
+        if let currentId = activeMonitorId, currentId != monitorId {
+            previousMonitorId = currentId
+        }
+        if activeMonitorId != monitorId {
+            activeMonitorId = monitorId
+        }
     }
 
     func activeWorkspace() -> WorkspaceDescriptor? {
