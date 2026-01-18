@@ -1008,7 +1008,7 @@ final class WMController {
 
         if let frame = AXWindowService.framePreferFast(axRef) {
             let center = frame.center
-            if let monitor = workspaceManager.monitors.first(where: { $0.visibleFrame.contains(center) }),
+            if let monitor = center.monitorApproximation(in: workspaceManager.monitors),
                let workspace = workspaceManager.activeWorkspaceOrFirst(on: monitor.id)
             {
                 return workspace.id

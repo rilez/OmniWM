@@ -638,12 +638,24 @@ final class WorkspaceNavigationHandler {
         guard let controller else { return }
         guard let handle = controller.internalFocusedHandle,
               let currentWorkspaceId = controller.internalWorkspaceManager.workspace(for: handle),
+              let currentMonitorId = controller.internalWorkspaceManager.monitorId(for: currentWorkspaceId),
               let targetWorkspace = controller.internalWorkspaceManager
               .move(handle: handle, from: currentWorkspaceId, direction: direction) else { return }
 
         if let monitor = controller.internalWorkspaceManager.monitor(for: targetWorkspace.id) {
             _ = controller.internalWorkspaceManager.setActiveWorkspace(targetWorkspace.id, on: monitor.id)
         }
+
+        controller.syncMonitorsToNiriEngine()
+
+        let shouldFollowFocus = controller.internalSettings.focusFollowsWindowToMonitor
+        if shouldFollowFocus {
+            controller.internalPreviousMonitorId = currentMonitorId
+            if let targetMonitorId = controller.internalWorkspaceManager.monitorId(for: targetWorkspace.id) {
+                controller.internalActiveMonitorId = targetMonitorId
+            }
+        }
+
         controller.internalFocusedHandle = handle
         controller.internalLayoutRefreshController?.refreshWindowsAndLayout()
         controller.focusWindow(handle)

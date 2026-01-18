@@ -648,7 +648,9 @@ final class WorkspaceManager {
                 idx += 1
                 continue
             }
-            if forceAssignedMonitor(for: name) != nil {
+            if let forced = forceAssignedMonitor(for: name),
+               forced.workspaceAnchorPoint != point
+            {
                 idx += 1
                 continue
             }
