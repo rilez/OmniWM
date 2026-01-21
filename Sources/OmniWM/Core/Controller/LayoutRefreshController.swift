@@ -1091,13 +1091,15 @@ final class LayoutRefreshController {
         pid: pid_t,
         targetY: CGFloat
     ) -> CGPoint {
-        let offset: CGFloat = isZoomApp(pid) ? 0 : 1
+        let scale = max(1.0, NSScreen.screen(containing: workingFrame)?.backingScaleFactor ?? 2.0)
+        // Match AeroSpace's barely-visible sliver by using a single physical pixel.
+        let edgeReveal: CGFloat = isZoomApp(pid) ? 0 : 1.0 / scale
         let globalBounds = ScreenCoordinateSpace.globalFrame
         switch side {
         case .left:
-            return CGPoint(x: globalBounds.minX - size.width + offset, y: targetY)
+            return CGPoint(x: globalBounds.minX - size.width + edgeReveal, y: targetY)
         case .right:
-            return CGPoint(x: globalBounds.maxX - offset, y: targetY)
+            return CGPoint(x: globalBounds.maxX - edgeReveal, y: targetY)
         }
     }
 

@@ -243,7 +243,8 @@ extension NiriLayoutEngine {
                     side: side,
                     width: hiddenWidth,
                     height: workingFrame.height,
-                    screenY: viewFrame.maxY - 2
+                    screenY: viewFrame.maxY - 2,
+                    scale: effectiveScale
                 ).roundedToPhysicalPixels(scale: effectiveScale)
 
                 layoutColumn(
@@ -637,15 +638,17 @@ extension NiriLayoutEngine {
         side: HideSide,
         width: CGFloat,
         height: CGFloat,
-        screenY: CGFloat
+        screenY: CGFloat,
+        scale: CGFloat
     ) -> CGRect {
         let globalBounds = ScreenCoordinateSpace.globalFrame
+        let edgeReveal = 1.0 / max(1.0, scale)
         let x: CGFloat
         switch side {
         case .left:
-            x = globalBounds.minX - width + 2
+            x = globalBounds.minX - width + edgeReveal
         case .right:
-            x = globalBounds.maxX - 2
+            x = globalBounds.maxX - edgeReveal
         }
         let origin = CGPoint(x: x, y: screenY)
         return CGRect(origin: origin, size: CGSize(width: width, height: height))
