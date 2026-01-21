@@ -260,6 +260,8 @@ final class LayoutRefreshController {
             viewFrame: monitor.frame,
             scale: backingScale(for: monitor)
         )
+        let edgeFrame = monitor.visibleFrame
+        let monitors = workspaceManager.monitors
 
         let (frames, hiddenHandles) = engine.calculateCombinedLayoutUsingPools(
             in: wsId,
@@ -288,12 +290,16 @@ final class LayoutRefreshController {
             }
 
             if let side = hiddenHandles[handle] {
+                let actualSize = AXWindowService.framePreferFast(entry.axRef)?.size ?? frame.size
                 let hiddenOrigin = hiddenOrigin(
-                    for: frame.size,
-                    workingFrame: insetFrame,
+                    for: actualSize,
+                    edgeFrame: edgeFrame,
+                    scale: area.scale,
                     side: side,
                     pid: handle.pid,
-                    targetY: frame.origin.y
+                    targetY: frame.origin.y,
+                    monitor: monitor,
+                    monitors: monitors
                 )
                 positionUpdates.append((entry.windowId, hiddenOrigin))
                 continue
@@ -1066,8 +1072,17 @@ final class LayoutRefreshController {
             controller.internalWorkspaceManager.setHiddenProportionalPosition(proportional, for: entry.handle)
         }
         let yPos = targetY ?? frame.origin.y
-        let workingFrame = controller.insetWorkingFrame(for: monitor)
-        let origin = hiddenOrigin(for: frame.size, workingFrame: workingFrame, side: side, pid: entry.handle.pid, targetY: yPos)
+        let scale = backingScale(for: monitor)
+        let origin = hiddenOrigin(
+            for: frame.size,
+            edgeFrame: monitor.visibleFrame,
+            scale: scale,
+            side: side,
+            pid: entry.handle.pid,
+            targetY: yPos,
+            monitor: monitor,
+            monitors: controller.internalWorkspaceManager.monitors
+        )
         try? AXWindowService.setFrame(entry.axRef, frame: CGRect(origin: origin, size: frame.size))
     }
 
@@ -1086,21 +1101,51 @@ final class LayoutRefreshController {
 
     private func hiddenOrigin(
         for size: CGSize,
-        workingFrame: CGRect,
+        edgeFrame: CGRect,
+        scale: CGFloat,
         side: HideSide,
         pid: pid_t,
-        targetY: CGFloat
+        targetY: CGFloat,
+        monitor: Monitor,
+        monitors: [Monitor]
     ) -> CGPoint {
-        let scale = max(1.0, NSScreen.screen(containing: workingFrame)?.backingScaleFactor ?? 2.0)
         // Match AeroSpace's barely-visible sliver by using a single physical pixel.
-        let edgeReveal: CGFloat = isZoomApp(pid) ? 0 : 1.0 / scale
-        let globalBounds = ScreenCoordinateSpace.globalFrame
-        switch side {
-        case .left:
-            return CGPoint(x: globalBounds.minX - size.width + edgeReveal, y: targetY)
-        case .right:
-            return CGPoint(x: globalBounds.maxX - edgeReveal, y: targetY)
+        let edgeReveal: CGFloat = isZoomApp(pid) ? 0 : 1.0 / max(1.0, scale)
+
+        func origin(for side: HideSide) -> CGPoint {
+            switch side {
+            case .left:
+                return CGPoint(x: edgeFrame.minX - size.width + edgeReveal, y: targetY)
+            case .right:
+                return CGPoint(x: edgeFrame.maxX - edgeReveal, y: targetY)
+            }
         }
+
+        func overlapArea(for origin: CGPoint) -> CGFloat {
+            let rect = CGRect(origin: origin, size: size)
+            var area: CGFloat = 0
+            for other in monitors where other.id != monitor.id {
+                let intersection = rect.intersection(other.frame)
+                if intersection.isNull { continue }
+                area += intersection.width * intersection.height
+            }
+            return area
+        }
+
+        let primaryOrigin = origin(for: side)
+        let primaryOverlap = overlapArea(for: primaryOrigin)
+        if primaryOverlap == 0 {
+            return primaryOrigin
+        }
+
+        let alternateSide: HideSide = side == .left ? .right : .left
+        let alternateOrigin = origin(for: alternateSide)
+        let alternateOverlap = overlapArea(for: alternateOrigin)
+        if alternateOverlap < primaryOverlap {
+            return alternateOrigin
+        }
+
+        return primaryOrigin
     }
 
     private func isZoomApp(_ pid: pid_t) -> Bool {

@@ -201,6 +201,9 @@ final class WorkspaceManager {
 
     func monitorForWorkspace(_ workspaceId: WorkspaceDescriptor.ID) -> Monitor? {
         guard let point = workspaceMonitorPoint(for: workspaceId) else { return monitors.first }
+        if let exact = monitors.first(where: { $0.workspaceAnchorPoint == point }) {
+            return exact
+        }
         return point.monitorApproximation(in: monitors) ?? monitors.first
     }
 

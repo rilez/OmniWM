@@ -244,6 +244,7 @@ extension NiriLayoutEngine {
                     width: hiddenWidth,
                     height: workingFrame.height,
                     screenY: viewFrame.maxY - 2,
+                    edgeFrame: viewFrame,
                     scale: effectiveScale
                 ).roundedToPhysicalPixels(scale: effectiveScale)
 
@@ -639,16 +640,16 @@ extension NiriLayoutEngine {
         width: CGFloat,
         height: CGFloat,
         screenY: CGFloat,
+        edgeFrame: CGRect,
         scale: CGFloat
     ) -> CGRect {
-        let globalBounds = ScreenCoordinateSpace.globalFrame
         let edgeReveal = 1.0 / max(1.0, scale)
         let x: CGFloat
         switch side {
         case .left:
-            x = globalBounds.minX - width + edgeReveal
+            x = edgeFrame.minX - width + edgeReveal
         case .right:
-            x = globalBounds.maxX - edgeReveal
+            x = edgeFrame.maxX - edgeReveal
         }
         let origin = CGPoint(x: x, y: screenY)
         return CGRect(origin: origin, size: CGSize(width: width, height: height))
