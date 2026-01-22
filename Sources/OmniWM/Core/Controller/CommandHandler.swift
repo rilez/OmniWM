@@ -549,10 +549,30 @@ final class CommandHandler {
                 gaps: gaps
             ) {
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
-                controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
-
-                let newFrames = engine.captureWindowFrames(in: wsId)
+                let scale = NSScreen.screens.first(where: { $0.displayId == monitor.displayId })?
+                    .backingScaleFactor ?? 2.0
+                let workingArea = WorkingAreaContext(
+                    workingFrame: workingFrame,
+                    viewFrame: monitor.frame,
+                    scale: scale
+                )
+                let layoutGaps = LayoutGaps(
+                    horizontal: gaps,
+                    vertical: gaps,
+                    outer: controller.internalWorkspaceManager.outerGaps
+                )
+                let animationTime = (engine.animationClock?.now() ?? CACurrentMediaTime()) + 2.0
+                let newFrames = engine.calculateCombinedLayoutUsingPools(
+                    in: wsId,
+                    monitor: monitor,
+                    gaps: layoutGaps,
+                    state: state,
+                    workingArea: workingArea,
+                    animationTime: animationTime
+                ).frames
                 _ = engine.triggerMoveAnimations(in: wsId, oldFrames: oldFrames, newFrames: newFrames)
+
+                controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
 
                 let updatedState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
                 if updatedState.viewOffsetPixels.isAnimating || engine.hasAnyWindowAnimationsRunning(in: wsId) {
@@ -598,10 +618,30 @@ final class CommandHandler {
                 gaps: gaps
             ) {
                 controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
-                controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
-
-                let newFrames = engine.captureWindowFrames(in: wsId)
+                let scale = NSScreen.screens.first(where: { $0.displayId == monitor.displayId })?
+                    .backingScaleFactor ?? 2.0
+                let workingArea = WorkingAreaContext(
+                    workingFrame: workingFrame,
+                    viewFrame: monitor.frame,
+                    scale: scale
+                )
+                let layoutGaps = LayoutGaps(
+                    horizontal: gaps,
+                    vertical: gaps,
+                    outer: controller.internalWorkspaceManager.outerGaps
+                )
+                let animationTime = (engine.animationClock?.now() ?? CACurrentMediaTime()) + 2.0
+                let newFrames = engine.calculateCombinedLayoutUsingPools(
+                    in: wsId,
+                    monitor: monitor,
+                    gaps: layoutGaps,
+                    state: state,
+                    workingArea: workingArea,
+                    animationTime: animationTime
+                ).frames
                 _ = engine.triggerMoveAnimations(in: wsId, oldFrames: oldFrames, newFrames: newFrames)
+
+                controller.internalLayoutRefreshController?.executeLayoutRefreshImmediate()
 
                 let updatedState = controller.internalWorkspaceManager.niriViewportState(for: wsId)
                 if updatedState.viewOffsetPixels.isAnimating || engine.hasAnyWindowAnimationsRunning(in: wsId) {

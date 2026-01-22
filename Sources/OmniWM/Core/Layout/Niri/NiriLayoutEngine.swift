@@ -895,9 +895,6 @@ final class NiriLayoutEngine {
             return false
         }
 
-        let nodeOldFrame = node.frame
-        let siblingOldFrame = targetSibling.frame
-
         let nodeIdx = column.children.firstIndex { $0.id == node.id }
         let siblingIdx = column.children.firstIndex { $0.id == targetSibling.id }
 
@@ -909,25 +906,6 @@ final class NiriLayoutEngine {
             } else if sIdx == column.activeTileIdx {
                 column.activeTileIdx = nIdx
             }
-        }
-
-        if let nodeFrame = nodeOldFrame,
-           let siblingFrame = siblingOldFrame,
-           let targetWindow = targetSibling as? NiriWindow {
-            let yDelta = nodeFrame.origin.y - siblingFrame.origin.y
-
-            node.animateMoveFrom(
-                displacement: CGPoint(x: 0, y: -yDelta),
-                clock: animationClock,
-                config: windowMovementAnimationConfig,
-                displayRefreshRate: displayRefreshRate
-            )
-            targetWindow.animateMoveFrom(
-                displacement: CGPoint(x: 0, y: yDelta),
-                clock: animationClock,
-                config: windowMovementAnimationConfig,
-                displayRefreshRate: displayRefreshRate
-            )
         }
 
         return true
@@ -952,9 +930,6 @@ final class NiriLayoutEngine {
             return false
         }
 
-        let nodeOldFrame = node.frame
-        let siblingOldFrame = targetSibling.frame
-
         let nodeIdx = column.children.firstIndex { $0.id == node.id }
         let siblingIdx = column.children.firstIndex { $0.id == targetSibling.id }
 
@@ -966,25 +941,6 @@ final class NiriLayoutEngine {
             } else if sIdx == column.activeTileIdx {
                 column.activeTileIdx = nIdx
             }
-        }
-
-        if let nodeFrame = nodeOldFrame,
-           let siblingFrame = siblingOldFrame,
-           let targetWindow = targetSibling as? NiriWindow {
-            let yDelta = nodeFrame.origin.y - siblingFrame.origin.y
-
-            node.animateMoveFrom(
-                displacement: CGPoint(x: 0, y: -yDelta),
-                clock: animationClock,
-                config: windowMovementAnimationConfig,
-                displayRefreshRate: displayRefreshRate
-            )
-            targetWindow.animateMoveFrom(
-                displacement: CGPoint(x: 0, y: yDelta),
-                clock: animationClock,
-                config: windowMovementAnimationConfig,
-                displayRefreshRate: displayRefreshRate
-            )
         }
 
         return true
