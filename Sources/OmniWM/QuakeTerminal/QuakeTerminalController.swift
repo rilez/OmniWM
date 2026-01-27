@@ -2,12 +2,24 @@ import Cocoa
 import GhosttyKit
 
 @MainActor
-final class QuakeTerminalController: NSObject, NSWindowDelegate {
+final class QuakeTerminalController: NSObject, NSWindowDelegate, QuakeTerminalTabBarDelegate {
     private(set) var window: QuakeTerminalWindow?
     private var ghosttyApp: ghostty_app_t?
     private var ghosttyConfig: ghostty_config_t?
-    private var surface: ghostty_surface_t?
-    private var surfaceView: GhosttySurfaceView?
+
+    private var tabs: [QuakeTerminalTab] = []
+    private var activeTabIndex: Int = 0
+
+    private var containerView: NSView?
+    private var tabBar: QuakeTerminalTabBar?
+
+    private var activeTab: QuakeTerminalTab? {
+        guard activeTabIndex >= 0, activeTabIndex < tabs.count else { return nil }
+        return tabs[activeTabIndex]
+    }
+
+    private var surface: ghostty_surface_t? { activeTab?.surface }
+    private var surfaceView: GhosttySurfaceView? { activeTab?.surfaceView }
 
     private(set) var visible: Bool = false
     private var previousApp: NSRunningApplication?
@@ -106,10 +118,12 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate {
     }
 
     func cleanup() {
-        if let surface {
-            ghostty_surface_free(surface)
-            self.surface = nil
+        for tab in tabs {
+            ghostty_surface_free(tab.surface)
         }
+        tabs.removeAll()
+        activeTabIndex = 0
+
         if let ghosttyApp {
             ghostty_app_free(ghosttyApp)
             self.ghosttyApp = nil
@@ -120,7 +134,8 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate {
         }
         window?.close()
         window = nil
-        surfaceView = nil
+        containerView = nil
+        tabBar = nil
     }
 
     private func updateGhosttyOpacityConfig() {
@@ -184,23 +199,157 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate {
     private func createWindow() {
         let win = QuakeTerminalWindow()
         win.delegate = self
+        win.tabController = self
         self.window = win
+
+        let container = NSView(frame: win.contentView?.bounds ?? .zero)
+        container.autoresizingMask = [.width, .height]
+        win.contentView = container
+        self.containerView = container
+
+        let bar = QuakeTerminalTabBar()
+        bar.delegate = self
+        bar.isHidden = true
+        bar.autoresizingMask = [.width]
+        bar.frame = NSRect(x: 0, y: container.bounds.height - QuakeTerminalTabBar.barHeight,
+                           width: container.bounds.width, height: QuakeTerminalTabBar.barHeight)
+        container.addSubview(bar)
+        self.tabBar = bar
     }
 
-    private func createSurface() {
-        guard let ghosttyApp, surfaceView == nil else { return }
+    @discardableResult
+    private func createTab() -> QuakeTerminalTab? {
+        guard let ghosttyApp else { return nil }
 
         let userdata = Unmanaged.passUnretained(self).toOpaque()
         let view = GhosttySurfaceView(ghosttyApp: ghosttyApp, userdata: userdata)
-        guard let newSurface = view.ghosttySurface else { return }
-
-        surface = newSurface
-        surfaceView = view
-        window?.contentView = view
+        guard let newSurface = view.ghosttySurface else { return nil }
 
         view.onFrameChanged = { [weak self] frame in
             self?.persistCustomFrame(frame)
         }
+
+        let tab = QuakeTerminalTab(surface: newSurface, surfaceView: view)
+        tabs.append(tab)
+        switchToTab(at: tabs.count - 1)
+        return tab
+    }
+
+    func closeTab(at index: Int) {
+        guard index >= 0, index < tabs.count else { return }
+
+        let tab = tabs[index]
+        tab.surfaceView.removeFromSuperview()
+        ghostty_surface_free(tab.surface)
+        tabs.remove(at: index)
+
+        if tabs.isEmpty {
+            activeTabIndex = 0
+            updateTabBarVisibility()
+            if visible {
+                animateOut()
+            }
+            return
+        }
+
+        if activeTabIndex >= tabs.count {
+            activeTabIndex = tabs.count - 1
+        } else if activeTabIndex > index {
+            activeTabIndex -= 1
+        } else if activeTabIndex == index {
+            activeTabIndex = min(activeTabIndex, tabs.count - 1)
+        }
+
+        switchToTab(at: activeTabIndex)
+    }
+
+    func switchToTab(at index: Int) {
+        guard index >= 0, index < tabs.count else { return }
+
+        if activeTabIndex < tabs.count {
+            tabs[activeTabIndex].surfaceView.removeFromSuperview()
+        }
+
+        activeTabIndex = index
+        let tab = tabs[index]
+
+        guard let containerView else { return }
+        let showBar = tabs.count > 1
+        let barHeight = showBar ? QuakeTerminalTabBar.barHeight : 0
+        let surfaceFrame = NSRect(
+            x: 0, y: 0,
+            width: containerView.bounds.width,
+            height: containerView.bounds.height - barHeight
+        )
+        tab.surfaceView.frame = surfaceFrame
+        tab.surfaceView.autoresizingMask = [.width, .height]
+        containerView.addSubview(tab.surfaceView)
+
+        window?.makeFirstResponder(tab.surfaceView)
+
+        updateTabBarVisibility()
+
+        if let window {
+            let size = tab.surfaceView.frame.size
+            let scale = window.backingScaleFactor
+            ghostty_surface_set_size(tab.surface, UInt32(size.width * scale), UInt32(size.height * scale))
+        }
+    }
+
+    func selectNextTab() {
+        guard tabs.count > 1 else { return }
+        switchToTab(at: (activeTabIndex + 1) % tabs.count)
+    }
+
+    func selectPreviousTab() {
+        guard tabs.count > 1 else { return }
+        switchToTab(at: (activeTabIndex - 1 + tabs.count) % tabs.count)
+    }
+
+    func selectTab(at index: Int) {
+        switchToTab(at: index)
+    }
+
+    func requestNewTab() {
+        createTab()
+    }
+
+    func requestCloseActiveTab() {
+        guard !tabs.isEmpty else { return }
+        closeTab(at: activeTabIndex)
+    }
+
+    private func updateTabBarVisibility() {
+        guard let tabBar, let containerView else { return }
+        let showBar = tabs.count > 1
+        tabBar.isHidden = !showBar
+
+        if showBar {
+            tabBar.frame = NSRect(
+                x: 0,
+                y: containerView.bounds.height - QuakeTerminalTabBar.barHeight,
+                width: containerView.bounds.width,
+                height: QuakeTerminalTabBar.barHeight
+            )
+            tabBar.update(
+                titles: tabs.map { $0.title },
+                selectedIndex: activeTabIndex
+            )
+        }
+
+        if let activeView = activeTab?.surfaceView {
+            let barHeight = showBar ? QuakeTerminalTabBar.barHeight : 0
+            activeView.frame = NSRect(
+                x: 0, y: 0,
+                width: containerView.bounds.width,
+                height: containerView.bounds.height - barHeight
+            )
+        }
+    }
+
+    private func createInitialSurface() {
+        guard tabs.isEmpty else { return }
+        createTab()
 
         if let window {
             let screen = targetScreen()
@@ -235,8 +384,8 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate {
             }
         }
 
-        if surface == nil {
-            createSurface()
+        if tabs.isEmpty {
+            createInitialSurface()
         }
 
         animateWindowIn(window: window)
@@ -509,12 +658,28 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate {
     }
 
     private func surfaceClosed(processAlive: Bool) {
-        if !processAlive {
-            surface = nil
-            surfaceView = nil
-            window?.contentView = nil
+        guard !processAlive else {
+            if visible { animateOut() }
+            return
         }
-        if visible {
+
+        if let index = tabs.firstIndex(where: { $0.surfaceView == surfaceView }) {
+            let tab = tabs[index]
+            tab.surfaceView.removeFromSuperview()
+            tabs.remove(at: index)
+
+            if tabs.isEmpty {
+                activeTabIndex = 0
+                updateTabBarVisibility()
+                if visible { animateOut() }
+                return
+            }
+
+            if activeTabIndex >= tabs.count {
+                activeTabIndex = tabs.count - 1
+            }
+            switchToTab(at: activeTabIndex)
+        } else if visible {
             animateOut()
         }
     }
@@ -558,11 +723,27 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate {
                 }
             }
 
+            updateTabBarVisibility()
+
             if let surface, let surfaceView {
                 let size = surfaceView.frame.size
                 let scale = window.backingScaleFactor
                 ghostty_surface_set_size(surface, UInt32(size.width * scale), UInt32(size.height * scale))
             }
         }
+    }
+
+    // MARK: - QuakeTerminalTabBarDelegate
+
+    func tabBarDidSelectTab(at index: Int) {
+        switchToTab(at: index)
+    }
+
+    func tabBarDidRequestNewTab() {
+        createTab()
+    }
+
+    func tabBarDidRequestCloseTab(at index: Int) {
+        closeTab(at: index)
     }
 }

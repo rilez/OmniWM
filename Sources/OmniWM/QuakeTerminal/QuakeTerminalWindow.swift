@@ -6,6 +6,7 @@ final class QuakeTerminalWindow: NSPanel {
 
     var initialFrame: NSRect?
     var isAnimating: Bool = false
+    weak var tabController: QuakeTerminalController?
 
     convenience init() {
         self.init(
@@ -35,5 +36,56 @@ final class QuakeTerminalWindow: NSPanel {
         } else {
             super.setFrame(frameRect, display: flag)
         }
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.type == .keyDown else { return super.performKeyEquivalent(with: event) }
+
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let keyCode = event.keyCode
+
+        if flags == .command {
+            switch keyCode {
+            case 17: // Cmd+T
+                tabController?.requestNewTab()
+                return true
+            case 13: // Cmd+W
+                tabController?.requestCloseActiveTab()
+                return true
+            case 18...25: // Cmd+1 through Cmd+8 (keycodes 18-25)
+                tabController?.selectTab(at: Int(keyCode) - 18)
+                return true
+            case 26: // Cmd+9
+                tabController?.selectTab(at: Int(keyCode) - 18)
+                return true
+            default:
+                break
+            }
+        }
+
+        if flags == [.command, .shift] {
+            switch keyCode {
+            case 30: // Cmd+Shift+]
+                tabController?.selectNextTab()
+                return true
+            case 33: // Cmd+Shift+[
+                tabController?.selectPreviousTab()
+                return true
+            default:
+                break
+            }
+        }
+
+        if flags == .control && keyCode == 48 { // Ctrl+Tab
+            tabController?.selectNextTab()
+            return true
+        }
+
+        if flags == [.control, .shift] && keyCode == 48 { // Ctrl+Shift+Tab
+            tabController?.selectPreviousTab()
+            return true
+        }
+
+        return super.performKeyEquivalent(with: event)
     }
 }
