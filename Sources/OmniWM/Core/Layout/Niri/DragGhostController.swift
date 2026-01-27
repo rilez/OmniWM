@@ -6,6 +6,7 @@ final class DragGhostController {
     private var ghostWindow: DragGhostWindow?
     private var captureTask: Task<Void, Never>?
     private var isActive: Bool = false
+    private var swapTargetOverlay: SwapTargetOverlay?
 
     func beginDrag(windowId: Int, originalFrame: CGRect, cursorLocation: CGPoint) {
         isActive = true
@@ -42,6 +43,19 @@ final class DragGhostController {
         captureTask?.cancel()
         captureTask = nil
         ghostWindow?.hideGhost()
+        hideSwapTarget()
+    }
+
+    func showSwapTarget(frame: CGRect) {
+        guard isActive else { return }
+        if swapTargetOverlay == nil {
+            swapTargetOverlay = SwapTargetOverlay()
+        }
+        swapTargetOverlay?.show(at: frame)
+    }
+
+    func hideSwapTarget() {
+        swapTargetOverlay?.hide()
     }
 
     private func captureWindowThumbnail(windowId: Int, targetSize: CGSize) async -> CGImage? {

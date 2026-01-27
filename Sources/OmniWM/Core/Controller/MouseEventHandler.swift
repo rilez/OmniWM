@@ -231,13 +231,23 @@ final class MouseEventHandler {
         }
 
         if modifiers.contains(.maskAlternate) {
-            if let tiledWindow = engine.hitTestTiled(point: location, in: wsId) {
+            if let tiledWindow = engine.hitTestTiled(point: location, in: wsId),
+               let monitor = controller.internalWorkspaceManager.monitor(for: wsId)
+            {
+                var state = controller.internalWorkspaceManager.niriViewportState(for: wsId)
+                let workingFrame = controller.insetWorkingFrame(for: monitor)
+                let gaps = CGFloat(controller.internalWorkspaceManager.gaps)
+
                 if engine.interactiveMoveBegin(
                     windowId: tiledWindow.id,
                     windowHandle: tiledWindow.handle,
                     startLocation: location,
-                    in: wsId
+                    in: wsId,
+                    state: &state,
+                    workingFrame: workingFrame,
+                    gaps: gaps
                 ) {
+                    controller.internalWorkspaceManager.updateNiriViewportState(state, for: wsId)
                     isMoving = true
                     NSCursor.closedHand.set()
 
@@ -288,8 +298,23 @@ final class MouseEventHandler {
                 return
             }
 
-            _ = engine.interactiveMoveUpdate(currentLocation: location, in: wsId)
+            let hoverTarget = engine.interactiveMoveUpdate(currentLocation: location, in: wsId)
             dragGhostController?.updatePosition(cursorLocation: location)
+
+            if let hoverTarget {
+                switch hoverTarget {
+                case let .window(_, handle, insertPosition) where insertPosition == .swap:
+                    if let entry = controller.internalWorkspaceManager.entry(for: handle),
+                       let frame = AXWindowService.framePreferFast(entry.axRef)
+                    {
+                        dragGhostController?.showSwapTarget(frame: frame)
+                    }
+                default:
+                    dragGhostController?.hideSwapTarget()
+                }
+            } else {
+                dragGhostController?.hideSwapTarget()
+            }
             return
         }
 

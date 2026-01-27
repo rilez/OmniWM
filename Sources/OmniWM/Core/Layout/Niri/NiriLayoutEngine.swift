@@ -2000,7 +2000,10 @@ final class NiriLayoutEngine {
         windowId: NodeId,
         windowHandle: WindowHandle,
         startLocation: CGPoint,
-        in workspaceId: WorkspaceDescriptor.ID
+        in workspaceId: WorkspaceDescriptor.ID,
+        state: inout ViewportState,
+        workingFrame: CGRect,
+        gaps: CGFloat
     ) -> Bool {
         guard interactiveMove == nil else { return false }
         guard interactiveResize == nil else { return false }
@@ -2024,6 +2027,17 @@ final class NiriLayoutEngine {
             originalWindowIndexInColumn: winIdx,
             originalFrame: windowNode.frame ?? .zero,
             currentHoverTarget: nil
+        )
+
+        let cols = columns(in: workspaceId)
+        state.transitionToColumn(
+            colIdx,
+            columns: cols,
+            gap: gaps,
+            viewportWidth: workingFrame.width,
+            animate: false,
+            centerMode: centerFocusedColumn,
+            alwaysCenterSingleColumn: alwaysCenterSingleColumn
         )
 
         return true
@@ -2124,7 +2138,8 @@ final class NiriLayoutEngine {
         in workspaceId: WorkspaceDescriptor.ID,
         state: inout ViewportState,
         workingFrame: CGRect,
-        gaps: CGFloat
+        gaps: CGFloat,
+        fromColumnIndex: Int? = nil
     ) -> Bool {
         guard let sourceWindow = findNode(by: sourceWindowId) as? NiriWindow,
               let targetWindow = findNode(by: targetWindowId) as? NiriWindow
