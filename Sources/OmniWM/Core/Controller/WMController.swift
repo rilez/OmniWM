@@ -214,7 +214,7 @@ final class WMController {
             let orientation = settings.effectiveOrientation(for: monitor)
             niriEngine?.monitors[monitor.id]?.updateOrientation(orientation)
         }
-        layoutRefreshController.refreshWindowsAndLayout()
+        layoutRefreshController.requestRelayout(reason: .monitorSettingsChanged)
     }
 
     func updateMonitorNiriSettings() {
@@ -223,7 +223,7 @@ final class WMController {
             let resolved = settings.resolvedNiriSettings(for: monitor)
             engine.updateMonitorSettings(resolved, for: monitor.id)
         }
-        layoutRefreshController.refreshWindowsAndLayout()
+        layoutRefreshController.requestRelayout(reason: .monitorSettingsChanged)
     }
 
     func updateMonitorDwindleSettings() {
@@ -232,7 +232,7 @@ final class WMController {
             let resolved = settings.resolvedDwindleSettings(for: monitor)
             engine.updateMonitorSettings(resolved, for: monitor.id)
         }
-        layoutRefreshController.refreshWindowsAndLayout()
+        layoutRefreshController.requestRelayout(reason: .monitorSettingsChanged)
     }
 
     func workspaceBarItems(for monitor: Monitor, deduplicate: Bool, hideEmpty: Bool) -> [WorkspaceBarItem] {
@@ -299,7 +299,7 @@ final class WMController {
     func updateWorkspaceConfig() {
         workspaceManager.applySettings()
         syncMonitorsToNiriEngine()
-        layoutRefreshController.refreshWindowsAndLayout()
+        layoutRefreshController.requestFullRescan(reason: .workspaceConfigChanged)
         updateWorkspaceBar()
     }
 
@@ -312,7 +312,7 @@ final class WMController {
 
     func updateAppRules() {
         rebuildAppRulesCache()
-        layoutRefreshController.refreshWindowsAndLayout()
+        layoutRefreshController.requestFullRescan(reason: .appRulesChanged)
     }
 
     var hotkeyRegistrationFailures: Set<HotkeyCommand> {

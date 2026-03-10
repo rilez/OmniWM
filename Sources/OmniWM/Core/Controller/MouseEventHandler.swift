@@ -385,7 +385,7 @@ final class MouseEventHandler {
                 controller.workspaceManager.withNiriViewportState(for: wsId, mutate)
             }
         ) {
-            controller.layoutRefreshController.executeLayoutRefreshImmediate()
+            controller.layoutRefreshController.requestImmediateRelayout(reason: .interactiveGesture)
         }
     }
 
@@ -411,7 +411,7 @@ final class MouseEventHandler {
                     )
                 }
                 if didEnd {
-                    controller.layoutRefreshController.executeLayoutRefreshImmediate()
+                    controller.layoutRefreshController.requestImmediateRelayout(reason: .interactiveGesture)
                 }
             }
 
@@ -712,7 +712,7 @@ final class MouseEventHandler {
                 }
             }
         }
-        controller.layoutRefreshController.executeLayoutRefreshImmediate()
+        controller.layoutRefreshController.requestImmediateRelayout(reason: .interactiveGesture)
 
         if let handle = targetWindowHandle {
             controller.focusWindow(handle)
@@ -756,7 +756,7 @@ final class MouseEventHandler {
             didCancel = true
         }
         if didCancel {
-            controller.layoutRefreshController.executeLayoutRefreshImmediate()
+            controller.layoutRefreshController.requestImmediateRelayout(reason: .interactiveGesture)
         }
     }
 

@@ -148,7 +148,9 @@ import QuartzCore
         withDwindleContext { engine, wsId in
             if let handle = engine.moveFocus(direction: direction, in: wsId) {
                 controller.focusManager.setFocus(handle, in: wsId)
-                controller.layoutRefreshController.executeLayoutRefreshImmediate { [weak controller] in
+                controller.layoutRefreshController.requestImmediateRelayout(
+                    reason: .layoutCommand
+                ) { [weak controller] in
                     controller?.focusWindow(handle)
                 }
             }
@@ -159,7 +161,7 @@ import QuartzCore
         guard let controller else { return }
         withDwindleContext { engine, wsId in
             if engine.swapWindows(direction: direction, in: wsId) {
-                controller.layoutRefreshController.executeLayoutRefreshImmediate()
+                controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
             }
         }
     }
@@ -169,7 +171,7 @@ import QuartzCore
         withDwindleContext { engine, wsId in
             if let handle = engine.toggleFullscreen(in: wsId) {
                 controller.focusManager.setFocus(handle, in: wsId)
-                controller.layoutRefreshController.executeLayoutRefreshImmediate()
+                controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
             }
         }
     }
@@ -178,7 +180,7 @@ import QuartzCore
         guard let controller else { return }
         withDwindleContext { engine, wsId in
             engine.cycleSplitRatio(forward: forward, in: wsId)
-            controller.layoutRefreshController.executeLayoutRefreshImmediate()
+            controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
         }
     }
 
@@ -186,7 +188,7 @@ import QuartzCore
         guard let controller else { return }
         withDwindleContext { engine, wsId in
             engine.balanceSizes(in: wsId)
-            controller.layoutRefreshController.executeLayoutRefreshImmediate()
+            controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
         }
     }
 
@@ -197,7 +199,7 @@ import QuartzCore
         let engine = DwindleLayoutEngine()
         engine.animationClock = controller.animationClock
         controller.dwindleEngine = engine
-        controller.layoutRefreshController.refreshWindowsAndLayout()
+        controller.layoutRefreshController.requestRelayout(reason: .layoutConfigChanged)
     }
 
     func updateDwindleConfig(
@@ -221,7 +223,7 @@ import QuartzCore
         if let v = outerGapBottom { engine.settings.outerGapBottom = v }
         if let v = outerGapLeft { engine.settings.outerGapLeft = v }
         if let v = outerGapRight { engine.settings.outerGapRight = v }
-        controller.layoutRefreshController.refreshWindowsAndLayout()
+        controller.layoutRefreshController.requestRelayout(reason: .layoutConfigChanged)
     }
 
     func withDwindleContext(

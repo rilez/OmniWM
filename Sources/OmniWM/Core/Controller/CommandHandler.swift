@@ -389,7 +389,7 @@ final class CommandHandler {
         guard let controller else { return }
         controller.niriLayoutHandler.withNiriWorkspaceContext { engine, wsId, state, _, _, _ in
             if engine.toggleColumnTabbed(in: wsId, state: state) {
-                controller.layoutRefreshController.executeLayoutRefreshImmediate()
+                controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
                 if engine.hasAnyWindowAnimationsRunning(in: wsId) {
                     controller.layoutRefreshController.startScrollAnimation(for: wsId)
                 }
@@ -408,7 +408,7 @@ final class CommandHandler {
         controller.dwindleLayoutHandler.withDwindleContext { engine, wsId in
             let stable = controller.settings.dwindleMoveToRootStable
             engine.moveSelectionToRoot(stable: stable, in: wsId)
-            controller.layoutRefreshController.executeLayoutRefreshImmediate()
+            controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
         }
     }
 
@@ -416,7 +416,7 @@ final class CommandHandler {
         guard let controller else { return }
         controller.dwindleLayoutHandler.withDwindleContext { engine, wsId in
             engine.toggleOrientation(in: wsId)
-            controller.layoutRefreshController.executeLayoutRefreshImmediate()
+            controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
         }
     }
 
@@ -424,7 +424,7 @@ final class CommandHandler {
         guard let controller else { return }
         controller.dwindleLayoutHandler.withDwindleContext { engine, wsId in
             engine.swapSplit(in: wsId)
-            controller.layoutRefreshController.executeLayoutRefreshImmediate()
+            controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
         }
     }
 
@@ -433,7 +433,7 @@ final class CommandHandler {
         controller.dwindleLayoutHandler.withDwindleContext { engine, wsId in
             let delta = grow ? engine.settings.resizeStep : -engine.settings.resizeStep
             engine.resizeSelected(by: delta, direction: direction, in: wsId)
-            controller.layoutRefreshController.executeLayoutRefreshImmediate()
+            controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
         }
     }
 
@@ -474,6 +474,6 @@ final class CommandHandler {
         }
 
         controller.settings.workspaceConfigurations = configs
-        controller.layoutRefreshController.refreshWindowsAndLayout()
+        controller.layoutRefreshController.requestRelayout(reason: .workspaceLayoutToggled)
     }
 }

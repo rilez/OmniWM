@@ -46,25 +46,18 @@ final class ServiceLifecycleManager {
         if controller.hotkeysEnabled {
             controller.setHotkeysEnabled(true)
         }
-        controller.axManager.onAppLaunched = { [weak controller] app in
-            guard let controller else { return }
-            Task { @MainActor in
-                _ = await controller.axManager.windowsForApp(app)
-                controller.layoutRefreshController.scheduleRefreshSession(.axWindowCreated)
-            }
+        controller.axManager.onAppLaunched = { [weak self] _ in
+            self?.handleAppLaunched()
         }
-        controller.axManager.onAppTerminated = { [weak controller] pid in
-            guard let controller else { return }
-            controller.workspaceManager.removeWindowsForApp(pid: pid)
-            controller.appInfoCache.evict(pid: pid)
-            controller.layoutRefreshController.refreshWindowsAndLayout()
+        controller.axManager.onAppTerminated = { [weak self] pid in
+            self?.handleAppTerminated(pid: pid)
         }
         AppAXContext.onWindowDestroyed = { [weak controller] pid, windowId in
             guard let controller else { return }
             controller.axEventHandler.handleRemoved(pid: pid, winId: windowId)
         }
-        AppAXContext.onWindowDestroyedUnknown = { [weak controller] in
-            controller?.layoutRefreshController.refreshWindowsAndLayout()
+        AppAXContext.onWindowDestroyedUnknown = { [weak self] in
+            self?.handleUnknownWindowDestroyed()
         }
         AppAXContext.onFocusedWindowChanged = { [weak controller] pid in
             controller?.axEventHandler.handleAppActivation(pid: pid)
@@ -77,11 +70,11 @@ final class ServiceLifecycleManager {
         setupDisplayObserver()
         setupAppActivationObserver()
         setupAppHideObservers()
-        controller.workspaceManager.onGapsChanged = { [weak controller] in
-            controller?.layoutRefreshController.refreshWindowsAndLayout()
+        controller.workspaceManager.onGapsChanged = { [weak self] in
+            self?.handleGapsChanged()
         }
 
-        controller.layoutRefreshController.refreshWindowsAndLayout()
+        performStartupRefresh()
         startSecureInputMonitor()
         startLockScreenObserver()
     }
@@ -94,8 +87,7 @@ final class ServiceLifecycleManager {
         controller.lockScreenObserver.onUnlockDetected = { [weak controller] in
             guard let controller else { return }
             controller.isLockScreenActive = false
-            controller.layoutRefreshController.refreshWindowsAndLayout()
-            controller.updateWorkspaceBar()
+            controller.serviceLifecycleManager.handleUnlockDetected()
         }
         controller.lockScreenObserver.start()
     }
@@ -194,7 +186,42 @@ final class ServiceLifecycleManager {
         let focusedWsId = controller.focusedHandle.flatMap { controller.workspaceManager.workspace(for: $0) }
         controller.workspaceManager.garbageCollectUnusedWorkspaces(focusedWorkspaceId: focusedWsId)
 
-        controller.layoutRefreshController.refreshWindowsAndLayout()
+        controller.layoutRefreshController.requestFullRescan(reason: .monitorConfigurationChanged)
+    }
+
+    func handleAppTerminated(pid: pid_t) {
+        guard let controller else { return }
+        controller.workspaceManager.removeWindowsForApp(pid: pid)
+        controller.appInfoCache.evict(pid: pid)
+        controller.layoutRefreshController.requestFullRescan(reason: .appTerminated)
+    }
+
+    func handleGapsChanged() {
+        controller?.layoutRefreshController.requestRelayout(reason: .gapsChanged)
+    }
+
+    func handleAppLaunched() {
+        controller?.layoutRefreshController.requestFullRescan(reason: .appLaunched)
+    }
+
+    func handleUnknownWindowDestroyed() {
+        controller?.layoutRefreshController.requestFullRescan(reason: .unknownWindowDestroyed)
+    }
+
+    func handleUnlockDetected() {
+        guard let controller else { return }
+        controller.layoutRefreshController.requestFullRescan(reason: .unlock)
+        controller.updateWorkspaceBar()
+    }
+
+    func performStartupRefresh() {
+        controller?.layoutRefreshController.requestFullRescan(reason: .startup)
+    }
+
+    func handleActiveSpaceDidChange() {
+        guard let controller else { return }
+        controller.borderManager.hideBorder()
+        controller.layoutRefreshController.requestFullRescan(reason: .activeSpaceChanged)
     }
 
     private func captureWorkspaceSnapshotsBeforeMonitorUpdate() -> [WorkspaceRestoreSnapshot] {
@@ -267,15 +294,14 @@ final class ServiceLifecycleManager {
     }
 
     private func setupWorkspaceObservation() {
-        guard let controller else { return }
+        guard controller != nil else { return }
         workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil,
             queue: .main
-        ) { [weak controller] _ in
+        ) { [weak self] _ in
             Task { @MainActor in
-                controller?.borderManager.hideBorder()
-                controller?.layoutRefreshController.refreshWindowsAndLayout()
+                self?.handleActiveSpaceDidChange()
             }
         }
     }

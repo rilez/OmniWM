@@ -836,7 +836,7 @@ import QuartzCore
 
             engine.toggleFullscreen(windowNode, state: &state)
 
-            controller.layoutRefreshController.executeLayoutRefreshImmediate()
+            controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
             if state.viewOffsetPixels.isAnimating {
                 controller.layoutRefreshController.startScrollAnimation(for: wsId)
             }
@@ -871,7 +871,7 @@ import QuartzCore
                 workingAreaWidth: workingFrame.width,
                 gaps: gaps
             )
-            controller.layoutRefreshController.executeLayoutRefreshImmediate()
+            controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
             if engine.hasAnyColumnAnimationsRunning(in: wsId) {
                 controller.layoutRefreshController.startScrollAnimation(for: wsId)
             }
@@ -895,7 +895,7 @@ import QuartzCore
 
         syncMonitorsToNiriEngine()
 
-        controller.layoutRefreshController.refreshWindowsAndLayout()
+        controller.layoutRefreshController.requestRelayout(reason: .layoutConfigChanged)
     }
 
     func syncMonitorsToNiriEngine() {
@@ -944,7 +944,7 @@ import QuartzCore
             singleWindowAspectRatio: singleWindowAspectRatio,
             presetColumnWidths: columnWidthPresets?.map { .proportion($0) }
         )
-        controller.layoutRefreshController.refreshWindowsAndLayout()
+        controller.layoutRefreshController.requestRelayout(reason: .layoutConfigChanged)
     }
 
     // MARK: - Node Activation & Operation Context
@@ -985,7 +985,9 @@ import QuartzCore
 
         if options.layoutRefresh {
             let focusHandle = options.axFocus ? (node as? NiriWindow)?.handle : nil
-            controller.layoutRefreshController.executeLayoutRefreshImmediate { [weak controller] in
+            controller.layoutRefreshController.requestImmediateRelayout(
+                reason: .layoutCommand
+            ) { [weak controller] in
                 if let handle = focusHandle {
                     controller?.focusWindow(handle)
                 }
@@ -1170,7 +1172,7 @@ struct NodeActivationOptions {
             animationTime: animationTime
         ).frames
         _ = engine.triggerMoveAnimations(in: wsId, oldFrames: oldFrames, newFrames: newFrames)
-        controller.layoutRefreshController.executeLayoutRefreshImmediate()
+        controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
         return state.viewOffsetPixels.isAnimating || engine.hasAnyWindowAnimationsRunning(in: wsId)
     }
 
@@ -1178,14 +1180,14 @@ struct NodeActivationOptions {
         state: ViewportState,
         oldFrames: [WindowHandle: CGRect]
     ) -> Bool {
-        controller.layoutRefreshController.executeLayoutRefreshImmediate()
+        controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
         let newFrames = engine.captureWindowFrames(in: wsId)
         _ = engine.triggerMoveAnimations(in: wsId, oldFrames: oldFrames, newFrames: newFrames)
         return state.viewOffsetPixels.isAnimating || engine.hasAnyWindowAnimationsRunning(in: wsId)
     }
 
     func commitSimple(state: ViewportState) -> Bool {
-        controller.layoutRefreshController.executeLayoutRefreshImmediate()
+        controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
         return state.viewOffsetPixels.isAnimating
     }
 }

@@ -755,7 +755,7 @@ private extension OverviewController {
             wmController.layoutRefreshController.startScrollAnimation(for: targetWsId)
         }
 
-        wmController.layoutRefreshController.refreshWindowsAndLayout()
+        wmController.layoutRefreshController.requestImmediateRelayout(reason: .overviewMutation)
     }
 
     func isNiriLayout(workspaceId: WorkspaceDescriptor.ID) -> Bool {

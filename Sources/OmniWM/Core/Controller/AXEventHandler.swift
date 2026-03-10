@@ -35,13 +35,13 @@ final class AXEventHandler: CGSEventDelegate {
         case let .moved(windowId):
             handleWindowMoveOrResize(windowId: windowId)
             if !isWindowHidden(windowId: windowId) {
-                controller.layoutRefreshController.scheduleRefreshSession(.axWindowChanged)
+                controller.layoutRefreshController.requestRelayout(reason: .axWindowChanged)
             }
 
         case let .resized(windowId):
             handleWindowMoveOrResize(windowId: windowId)
             if !isWindowHidden(windowId: windowId) {
-                controller.layoutRefreshController.scheduleRefreshSession(.axWindowChanged)
+                controller.layoutRefreshController.requestRelayout(reason: .axWindowChanged)
             }
 
         case let .frontAppChanged(pid):
@@ -159,7 +159,7 @@ final class AXEventHandler: CGSEventDelegate {
             }
         }
 
-        controller.layoutRefreshController.scheduleRefreshSession(.axWindowCreated)
+        controller.layoutRefreshController.requestRelayout(reason: .axWindowCreated)
     }
 
     func handleRemoved(pid: pid_t, winId: Int) {
@@ -297,38 +297,48 @@ final class AXEventHandler: CGSEventDelegate {
                 }
             }
 
-            controller.focusManager.setFocus(entry.handle, in: wsId)
-
-            if let engine = controller.niriEngine,
-               let node = engine.findNode(for: entry.handle),
-               let _ = controller.workspaceManager.monitor(for: wsId)
-            {
-                controller.workspaceManager.withNiriViewportState(for: wsId) { state in
-                    controller.niriLayoutHandler.activateNode(
-                        node, in: wsId, state: &state,
-                        options: .init(layoutRefresh: isWorkspaceActive, axFocus: false)
-                    )
-                }
-
-                if let frame = node.frame {
-                    controller.borderCoordinator.updateBorderIfAllowed(handle: entry.handle, frame: frame, windowId: entry.windowId)
-                } else if let frame = try? AXWindowService.frame(entry.axRef) {
-                    controller.borderCoordinator.updateBorderIfAllowed(handle: entry.handle, frame: frame, windowId: entry.windowId)
-                }
-            } else if let frame = try? AXWindowService.frame(entry.axRef) {
-                controller.borderCoordinator.updateBorderIfAllowed(handle: entry.handle, frame: frame, windowId: entry.windowId)
-            }
-            controller.niriLayoutHandler.updateTabbedColumnOverlays()
-            if !isWorkspaceActive {
-                controller.layoutRefreshController.refreshWindowsAndLayout()
-                controller.focusWindow(entry.handle)
-            }
+            handleManagedAppActivation(entry: entry, isWorkspaceActive: isWorkspaceActive)
             return
         }
 
         controller.focusManager.setNonManagedFocus(active: true)
         controller.focusManager.setAppFullscreen(active: false)
         controller.borderManager.hideBorder()
+    }
+
+    func handleManagedAppActivation(entry: WindowModel.Entry, isWorkspaceActive: Bool) {
+        guard let controller else { return }
+        let wsId = entry.workspaceId
+
+        controller.focusManager.setFocus(entry.handle, in: wsId)
+
+        if let engine = controller.niriEngine,
+           let node = engine.findNode(for: entry.handle),
+           let _ = controller.workspaceManager.monitor(for: wsId)
+        {
+            controller.workspaceManager.withNiriViewportState(for: wsId) { state in
+                controller.niriLayoutHandler.activateNode(
+                    node, in: wsId, state: &state,
+                    options: .init(layoutRefresh: isWorkspaceActive, axFocus: false)
+                )
+            }
+
+            if let frame = node.frame {
+                controller.borderCoordinator.updateBorderIfAllowed(handle: entry.handle, frame: frame, windowId: entry.windowId)
+            } else if let frame = try? AXWindowService.frame(entry.axRef) {
+                controller.borderCoordinator.updateBorderIfAllowed(handle: entry.handle, frame: frame, windowId: entry.windowId)
+            }
+        } else if let frame = try? AXWindowService.frame(entry.axRef) {
+            controller.borderCoordinator.updateBorderIfAllowed(handle: entry.handle, frame: frame, windowId: entry.windowId)
+        }
+        controller.niriLayoutHandler.updateTabbedColumnOverlays()
+        if !isWorkspaceActive {
+            controller.layoutRefreshController.commitWorkspaceTransition(
+                reason: .appActivationTransition
+            ) { [weak controller] in
+                controller?.focusWindow(entry.handle)
+            }
+        }
     }
 
     func handleAppHidden(pid: pid_t) {
@@ -338,7 +348,7 @@ final class AXEventHandler: CGSEventDelegate {
         for entry in controller.workspaceManager.entries(forPid: pid) {
             controller.workspaceManager.setLayoutReason(.macosHiddenApp, for: entry.handle)
         }
-        controller.layoutRefreshController.scheduleRefreshSession(.appHidden)
+        controller.layoutRefreshController.requestRelayout(reason: .appHidden)
     }
 
     func handleAppUnhidden(pid: pid_t) {
@@ -350,6 +360,6 @@ final class AXEventHandler: CGSEventDelegate {
                 _ = controller.workspaceManager.restoreFromNativeState(for: entry.handle)
             }
         }
-        controller.layoutRefreshController.scheduleRefreshSession(.appUnhidden)
+        controller.layoutRefreshController.requestRelayout(reason: .appUnhidden)
     }
 }

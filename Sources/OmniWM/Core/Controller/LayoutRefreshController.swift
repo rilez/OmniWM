@@ -3,6 +3,44 @@ import Foundation
 import QuartzCore
 
 @MainActor final class LayoutRefreshController: NSObject {
+    typealias PostLayoutAction = @MainActor () -> Void
+
+    enum RefreshRoute: Equatable {
+        case relayout
+        case immediateRelayout
+    }
+
+    enum ScheduledRefreshKind: Int {
+        case relayout
+        case immediateRelayout
+        case fullRescan
+    }
+
+    struct ScheduledRefresh {
+        var kind: ScheduledRefreshKind
+        var reason: RefreshReason
+        var postLayoutActions: [PostLayoutAction] = []
+
+        init(kind: ScheduledRefreshKind, reason: RefreshReason, postLayout: PostLayoutAction? = nil) {
+            self.kind = kind
+            self.reason = reason
+            if let postLayout {
+                postLayoutActions = [postLayout]
+            }
+        }
+    }
+
+    struct RefreshDebugCounters {
+        var fullRescanExecutions: Int = 0
+        var relayoutExecutions: Int = 0
+        var immediateRelayoutExecutions: Int = 0
+    }
+
+    struct RefreshDebugHooks {
+        var onFullRescan: ((RefreshReason) async throws -> Bool)?
+        var onRelayout: ((RefreshReason, RefreshRoute) async -> Bool)?
+    }
+
     weak var controller: WMController?
     static let hiddenWindowEdgeRevealEpsilon: CGFloat = 1.0
 
@@ -38,6 +76,8 @@ import QuartzCore
         }
 
         var activeRefreshTask: Task<Void, Never>?
+        var activeRefresh: ScheduledRefresh?
+        var pendingRefresh: ScheduledRefresh?
         var isInLightSession: Bool = false
         var isImmediateLayoutInProgress: Bool = false
         var isIncrementalRefreshInProgress: Bool = false
@@ -50,6 +90,8 @@ import QuartzCore
     }
 
     var layoutState = LayoutState()
+    var debugCounters = RefreshDebugCounters()
+    var debugHooks = RefreshDebugHooks()
 
     private(set) lazy var niriHandler = NiriLayoutHandler(controller: controller)
     private(set) lazy var dwindleHandler = DwindleLayoutHandler(controller: controller)
@@ -311,16 +353,47 @@ import QuartzCore
         niriHandler.cancelActiveAnimations(for: workspaceId)
     }
 
-    func refreshWindowsAndLayout() {
-        scheduleRefreshSession(.timerRefresh)
+    func resetDebugState() {
+        debugCounters = RefreshDebugCounters()
+        debugHooks = RefreshDebugHooks()
     }
 
-    func scheduleRefreshSession(_ event: RefreshSessionEvent) {
+    func requestFullRescan(reason: RefreshReason) {
+        scheduleFullRescan(reason: reason)
+    }
+
+    func requestRelayout(reason: RefreshReason) {
+        scheduleRefreshSession(reason.relayoutSchedulingPolicy, reason: reason)
+    }
+
+    func requestImmediateRelayout(
+        reason: RefreshReason,
+        postLayout: PostLayoutAction? = nil
+    ) {
         guard !layoutState.isInLightSession else { return }
-        if layoutState.isFullEnumerationInProgress {
-            return
+        enqueueRefresh(.init(kind: .immediateRelayout, reason: reason, postLayout: postLayout))
+    }
+
+    func commitWorkspaceTransition(
+        affectedWorkspaces: Set<WorkspaceDescriptor.ID> = [],
+        reason: RefreshReason = .workspaceTransition,
+        postLayout: PostLayoutAction? = nil
+    ) {
+        if !affectedWorkspaces.isEmpty {
+            applyLayoutForWorkspaces(affectedWorkspaces)
         }
-        if case .axWindowChanged = event {
+        hideInactiveWorkspacesSync()
+        requestImmediateRelayout(reason: reason, postLayout: postLayout)
+    }
+
+    private func scheduleFullRescan(reason: RefreshReason) {
+        guard !layoutState.isInLightSession else { return }
+        enqueueRefresh(.init(kind: .fullRescan, reason: reason))
+    }
+
+    private func scheduleRefreshSession(_ policy: RelayoutSchedulingPolicy, reason: RefreshReason) {
+        guard !layoutState.isInLightSession else { return }
+        if policy.shouldDropWhileBusy {
             if layoutState.isIncrementalRefreshInProgress || layoutState.isImmediateLayoutInProgress {
                 return
             }
@@ -329,57 +402,59 @@ import QuartzCore
                 return
             }
         }
-        layoutState.activeRefreshTask?.cancel()
-        layoutState.activeRefreshTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let baseDebounce = event.debounceInterval
-                if baseDebounce > 0 {
-                    try await Task.sleep(nanoseconds: baseDebounce)
-                }
-                try Task.checkCancellation()
-                if event.requiresFullEnumeration {
-                    try await executeFullRefresh()
-                } else {
-                    await executeIncrementalRefresh()
-                }
-            } catch {
-                return
-            }
-        }
+        enqueueRefresh(.init(kind: .relayout, reason: reason))
     }
 
-    private func executeIncrementalRefresh() async {
-        guard !layoutState.isIncrementalRefreshInProgress else { return }
-        guard !layoutState.isImmediateLayoutInProgress else { return }
+    private func executeScheduledRelayout(reason: RefreshReason) async -> Bool {
+        guard !layoutState.isIncrementalRefreshInProgress else { return false }
+        guard !layoutState.isImmediateLayoutInProgress else { return false }
         layoutState.isIncrementalRefreshInProgress = true
         defer { layoutState.isIncrementalRefreshInProgress = false }
+        return await executeRelayout(
+            reason: reason,
+            route: .relayout,
+            useScrollAnimationPath: false,
+            recoverFocus: true
+        )
+    }
 
-        guard let controller else { return }
+    private func executeRelayout(
+        reason: RefreshReason,
+        route: RefreshRoute,
+        useScrollAnimationPath: Bool,
+        recoverFocus: Bool
+    ) async -> Bool {
+        recordRefreshExecution(route)
+        if await debugHooks.onRelayout?(reason, route) == true {
+            return true
+        }
+
+        guard let controller else { return false }
 
         if controller.isFrontmostAppLockScreen() || controller.isLockScreenActive {
-            return
+            return false
         }
 
-        var activeWorkspaceIds: Set<WorkspaceDescriptor.ID> = []
-        for monitor in controller.workspaceManager.monitors {
-            if let workspace = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id) {
-                activeWorkspaceIds.insert(workspace.id)
-            }
-        }
+        let activeWorkspaceIds = currentActiveWorkspaceIds()
 
         let (niriWorkspaces, dwindleWorkspaces) = partitionWorkspacesByLayoutType(activeWorkspaceIds)
 
         if !niriWorkspaces.isEmpty {
-            await niriHandler.layoutWithNiriEngine(activeWorkspaces: niriWorkspaces, useScrollAnimationPath: false)
+            await niriHandler.layoutWithNiriEngine(
+                activeWorkspaces: niriWorkspaces,
+                useScrollAnimationPath: useScrollAnimationPath
+            )
         }
+        guard !Task.isCancelled else { return false }
         if !dwindleWorkspaces.isEmpty {
             await dwindleHandler.layoutWithDwindleEngine(activeWorkspaces: dwindleWorkspaces)
         }
+        guard !Task.isCancelled else { return false }
 
         hideInactiveWorkspaces(activeWorkspaceIds: activeWorkspaceIds)
+        guard !Task.isCancelled else { return false }
 
-        if let focusedWorkspaceId = controller.activeWorkspace()?.id {
+        if recoverFocus, let focusedWorkspaceId = controller.activeWorkspace()?.id {
             controller.focusManager.ensureFocusedHandleValid(
                 in: focusedWorkspaceId,
                 engine: controller.niriEngine,
@@ -387,11 +462,15 @@ import QuartzCore
                 focusWindowAction: { [weak controller] handle in controller?.focusWindow(handle) }
             )
         }
+
+        return true
     }
 
     func runLightSession(_ body: () -> Void) {
         layoutState.activeRefreshTask?.cancel()
         layoutState.activeRefreshTask = nil
+        layoutState.activeRefresh = nil
+        layoutState.pendingRefresh = nil
         layoutState.isInLightSession = true
 
         if let controller {
@@ -418,14 +497,7 @@ import QuartzCore
 
         body()
         layoutState.isInLightSession = false
-        refreshWindowsAndLayout()
-    }
-
-    func executeLayoutRefreshImmediate(postLayout: (@MainActor () -> Void)? = nil) {
-        Task { @MainActor [weak self] in
-            await self?.executeLayoutRefreshImmediateCore()
-            postLayout?()
-        }
+        requestImmediateRelayout(reason: .lightSessionCommit)
     }
 
     func hideInactiveWorkspacesSync() {
@@ -439,35 +511,29 @@ import QuartzCore
         hideInactiveWorkspaces(activeWorkspaceIds: activeWorkspaceIds)
     }
 
-    private func executeLayoutRefreshImmediateCore() async {
-        guard !layoutState.isImmediateLayoutInProgress else { return }
+    private func executeImmediateRelayout(reason: RefreshReason) async -> Bool {
+        guard !layoutState.isImmediateLayoutInProgress else { return false }
         layoutState.isImmediateLayoutInProgress = true
         defer { layoutState.isImmediateLayoutInProgress = false }
+        return await executeRelayout(
+            reason: reason,
+            route: .immediateRelayout,
+            useScrollAnimationPath: !niriHandler.scrollAnimationByDisplay.isEmpty,
+            recoverFocus: false
+        )
+    }
 
-        guard let controller else { return }
-
-        var activeWorkspaceIds: Set<WorkspaceDescriptor.ID> = []
-        for monitor in controller.workspaceManager.monitors {
-            if let workspace = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id) {
-                activeWorkspaceIds.insert(workspace.id)
-            }
+    func waitForRefreshWorkForTests() async {
+        while let task = layoutState.activeRefreshTask {
+            await task.value
         }
-
-        let (niriWorkspaces, dwindleWorkspaces) = partitionWorkspacesByLayoutType(activeWorkspaceIds)
-
-        if !niriWorkspaces.isEmpty {
-            await niriHandler.layoutWithNiriEngine(activeWorkspaces: niriWorkspaces, useScrollAnimationPath: !niriHandler.scrollAnimationByDisplay.isEmpty)
-        }
-        if !dwindleWorkspaces.isEmpty {
-            await dwindleHandler.layoutWithDwindleEngine(activeWorkspaces: dwindleWorkspaces)
-        }
-
-        hideInactiveWorkspaces(activeWorkspaceIds: activeWorkspaceIds)
     }
 
     func resetState() {
         layoutState.activeRefreshTask?.cancel()
         layoutState.activeRefreshTask = nil
+        layoutState.activeRefresh = nil
+        layoutState.pendingRefresh = nil
         layoutState.isInLightSession = false
 
         for (_, link) in layoutState.displayLinksByDisplay {
@@ -486,14 +552,18 @@ import QuartzCore
         }
     }
 
-    private func executeFullRefresh() async throws {
+    private func executeFullRefresh(reason: RefreshReason) async throws -> Bool {
+        debugCounters.fullRescanExecutions += 1
+        if try await debugHooks.onFullRescan?(reason) == true {
+            return true
+        }
         layoutState.isFullEnumerationInProgress = true
         defer { layoutState.isFullEnumerationInProgress = false }
 
-        guard let controller else { return }
+        guard let controller else { return false }
 
         if controller.isFrontmostAppLockScreen() || controller.isLockScreenActive {
-            return
+            return false
         }
 
         let windows = await controller.axManager.currentWindowsAsync()
@@ -539,9 +609,11 @@ import QuartzCore
         if !niriWorkspaces.isEmpty {
             await niriHandler.layoutWithNiriEngine(activeWorkspaces: niriWorkspaces, useScrollAnimationPath: false)
         }
+        try Task.checkCancellation()
         if !dwindleWorkspaces.isEmpty {
             await dwindleHandler.layoutWithDwindleEngine(activeWorkspaces: dwindleWorkspaces)
         }
+        try Task.checkCancellation()
         // Rebuild workspace-level frame suppression (executeFullRefresh has its own hide loop)
         var allEntries: [(workspaceId: WorkspaceDescriptor.ID, windowId: Int)] = []
         for ws in controller.workspaceManager.workspaces {
@@ -553,6 +625,7 @@ import QuartzCore
             allEntries: allEntries,
             activeWorkspaceIds: activeWorkspaceIds
         )
+        try Task.checkCancellation()
 
         let preferredSides = preferredHideSides(for: controller.workspaceManager.monitors)
         for ws in controller.workspaceManager.workspaces where !activeWorkspaceIds.contains(ws.id) {
@@ -560,7 +633,9 @@ import QuartzCore
             let preferredSide = preferredSides[monitor.id] ?? .right
             hideWorkspace(ws.id, monitor: monitor, preferredSide: preferredSide)
         }
+        try Task.checkCancellation()
         controller.updateWorkspaceBar()
+        try Task.checkCancellation()
 
         if let focusedWorkspaceId {
             controller.focusManager.ensureFocusedHandleValid(
@@ -573,6 +648,7 @@ import QuartzCore
 
         layoutState.hasCompletedInitialRefresh = true
         controller.axEventHandler.subscribeToManagedWindows()
+        return true
     }
 
     func layoutWithNiriEngine(activeWorkspaces: Set<WorkspaceDescriptor.ID>, useScrollAnimationPath: Bool = false, removedNodeId: NodeId? = nil) async {
@@ -610,6 +686,155 @@ import QuartzCore
         }
 
         return (niriWorkspaces, dwindleWorkspaces)
+    }
+
+    private func currentActiveWorkspaceIds() -> Set<WorkspaceDescriptor.ID> {
+        guard let controller else { return [] }
+
+        var activeWorkspaceIds: Set<WorkspaceDescriptor.ID> = []
+        for monitor in controller.workspaceManager.monitors {
+            if let workspace = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id) {
+                activeWorkspaceIds.insert(workspace.id)
+            }
+        }
+        return activeWorkspaceIds
+    }
+
+    private func enqueueRefresh(_ refresh: ScheduledRefresh) {
+        if let activeRefresh = layoutState.activeRefresh {
+            handleRefresh(refresh, whileActive: activeRefresh)
+            return
+        }
+
+        mergePendingRefresh(refresh)
+        startNextRefreshIfNeeded()
+    }
+
+    private func handleRefresh(_ refresh: ScheduledRefresh, whileActive activeRefresh: ScheduledRefresh) {
+        switch (activeRefresh.kind, refresh.kind) {
+        case (.fullRescan, .fullRescan):
+            mergePendingRefresh(refresh)
+        case (.fullRescan, _):
+            absorbIntoActiveFullRescan(refresh)
+        case (.immediateRelayout, .fullRescan):
+            mergePendingRefresh(refresh)
+            layoutState.activeRefreshTask?.cancel()
+        case (.immediateRelayout, .immediateRelayout):
+            mergePendingRefresh(refresh)
+            layoutState.activeRefreshTask?.cancel()
+        case (.immediateRelayout, .relayout):
+            break
+        case (.relayout, .fullRescan),
+             (.relayout, .immediateRelayout),
+             (.relayout, .relayout):
+            mergePendingRefresh(refresh)
+            layoutState.activeRefreshTask?.cancel()
+        }
+    }
+
+    private func absorbIntoActiveFullRescan(_ refresh: ScheduledRefresh) {
+        guard !refresh.postLayoutActions.isEmpty else { return }
+        guard var activeRefresh = layoutState.activeRefresh else { return }
+        activeRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
+        layoutState.activeRefresh = activeRefresh
+    }
+
+    private func mergePendingRefresh(_ refresh: ScheduledRefresh) {
+        guard var pendingRefresh = layoutState.pendingRefresh else {
+            layoutState.pendingRefresh = refresh
+            return
+        }
+
+        switch (pendingRefresh.kind, refresh.kind) {
+        case (.fullRescan, .fullRescan):
+            pendingRefresh.reason = refresh.reason
+            pendingRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
+        case (.fullRescan, _):
+            pendingRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
+        case (.immediateRelayout, .fullRescan),
+             (.relayout, .fullRescan):
+            var upgradedRefresh = refresh
+            upgradedRefresh.postLayoutActions.append(contentsOf: pendingRefresh.postLayoutActions)
+            pendingRefresh = upgradedRefresh
+        case (.immediateRelayout, .immediateRelayout),
+             (.relayout, .relayout):
+            pendingRefresh.reason = refresh.reason
+            pendingRefresh.postLayoutActions.append(contentsOf: refresh.postLayoutActions)
+        case (.immediateRelayout, .relayout):
+            break
+        case (.relayout, .immediateRelayout):
+            var upgradedRefresh = refresh
+            upgradedRefresh.postLayoutActions.append(contentsOf: pendingRefresh.postLayoutActions)
+            pendingRefresh = upgradedRefresh
+        }
+
+        layoutState.pendingRefresh = pendingRefresh
+    }
+
+    private func startNextRefreshIfNeeded() {
+        guard layoutState.activeRefreshTask == nil, let refresh = layoutState.pendingRefresh else { return }
+
+        layoutState.pendingRefresh = nil
+        layoutState.activeRefresh = refresh
+        layoutState.activeRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let didComplete = await self.execute(refresh)
+            self.finishRefresh(refresh, didComplete: didComplete)
+        }
+    }
+
+    private func execute(_ refresh: ScheduledRefresh) async -> Bool {
+        do {
+            switch refresh.kind {
+            case .fullRescan:
+                return try await executeFullRefresh(reason: refresh.reason)
+            case .relayout:
+                let policy = refresh.reason.relayoutSchedulingPolicy
+                if policy.debounceInterval > 0 {
+                    try await Task.sleep(nanoseconds: policy.debounceInterval)
+                }
+                try Task.checkCancellation()
+                return await executeScheduledRelayout(reason: refresh.reason)
+            case .immediateRelayout:
+                return await executeImmediateRelayout(reason: refresh.reason)
+            }
+        } catch {
+            return false
+        }
+    }
+
+    private func finishRefresh(_ refresh: ScheduledRefresh, didComplete: Bool) {
+        let completedRefresh = layoutState.activeRefresh ?? refresh
+
+        if !didComplete,
+           completedRefresh.kind == .fullRescan,
+           var pendingRefresh = layoutState.pendingRefresh,
+           pendingRefresh.kind == .fullRescan,
+           !completedRefresh.postLayoutActions.isEmpty
+        {
+            pendingRefresh.postLayoutActions.insert(contentsOf: completedRefresh.postLayoutActions, at: 0)
+            layoutState.pendingRefresh = pendingRefresh
+        }
+
+        layoutState.activeRefreshTask = nil
+        layoutState.activeRefresh = nil
+
+        if didComplete {
+            for postLayoutAction in completedRefresh.postLayoutActions {
+                postLayoutAction()
+            }
+        }
+
+        startNextRefreshIfNeeded()
+    }
+
+    private func recordRefreshExecution(_ route: RefreshRoute) {
+        switch route {
+        case .relayout:
+            debugCounters.relayoutExecutions += 1
+        case .immediateRelayout:
+            debugCounters.immediateRelayoutExecutions += 1
+        }
     }
 
     func backingScale(for monitor: Monitor) -> CGFloat {

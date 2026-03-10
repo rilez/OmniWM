@@ -233,10 +233,10 @@ final class WindowActionHandler {
             }
         }
 
-        controller.layoutRefreshController.refreshWindowsAndLayout()
-
         controller.focusManager.setFocus(handle, in: workspaceId)
-        controller.focusWindow(handle)
+        controller.layoutRefreshController.commitWorkspaceTransition(reason: .workspaceTransition) { [weak controller] in
+            controller?.focusWindow(handle)
+        }
     }
 
     func focusWorkspaceFromBar(named name: String) {
@@ -253,11 +253,11 @@ final class WindowActionHandler {
         }
         controller.activeMonitorId = result.monitor.id
 
-        controller.resolveAndSetWorkspaceFocus(for: result.workspace.id)
-
-        controller.layoutRefreshController.refreshWindowsAndLayout()
-        if let handle = controller.focusedHandle {
-            controller.focusWindow(handle)
+        let focusedHandle = controller.resolveAndSetWorkspaceFocus(for: result.workspace.id)
+        controller.layoutRefreshController.commitWorkspaceTransition(reason: .workspaceTransition) { [weak controller] in
+            if let focusedHandle {
+                controller?.focusWindow(focusedHandle)
+            }
         }
     }
 
