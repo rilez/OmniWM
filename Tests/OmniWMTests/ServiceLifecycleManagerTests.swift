@@ -169,6 +169,58 @@ private func makeLifecycleWindow(windowId: Int = 101) -> AXWindowRef {
         #expect(controller.workspaceManager.niriViewportState(for: ws2).selectedNodeId == selectedNodeId)
     }
 
+    @Test @MainActor func monitorDisconnectKeepsMigratedWorkspaceWindowsActiveDuringVisibilityRefresh() {
+        let defaults = makeLifecycleTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .main),
+            WorkspaceConfiguration(name: "2", monitorAssignment: .secondary)
+        ]
+
+        let controller = WMController(settings: settings)
+        let lifecycleManager = ServiceLifecycleManager(controller: controller)
+
+        let left = makeLifecycleMonitor(displayId: 100, name: "Left", x: 0, y: 0)
+        let right = makeLifecycleMonitor(displayId: 200, name: "Right", x: 1920, y: 0)
+        controller.workspaceManager.applyMonitorConfigurationChange([left, right])
+
+        guard let ws1 = controller.workspaceManager.workspaceId(for: "1", createIfMissing: true),
+              let ws2 = controller.workspaceManager.workspaceId(for: "2", createIfMissing: true) else {
+            Issue.record("Failed to create expected workspaces")
+            return
+        }
+
+        #expect(controller.workspaceManager.setActiveWorkspace(ws1, on: left.id))
+        #expect(controller.workspaceManager.setActiveWorkspace(ws2, on: right.id))
+
+        _ = controller.workspaceManager.addWindow(
+            makeLifecycleWindow(windowId: 9201),
+            pid: 9201,
+            windowId: 9201,
+            to: ws1
+        )
+        let migratedToken = controller.workspaceManager.addWindow(
+            makeLifecycleWindow(windowId: 9202),
+            pid: 9202,
+            windowId: 9202,
+            to: ws2
+        )
+
+        lifecycleManager.applyMonitorConfigurationChanged(
+            currentMonitors: [left],
+            performPostUpdateActions: false
+        )
+        controller.layoutRefreshController.hideInactiveWorkspacesSync()
+
+        #expect(controller.workspaceManager.activeWorkspace(on: left.id)?.id == ws2)
+        #expect(controller.workspaceManager.previousWorkspace(on: left.id)?.id == ws1)
+        #expect(controller.workspaceManager.entry(forWindowId: 9202, inVisibleWorkspaces: true) != nil)
+        #expect(controller.workspaceManager.entry(forWindowId: 9201, inVisibleWorkspaces: true) == nil)
+        #expect(!controller.axManager.inactiveWorkspaceWindowIds.contains(9202))
+        #expect(controller.axManager.inactiveWorkspaceWindowIds.contains(9201))
+        #expect(controller.workspaceManager.hiddenState(for: migratedToken) == nil)
+    }
+
     @Test @MainActor func monitorConfigurationChangeRequestsFullRescanWhileDelegatingStateRestore() async {
         let defaults = makeLifecycleTestDefaults()
         let settings = SettingsStore(defaults: defaults)

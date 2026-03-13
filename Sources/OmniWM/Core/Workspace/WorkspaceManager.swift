@@ -16,6 +16,11 @@ struct WorkspaceDescriptor: Identifiable, Hashable {
 
 @MainActor
 final class WorkspaceManager {
+    private struct DisconnectedVisibleWorkspaceMigration {
+        let removedMonitor: Monitor
+        let workspaceId: WorkspaceDescriptor.ID
+    }
+
     struct SessionState {
         struct MonitorSession {
             var visibleWorkspaceId: WorkspaceDescriptor.ID?
@@ -56,6 +61,7 @@ final class WorkspaceManager {
 
     private var workspacesById: [WorkspaceDescriptor.ID: WorkspaceDescriptor] = [:]
     private var workspaceIdByName: [String: WorkspaceDescriptor.ID] = [:]
+    private var disconnectedVisibleWorkspaceCache: [MonitorRestoreKey: WorkspaceDescriptor.ID] = [:]
 
     private(set) var gaps: Double = 8
     private(set) var outerGaps: LayoutGaps.OuterGaps = .zero
@@ -662,10 +668,21 @@ final class WorkspaceManager {
 
     func applyMonitorConfigurationChange(_ newMonitors: [Monitor]) {
         let restoreSnapshots = captureVisibleWorkspaceRestoreSnapshots()
-        replaceMonitors(with: newMonitors)
+        let previousMonitors = monitors
+        let previousMonitorIds = Set(previousMonitors.map(\.id))
+        let disconnectedVisibleMigrations = captureDisconnectedVisibleWorkspaceMigrations(
+            removedFrom: previousMonitors,
+            survivingMonitors: newMonitors
+        )
+        let hasNewMonitor = !Set(newMonitors.map(\.id)).subtracting(previousMonitorIds).isEmpty
+        replaceMonitors(with: newMonitors, notify: false)
         restoreVisibleWorkspacesAfterMonitorConfigurationChange(from: restoreSnapshots)
-        reconcileConfiguredVisibleWorkspaces()
-        reconcileInteractionMonitorState()
+        restoreDisconnectedVisibleWorkspacesToHomeMonitors(monitorsWereAdded: hasNewMonitor)
+        applyDisconnectedVisibleWorkspaceMigrations(disconnectedVisibleMigrations)
+        reconcileConfiguredVisibleWorkspaces(notify: false)
+        pruneRestoredDisconnectedVisibleWorkspaces()
+        reconcileInteractionMonitorState(notify: false)
+        notifySessionStateChanged()
     }
 
     func setGaps(to size: Double) {
@@ -1257,6 +1274,95 @@ final class WorkspaceManager {
         }
     }
 
+    private func captureDisconnectedVisibleWorkspaceMigrations(
+        removedFrom previousMonitors: [Monitor],
+        survivingMonitors: [Monitor]
+    ) -> [DisconnectedVisibleWorkspaceMigration] {
+        let survivingIds = Set(survivingMonitors.map(\.id))
+        var migrations: [DisconnectedVisibleWorkspaceMigration] = []
+        migrations.reserveCapacity(previousMonitors.count)
+
+        for monitor in previousMonitors where !survivingIds.contains(monitor.id) {
+            guard let workspaceId = visibleWorkspaceId(on: monitor.id),
+                  descriptor(for: workspaceId) != nil
+            else {
+                continue
+            }
+            disconnectedVisibleWorkspaceCache[MonitorRestoreKey(monitor: monitor)] = workspaceId
+            migrations.append(
+                DisconnectedVisibleWorkspaceMigration(
+                    removedMonitor: monitor,
+                    workspaceId: workspaceId
+                )
+            )
+        }
+
+        migrations.sort { lhs, rhs in
+            monitorSortKey(lhs.removedMonitor) < monitorSortKey(rhs.removedMonitor)
+        }
+        return migrations
+    }
+
+    private func restoreDisconnectedVisibleWorkspacesToHomeMonitors(monitorsWereAdded: Bool) {
+        guard monitorsWereAdded, !disconnectedVisibleWorkspaceCache.isEmpty else { return }
+
+        let sortedCacheEntries = disconnectedVisibleWorkspaceCache.sorted { lhs, rhs in
+            restoreKeySortKey(lhs.key) < restoreKeySortKey(rhs.key)
+        }
+
+        var reconnectAssignments: [Monitor.ID: WorkspaceDescriptor.ID] = [:]
+        for (_, workspaceId) in sortedCacheEntries {
+            guard descriptor(for: workspaceId) != nil else { continue }
+            guard let homeMonitor = homeMonitor(for: workspaceId) else { continue }
+            guard reconnectAssignments[homeMonitor.id] == nil else { continue }
+            reconnectAssignments[homeMonitor.id] = workspaceId
+        }
+
+        for monitor in Monitor.sortedByPosition(monitors) {
+            guard let workspaceId = reconnectAssignments[monitor.id] else { continue }
+            _ = setActiveWorkspaceInternal(
+                workspaceId,
+                on: monitor.id,
+                anchorPoint: monitor.workspaceAnchorPoint,
+                updateInteractionMonitor: false,
+                notify: false
+            )
+        }
+    }
+
+    private func applyDisconnectedVisibleWorkspaceMigrations(
+        _ migrations: [DisconnectedVisibleWorkspaceMigration]
+    ) {
+        guard !migrations.isEmpty else { return }
+
+        var winnerByFallbackMonitorId: [Monitor.ID: DisconnectedVisibleWorkspaceMigration] = [:]
+        for migration in migrations {
+            guard descriptor(for: migration.workspaceId) != nil else { continue }
+            guard let fallbackMonitor = effectiveMonitor(for: migration.workspaceId) else { continue }
+            guard winnerByFallbackMonitorId[fallbackMonitor.id] == nil else { continue }
+            winnerByFallbackMonitorId[fallbackMonitor.id] = migration
+        }
+
+        for monitor in Monitor.sortedByPosition(monitors) {
+            guard let migration = winnerByFallbackMonitorId[monitor.id] else { continue }
+            _ = setActiveWorkspaceInternal(
+                migration.workspaceId,
+                on: monitor.id,
+                anchorPoint: monitor.workspaceAnchorPoint,
+                updateInteractionMonitor: false,
+                notify: false
+            )
+        }
+    }
+
+    private func pruneRestoredDisconnectedVisibleWorkspaces() {
+        disconnectedVisibleWorkspaceCache = disconnectedVisibleWorkspaceCache.filter { _, workspaceId in
+            guard descriptor(for: workspaceId) != nil else { return false }
+            guard let homeMonitorId = homeMonitorId(for: workspaceId) else { return true }
+            return visibleWorkspaceId(on: homeMonitorId) != workspaceId
+        }
+    }
+
     private func reconcileConfiguredVisibleWorkspaces(notify: Bool = true) {
         var changed = false
 
@@ -1324,7 +1430,7 @@ final class WorkspaceManager {
         }
     }
 
-    private func ensureVisibleWorkspaces(previousMonitors: [Monitor]? = nil) {
+    private func ensureVisibleWorkspaces(previousMonitors: [Monitor]? = nil, notify: Bool = true) {
         let currentMonitorIds = Set(monitors.map(\.id))
         let previousMonitorSessions = sessionState.monitorSessions
         let mappingMonitorIds = Set(previousMonitorSessions.keys)
@@ -1332,20 +1438,22 @@ final class WorkspaceManager {
         if currentMonitorIds != mappingMonitorIds {
             rearrangeWorkspacesOnMonitors(
                 previousMonitors: previousMonitors,
-                previousMonitorSessions: previousMonitorSessions
+                previousMonitorSessions: previousMonitorSessions,
+                notify: notify
             )
         }
     }
 
-    private func replaceMonitors(with newMonitors: [Monitor]) {
+    private func replaceMonitors(with newMonitors: [Monitor], notify: Bool = true) {
         let previousMonitors = monitors
         monitors = newMonitors.isEmpty ? [Monitor.fallback()] : newMonitors
-        ensureVisibleWorkspaces(previousMonitors: previousMonitors)
+        ensureVisibleWorkspaces(previousMonitors: previousMonitors, notify: notify)
     }
 
     private func rearrangeWorkspacesOnMonitors(
         previousMonitors: [Monitor]? = nil,
-        previousMonitorSessions: [Monitor.ID: SessionState.MonitorSession]? = nil
+        previousMonitorSessions: [Monitor.ID: SessionState.MonitorSession]? = nil,
+        notify: Bool = true
     ) {
         // Keep traversal deterministic so startup workspace mapping is stable.
         let sortedNewMonitors = Monitor.sortedByPosition(monitors)
@@ -1413,7 +1521,9 @@ final class WorkspaceManager {
             }
         }
 
-        notifySessionStateChanged()
+        if notify {
+            notifySessionStateChanged()
+        }
     }
 
     private func defaultVisibleWorkspaceId(on monitorId: Monitor.ID) -> WorkspaceDescriptor.ID? {
@@ -1441,26 +1551,56 @@ final class WorkspaceManager {
 
     private func workspaceMonitorId(for workspaceId: WorkspaceDescriptor.ID) -> Monitor.ID? {
         guard let workspace = descriptor(for: workspaceId) else { return nil }
-        if let forced = forceAssignedMonitor(for: workspace.name) {
-            return forced.id
+        if configuredWorkspaceNames().contains(workspace.name) {
+            return effectiveMonitor(for: workspaceId)?.id
         }
         return monitorIdShowingWorkspace(workspaceId)
     }
 
-    private func forceAssignedMonitor(for workspaceName: String) -> Monitor? {
+    private func configuredMonitorDescriptions(for workspaceName: String) -> [MonitorDescription]? {
         let assignments = settings.workspaceToMonitorAssignments()
         guard let descriptions = assignments[workspaceName], !descriptions.isEmpty else { return nil }
+        return descriptions
+    }
+
+    private func homeMonitor(for workspaceId: WorkspaceDescriptor.ID) -> Monitor? {
+        guard let workspace = descriptor(for: workspaceId) else { return nil }
+        guard let descriptions = configuredMonitorDescriptions(for: workspace.name) else { return nil }
         let sorted = Monitor.sortedByPosition(monitors)
         return descriptions.compactMap { $0.resolveMonitor(sortedMonitors: sorted) }.first
+    }
+
+    private func homeMonitorId(for workspaceId: WorkspaceDescriptor.ID) -> Monitor.ID? {
+        homeMonitor(for: workspaceId)?.id
+    }
+
+    private func effectiveMonitor(for workspaceId: WorkspaceDescriptor.ID) -> Monitor? {
+        if let home = homeMonitor(for: workspaceId) {
+            return home
+        }
+
+        let sortedMonitors = Monitor.sortedByPosition(monitors)
+        guard !sortedMonitors.isEmpty else { return nil }
+        guard let workspace = descriptor(for: workspaceId) else { return nil }
+
+        let anchorPoint = workspace.assignedMonitorPoint
+            ?? monitorIdShowingWorkspace(workspaceId).flatMap { monitor(byId: $0)?.workspaceAnchorPoint }
+        guard let anchorPoint else { return sortedMonitors.first }
+
+        return sortedMonitors.min { lhs, rhs in
+            let lhsDistance = lhs.workspaceAnchorPoint.distanceSquared(to: anchorPoint)
+            let rhsDistance = rhs.workspaceAnchorPoint.distanceSquared(to: anchorPoint)
+            if lhsDistance != rhsDistance {
+                return lhsDistance < rhsDistance
+            }
+            return monitorSortKey(lhs) < monitorSortKey(rhs)
+        }
     }
 
     private func isValidAssignment(workspaceId: WorkspaceDescriptor.ID, monitorId: Monitor.ID) -> Bool {
         guard let workspace = descriptor(for: workspaceId) else { return false }
         guard configuredWorkspaceNames().contains(workspace.name) else { return false }
-        if let forced = forceAssignedMonitor(for: workspace.name) {
-            return forced.id == monitorId
-        }
-        return false
+        return effectiveMonitor(for: workspaceId)?.id == monitorId
     }
 
     private func setActiveWorkspaceInternal(
@@ -1590,6 +1730,10 @@ final class WorkspaceManager {
             notifySessionStateChanged()
         }
         return true
+    }
+
+    private func restoreKeySortKey(_ restoreKey: MonitorRestoreKey) -> (CGFloat, CGFloat, UInt32) {
+        (restoreKey.anchorPoint.x, -restoreKey.anchorPoint.y, restoreKey.displayId)
     }
 
     private func reconcileInteractionMonitorState(notify: Bool = true) {

@@ -103,6 +103,20 @@ final class WorkspaceNavigationHandler {
         return niriMonitor.isWorkspaceSwitchAnimating
     }
 
+    private func startWorkspaceSwitchAnimationIfNeeded(
+        from previousWorkspace: WorkspaceDescriptor?,
+        to targetWorkspace: WorkspaceDescriptor,
+        monitor: Monitor,
+        targetWasVisibleBeforeSwitch: Bool
+    ) -> Bool {
+        guard !targetWasVisibleBeforeSwitch else { return false }
+        return startWorkspaceSwitchAnimation(
+            from: previousWorkspace,
+            to: targetWorkspace,
+            monitor: monitor
+        )
+    }
+
     func focusMonitorInDirection(_ direction: Direction) {
         guard let controller else { return }
         guard let currentMonitorId = interactionMonitorId(for: controller)
@@ -367,14 +381,23 @@ final class WorkspaceNavigationHandler {
             saveNiriViewportState(for: currentWorkspace.id)
         }
 
+        guard let targetWorkspaceId = controller.workspaceManager.workspaceId(for: targetName, createIfMissing: false),
+              let targetMonitor = controller.workspaceManager.monitorForWorkspace(targetWorkspaceId)
+        else {
+            return
+        }
+
+        let previousWorkspaceOnTarget = controller.workspaceManager.activeWorkspace(on: targetMonitor.id)
+        let targetWasVisibleBeforeSwitch = previousWorkspaceOnTarget?.id == targetWorkspaceId
+
         guard let result = controller.workspaceManager.focusWorkspace(named: targetName) else { return }
-        let previousWorkspaceOnTarget = controller.workspaceManager.previousWorkspace(on: result.monitor.id)
         let focusToken = controller.resolveAndSetWorkspaceFocusToken(for: result.workspace.id)
 
-        let workspaceSwitchAnimated = startWorkspaceSwitchAnimation(
+        let workspaceSwitchAnimated = startWorkspaceSwitchAnimationIfNeeded(
             from: previousWorkspaceOnTarget,
             to: result.workspace,
-            monitor: result.monitor
+            monitor: result.monitor,
+            targetWasVisibleBeforeSwitch: targetWasVisibleBeforeSwitch
         )
         controller.layoutRefreshController.stopScrollAnimation(for: result.monitor.displayId)
         controller.layoutRefreshController.commitWorkspaceTransition(
@@ -507,6 +530,7 @@ final class WorkspaceNavigationHandler {
         guard let targetWsId = controller.workspaceManager.workspaceId(named: targetName) else { return }
         guard let targetMonitor = controller.workspaceManager.monitorForWorkspace(targetWsId) else { return }
         let previousWorkspaceOnTarget = controller.workspaceManager.activeWorkspace(on: targetMonitor.id)
+        let targetWasVisibleBeforeSwitch = previousWorkspaceOnTarget?.id == targetWsId
 
         if let currentWorkspace = controller.activeWorkspace() {
             saveNiriViewportState(for: currentWorkspace.id)
@@ -528,10 +552,11 @@ final class WorkspaceNavigationHandler {
 
         let targetWorkspace = controller.workspaceManager.descriptor(for: targetWsId)
         let workspaceSwitchAnimated = targetWorkspace.map { targetWorkspace in
-            startWorkspaceSwitchAnimation(
+            startWorkspaceSwitchAnimationIfNeeded(
                 from: previousWorkspaceOnTarget,
                 to: targetWorkspace,
-                monitor: targetMonitor
+                monitor: targetMonitor,
+                targetWasVisibleBeforeSwitch: targetWasVisibleBeforeSwitch
             )
         } ?? false
         controller.layoutRefreshController.stopScrollAnimation(for: targetMonitor.displayId)

@@ -138,7 +138,7 @@ private func workspaceConfigurations(
         #expect(manager.workspaceId(for: "10", createIfMissing: true) == nil)
     }
 
-    @Test @MainActor func unresolvedSpecificDisplayLeavesMonitorUnmanagedUntilTargetAppears() {
+    @Test @MainActor func specificDisplayWorkspaceMigratesToFallbackSessionAndReturnsWhenTargetReappears() {
         let defaults = makeWorkspaceManagerTestDefaults()
         let settings = SettingsStore(defaults: defaults)
         settings.workspaceConfigurations = workspaceConfigurations([
@@ -158,15 +158,68 @@ private func workspaceConfigurations(
             return
         }
 
-        #expect(manager.activeWorkspace(on: main.id)?.id == ws1)
         #expect(manager.activeWorkspace(on: side.id) == nil)
-        #expect(manager.monitorId(for: ws2) == nil)
+        #expect(manager.monitorId(for: ws2) == main.id)
+        #expect(manager.workspaces(on: main.id).map(\.id) == [ws1, ws2])
 
         let detached = makeWorkspaceManagerTestMonitor(displayId: 300, name: "Detached", x: 3840, y: 0)
         manager.applyMonitorConfigurationChange([main, side, detached])
 
         #expect(manager.activeWorkspace(on: detached.id)?.id == ws2)
         #expect(manager.monitorId(for: ws2) == detached.id)
+
+        manager.applyMonitorConfigurationChange([main, side])
+
+        #expect(manager.activeWorkspace(on: main.id)?.id == ws1)
+        #expect(manager.activeWorkspace(on: side.id)?.id == ws2)
+        #expect(manager.previousWorkspace(on: side.id)?.id == nil)
+        #expect(manager.monitorId(for: ws2) == side.id)
+
+        let restoredDetached = makeWorkspaceManagerTestMonitor(displayId: 300, name: "Detached", x: 3840, y: 0)
+        manager.applyMonitorConfigurationChange([main, side, restoredDetached])
+
+        #expect(manager.activeWorkspace(on: main.id)?.id == ws1)
+        #expect(manager.activeWorkspace(on: side.id) == nil)
+        #expect(manager.activeWorkspace(on: restoredDetached.id)?.id == ws2)
+        #expect(manager.monitorId(for: ws2) == restoredDetached.id)
+    }
+
+    @Test @MainActor func secondaryWorkspacesCollapseOntoRemainingMonitorAndReturnWhenSecondaryReappears() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = workspaceConfigurations([
+            ("1", .main),
+            ("2", .secondary)
+        ])
+
+        let manager = WorkspaceManager(settings: settings)
+        let left = makeWorkspaceManagerTestMonitor(displayId: 10, name: "Left", x: 0, y: 0)
+        let right = makeWorkspaceManagerTestMonitor(displayId: 20, name: "Right", x: 1920, y: 0)
+        manager.applyMonitorConfigurationChange([left, right])
+
+        guard let ws1 = manager.workspaceId(for: "1", createIfMissing: true),
+              let ws2 = manager.workspaceId(for: "2", createIfMissing: true)
+        else {
+            Issue.record("Failed to create expected workspaces")
+            return
+        }
+
+        #expect(manager.setActiveWorkspace(ws1, on: left.id))
+        #expect(manager.setActiveWorkspace(ws2, on: right.id))
+
+        manager.applyMonitorConfigurationChange([left])
+
+        #expect(manager.activeWorkspace(on: left.id)?.id == ws2)
+        #expect(manager.previousWorkspace(on: left.id)?.id == ws1)
+        #expect(manager.monitorId(for: ws2) == left.id)
+        #expect(manager.workspaces(on: left.id).map(\.id) == [ws1, ws2])
+
+        let restoredRight = makeWorkspaceManagerTestMonitor(displayId: 30, name: "Restored", x: 1920, y: 0)
+        manager.applyMonitorConfigurationChange([left, restoredRight])
+
+        #expect(manager.activeWorkspace(on: left.id)?.id == ws1)
+        #expect(manager.activeWorkspace(on: restoredRight.id)?.id == ws2)
+        #expect(manager.monitorId(for: ws2) == restoredRight.id)
     }
 
     @Test @MainActor func setActiveWorkspaceTracksInteractionMonitorOwnership() {
@@ -752,13 +805,73 @@ private func workspaceConfigurations(
             state.selectedNodeId = selectedNodeId
         }
 
-        let newLeft = makeWorkspaceManagerTestMonitor(displayId: 200, name: "R", x: 0, y: 0)
-        let newRight = makeWorkspaceManagerTestMonitor(displayId: 100, name: "L", x: 1920, y: 0)
-        manager.applyMonitorConfigurationChange([newLeft, newRight])
+        manager.applyMonitorConfigurationChange([oldLeft])
 
-        #expect(manager.activeWorkspace(on: newRight.id)?.id == ws2)
+        #expect(manager.activeWorkspace(on: oldLeft.id)?.id == ws2)
+        #expect(manager.previousWorkspace(on: oldLeft.id)?.id == ws1)
+        #expect(manager.monitorId(for: ws2) == oldLeft.id)
         #expect(manager.niriViewportState(for: ws2).activeColumnIndex == 3)
         #expect(manager.niriViewportState(for: ws2).selectedNodeId == selectedNodeId)
+
+        let restoredRight = makeWorkspaceManagerTestMonitor(displayId: 300, name: "Replacement", x: 1920, y: 0)
+        manager.applyMonitorConfigurationChange([oldLeft, restoredRight])
+
+        #expect(manager.activeWorkspace(on: oldLeft.id)?.id == ws1)
+        #expect(manager.activeWorkspace(on: restoredRight.id)?.id == ws2)
+        #expect(manager.monitorId(for: ws2) == restoredRight.id)
+        #expect(manager.niriViewportState(for: ws2).activeColumnIndex == 3)
+        #expect(manager.niriViewportState(for: ws2).selectedNodeId == selectedNodeId)
+    }
+
+    @Test @MainActor func reconnectRestoresPreviouslyVisibleWorkspaceWhenMonitorOwnsMultipleWorkspaces() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = workspaceConfigurations([
+            ("1", .main),
+            ("2", .secondary),
+            ("3", .secondary)
+        ])
+
+        let manager = WorkspaceManager(settings: settings)
+        let left = makeWorkspaceManagerTestMonitor(displayId: 100, name: "Left", x: 0, y: 0)
+        let right = makeWorkspaceManagerTestMonitor(displayId: 200, name: "Right", x: 1920, y: 0)
+        manager.applyMonitorConfigurationChange([left, right])
+
+        guard let ws1 = manager.workspaceId(for: "1", createIfMissing: true),
+              let ws2 = manager.workspaceId(for: "2", createIfMissing: true),
+              let ws3 = manager.workspaceId(for: "3", createIfMissing: true)
+        else {
+            Issue.record("Failed to create expected workspaces")
+            return
+        }
+
+        #expect(manager.setActiveWorkspace(ws1, on: left.id))
+        #expect(manager.setActiveWorkspace(ws2, on: right.id))
+        #expect(manager.setActiveWorkspace(ws3, on: right.id))
+
+        let selectedNodeId = NodeId()
+        manager.withNiriViewportState(for: ws3) { state in
+            state.activeColumnIndex = 4
+            state.selectedNodeId = selectedNodeId
+        }
+
+        manager.applyMonitorConfigurationChange([left])
+
+        #expect(manager.activeWorkspace(on: left.id)?.id == ws3)
+        #expect(manager.previousWorkspace(on: left.id)?.id == ws1)
+        #expect(manager.monitorId(for: ws2) == left.id)
+        #expect(manager.monitorId(for: ws3) == left.id)
+        #expect(manager.workspaces(on: left.id).map(\.id) == [ws1, ws2, ws3])
+
+        let restoredRight = makeWorkspaceManagerTestMonitor(displayId: 300, name: "Replacement", x: 1920, y: 0)
+        manager.applyMonitorConfigurationChange([left, restoredRight])
+
+        #expect(manager.activeWorkspace(on: left.id)?.id == ws1)
+        #expect(manager.activeWorkspace(on: restoredRight.id)?.id == ws3)
+        #expect(manager.monitorId(for: ws2) == restoredRight.id)
+        #expect(manager.monitorId(for: ws3) == restoredRight.id)
+        #expect(manager.niriViewportState(for: ws3).activeColumnIndex == 4)
+        #expect(manager.niriViewportState(for: ws3).selectedNodeId == selectedNodeId)
     }
 
     @Test @MainActor func applyMonitorConfigurationChangeClearsInvalidPreviousInteractionMonitor() {

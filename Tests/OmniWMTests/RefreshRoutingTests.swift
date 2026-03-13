@@ -469,6 +469,52 @@ private func prepareNiriState(
         assertNoLegacyReasons(recorder)
     }
 
+    @Test @MainActor func crossMonitorWorkspaceSwitchSkipsAnimationWhenTargetIsAlreadyVisible() async {
+        let fixture = makeTwoMonitorRefreshTestController()
+        _ = await prepareNiriState(
+            on: fixture.controller,
+            assignments: [
+                (fixture.primaryWorkspaceId, 350),
+                (fixture.secondaryWorkspaceId, 351),
+            ],
+            focusedWindowId: 350,
+            ensureWorkspaces: [fixture.secondaryWorkspaceId]
+        )
+
+        fixture.controller.workspaceNavigationHandler.switchWorkspace(index: 1)
+        await waitForRefreshWork(on: fixture.controller)
+
+        #expect(fixture.controller.niriLayoutHandler.scrollAnimationByDisplay[fixture.secondaryMonitor.displayId] == nil)
+        #expect(fixture.controller.niriEngine?.monitor(for: fixture.secondaryMonitor.id)?.workspaceSwitch == nil)
+    }
+
+    @Test @MainActor func sameMonitorWorkspaceSwitchStartsAnimationWhenTargetWasHidden() async {
+        let controller = makeRefreshTestController()
+        guard let ws1 = controller.workspaceManager.workspaceId(for: "1", createIfMissing: false),
+              let ws2 = controller.workspaceManager.workspaceId(for: "2", createIfMissing: true),
+              let monitor = controller.workspaceManager.monitors.first
+        else {
+            Issue.record("Failed to create single-monitor workspace switch fixture")
+            return
+        }
+
+        _ = await prepareNiriState(
+            on: controller,
+            assignments: [
+                (ws1, 352),
+                (ws2, 353),
+            ],
+            focusedWindowId: 352,
+            ensureWorkspaces: [ws2]
+        )
+
+        controller.workspaceNavigationHandler.switchWorkspace(index: 1)
+        await waitForRefreshWork(on: controller)
+
+        #expect(controller.niriLayoutHandler.scrollAnimationByDisplay[monitor.displayId] == ws2)
+        #expect(controller.niriEngine?.monitor(for: monitor.id)?.workspaceSwitch?.toWorkspaceId == ws2)
+    }
+
     @Test @MainActor func workspaceRelativeSwitchUsesImmediateRelayoutOnly() async {
         let controller = makeRefreshTestController()
         _ = controller.workspaceManager.workspaceId(for: "2", createIfMissing: true)
