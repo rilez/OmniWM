@@ -146,12 +146,12 @@ final class MouseWarpHandler: NSObject {
         guard let controller else { return }
         guard !state.isWarping else { return }
         guard controller.isEnabled else { return }
-        guard controller.settings.mouseWarpEnabled else { return }
-
-        let monitorOrder = controller.settings.mouseWarpMonitorOrder
-        guard monitorOrder.count >= 2 else { return }
 
         let monitors = controller.workspaceManager.monitors
+        guard monitors.count > 1 else { return }
+        let effectiveOrder = controller.settings.effectiveMouseWarpMonitorOrder(for: monitors)
+        guard effectiveOrder.count >= 2 else { return }
+
         let margin = CGFloat(controller.settings.mouseWarpMargin)
 
         guard let currentMonitor = monitors.first(where: { $0.frame.contains(location) }) else {
@@ -175,7 +175,7 @@ final class MouseWarpHandler: NSObject {
         state.lastMonitorId = currentMonitor.id
         guard let currentIndex = mouseWarpCurrentIndex(
             for: currentMonitor,
-            in: monitorOrder,
+            in: effectiveOrder,
             monitors: monitors
         ) else { return }
 
@@ -185,13 +185,13 @@ final class MouseWarpHandler: NSObject {
             let leftIndex = currentIndex - 1
             if leftIndex >= 0 {
                 let yRatio = mouseWarpCalculateYRatio(location, in: frame)
-                mouseWarpToMonitor(named: monitorOrder[leftIndex], edge: .right, yRatio: yRatio, monitors: monitors, margin: margin)
+                mouseWarpToMonitor(named: effectiveOrder[leftIndex], edge: .right, yRatio: yRatio, monitors: monitors, margin: margin)
             }
         } else if location.x >= frame.maxX - margin {
             let rightIndex = currentIndex + 1
-            if rightIndex < monitorOrder.count {
+            if rightIndex < effectiveOrder.count {
                 let yRatio = mouseWarpCalculateYRatio(location, in: frame)
-                mouseWarpToMonitor(named: monitorOrder[rightIndex], edge: .left, yRatio: yRatio, monitors: monitors, margin: margin)
+                mouseWarpToMonitor(named: effectiveOrder[rightIndex], edge: .left, yRatio: yRatio, monitors: monitors, margin: margin)
             }
         }
     }

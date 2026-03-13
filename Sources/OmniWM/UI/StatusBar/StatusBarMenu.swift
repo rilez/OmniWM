@@ -52,7 +52,6 @@ final class StatusBarMenuBuilder {
         toggleViews["focusFollowsMouse"]?.isOn = settings.focusFollowsMouse
         toggleViews["focusFollowsWindowToMonitor"]?.isOn = settings.focusFollowsWindowToMonitor
         toggleViews["moveMouseToFocusedWindow"]?.isOn = settings.moveMouseToFocusedWindow
-        toggleViews["mouseWarpEnabled"]?.isOn = settings.mouseWarpEnabled
         toggleViews["bordersEnabled"]?.isOn = settings.bordersEnabled
         toggleViews["workspaceBarEnabled"]?.isOn = settings.workspaceBarEnabled
         toggleViews["preventSleepEnabled"]?.isOn = settings.preventSleepEnabled
@@ -112,19 +111,6 @@ final class StatusBarMenuBuilder {
         let mouseItem = NSMenuItem()
         mouseItem.view = mouseToFocusedToggle
         menu.addItem(mouseItem)
-
-        let mouseWarpToggle = MenuToggleRowView(
-            icon: "arrow.left.arrow.right",
-            label: "Mouse Warp",
-            isOn: settings.mouseWarpEnabled
-        ) { [weak self] newValue in
-            self?.settings.mouseWarpEnabled = newValue
-            self?.controller?.setMouseWarpEnabled(newValue)
-        }
-        toggleViews["mouseWarpEnabled"] = mouseWarpToggle
-        let mouseWarpItem = NSMenuItem()
-        mouseWarpItem.view = mouseWarpToggle
-        menu.addItem(mouseWarpItem)
 
         let bordersToggle = MenuToggleRowView(
             icon: "square.dashed",

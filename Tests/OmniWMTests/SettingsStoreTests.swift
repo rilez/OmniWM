@@ -257,7 +257,6 @@ private func makeSettingsTestMonitor(
             "hotkeysEnabled": true,
             "focusFollowsMouse": false,
             "moveMouseToFocusedWindow": false,
-            "mouseWarpEnabled": false,
             "mouseWarpMonitorOrder": [],
             "mouseWarpMargin": 2,
             "gapSize": 8,
@@ -329,7 +328,6 @@ private func makeSettingsTestMonitor(
             hotkeysEnabled: true,
             focusFollowsMouse: true,
             moveMouseToFocusedWindow: true,
-            mouseWarpEnabled: true,
             mouseWarpMonitorOrder: ["Monitor1", "Monitor2"],
             mouseWarpMargin: 5,
             gapSize: 12.0,
@@ -672,6 +670,23 @@ private func makeSettingsTestMonitor(
 
         #expect(settings.workspaceConfigurations.map(\.name) == ["2"])
         #expect(settings.workspaceConfigurations.first?.monitorAssignment == .main)
+    }
+
+    @Test func persistEffectiveMouseWarpMonitorOrderSeedsConnectedDisplaysWithoutDroppingStoredEntries() {
+        let defaults = makeTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        let disconnected = makeSettingsTestMonitor(displayId: 99, name: "Disconnected")
+        let right = makeSettingsTestMonitor(displayId: 2, name: "Right", x: 1920)
+        let left = makeSettingsTestMonitor(displayId: 1, name: "Left", x: 0)
+
+        settings.mouseWarpMonitorOrder = ["Disconnected", "Left"]
+
+        let resolved = settings.persistEffectiveMouseWarpMonitorOrder(for: [right, left])
+
+        #expect(settings.mouseWarpMonitorOrder == ["Disconnected", "Left", "Right"])
+        #expect(resolved == ["Left", "Right"])
+        #expect(settings.effectiveMouseWarpMonitorOrder(for: [left]) == ["Left"])
+        _ = disconnected
     }
 }
 

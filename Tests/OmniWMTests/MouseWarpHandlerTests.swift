@@ -41,7 +41,6 @@ private func makeMouseWarpTestFixture() -> (
     recorder: WarpEffectRecorder
 ) {
     let settings = SettingsStore(defaults: makeMouseWarpTestDefaults())
-    settings.mouseWarpEnabled = true
     settings.mouseWarpMonitorOrder = ["Left", "Right"]
     settings.mouseWarpMargin = 2
 
@@ -169,6 +168,31 @@ private func waitUntilMouseWarpDrain(
         ))
 
         #expect(fixture.handler.state.lastMonitorId == fixture.rightMonitor.id)
+        #expect(fixture.recorder.postedPoints == [expectedPoint])
+    }
+
+    @Test @MainActor func policySeedsDefaultOrderBeforeWarpingFreshMultiMonitorSetup() {
+        let fixture = makeMouseWarpTestFixture()
+        defer { fixture.handler.cleanup() }
+
+        fixture.controller.settings.mouseWarpMonitorOrder = []
+        _ = fixture.controller.syncMouseWarpPolicy(for: [fixture.leftMonitor, fixture.rightMonitor])
+
+        let location = CGPoint(
+            x: fixture.leftMonitor.frame.maxX - CGFloat(fixture.controller.settings.mouseWarpMargin) + 1,
+            y: fixture.leftMonitor.frame.midY
+        )
+
+        fixture.handler.resetDebugStateForTests()
+        fixture.handler.receiveTapMouseWarpMoved(at: location)
+        fixture.handler.flushPendingWarpEventsForTests()
+
+        let expectedPoint = ScreenCoordinateSpace.toWindowServer(point: CGPoint(
+            x: fixture.rightMonitor.frame.minX + CGFloat(fixture.controller.settings.mouseWarpMargin) + 1,
+            y: fixture.rightMonitor.frame.midY
+        ))
+
+        #expect(fixture.controller.settings.mouseWarpMonitorOrder == ["Left", "Right"])
         #expect(fixture.recorder.postedPoints == [expectedPoint])
     }
 

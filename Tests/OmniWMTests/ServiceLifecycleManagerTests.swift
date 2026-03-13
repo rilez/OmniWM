@@ -201,4 +201,38 @@ private func makeLifecycleWindow(windowId: Int = 101) -> AXWindowRef {
         #expect(recordedReason == .monitorConfigurationChanged)
         #expect(controller.workspaceManager.activeWorkspace(on: newMonitor.id)?.id == workspaceId)
     }
+
+    @Test @MainActor func monitorTopologyChangesRecomputeMouseWarpPolicyAndPreserveSavedOrder() {
+        let defaults = makeLifecycleTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        let controller = WMController(settings: settings)
+        let lifecycleManager = ServiceLifecycleManager(controller: controller)
+
+        let left = makeLifecycleMonitor(displayId: 100, name: "Left", x: 0, y: 0)
+        let right = makeLifecycleMonitor(displayId: 200, name: "Right", x: 1920, y: 0)
+
+        lifecycleManager.applyMonitorConfigurationChanged(
+            currentMonitors: [left, right],
+            performPostUpdateActions: false
+        )
+
+        #expect(controller.isMouseWarpPolicyEnabled)
+        #expect(settings.mouseWarpMonitorOrder == ["Left", "Right"])
+
+        lifecycleManager.applyMonitorConfigurationChanged(
+            currentMonitors: [left],
+            performPostUpdateActions: false
+        )
+
+        #expect(!controller.isMouseWarpPolicyEnabled)
+        #expect(settings.mouseWarpMonitorOrder == ["Left", "Right"])
+
+        lifecycleManager.applyMonitorConfigurationChanged(
+            currentMonitors: [left, right],
+            performPostUpdateActions: false
+        )
+
+        #expect(controller.isMouseWarpPolicyEnabled)
+        #expect(settings.mouseWarpMonitorOrder == ["Left", "Right"])
+    }
 }

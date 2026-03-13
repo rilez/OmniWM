@@ -61,9 +61,7 @@ final class ServiceLifecycleManager {
         }
         setupWorkspaceObservation()
         controller.mouseEventHandler.setup()
-        if controller.settings.mouseWarpEnabled {
-            controller.mouseWarpHandler.setup()
-        }
+        controller.syncMouseWarpPolicy()
         setupDisplayObserver()
         setupAppActivationObserver()
         setupAppHideObservers()
@@ -153,6 +151,7 @@ final class ServiceLifecycleManager {
         guard currentMonitors.allSatisfy({ $0.frame.width > 1 && $0.frame.height > 1 }) else { return }
 
         controller.workspaceManager.applyMonitorConfigurationChange(currentMonitors)
+        controller.syncMouseWarpPolicy(for: controller.workspaceManager.monitors)
         guard performPostUpdateActions else { return }
 
         controller.syncMonitorsToNiriEngine()
@@ -273,7 +272,7 @@ final class ServiceLifecycleManager {
 
         controller.layoutRefreshController.resetState()
         controller.mouseEventHandler.cleanup()
-        controller.mouseWarpHandler.cleanup()
+        controller.resetMouseWarpPolicy()
         controller.axEventHandler.cleanup()
 
         controller.tabbedOverlayManager.removeAll()

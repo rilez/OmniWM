@@ -8,7 +8,7 @@ struct MonitorSettingsTab: View {
 
     var body: some View {
         Form {
-            MouseWarpSection(settings: settings, controller: controller, connectedMonitors: connectedMonitors)
+            MouseWarpSection(settings: settings, connectedMonitors: connectedMonitors)
 
             Section {
                 Picker("Monitor:", selection: $selectedMonitor) {
@@ -142,28 +142,19 @@ extension Monitor.Orientation {
 
 private struct MouseWarpSection: View {
     @Bindable var settings: SettingsStore
-    @Bindable var controller: WMController
     let connectedMonitors: [Monitor]
 
     private var orderedMonitors: [String] {
-        if settings.mouseWarpMonitorOrder.isEmpty {
-            return connectedMonitors.map(\.name)
-        }
-        let known = Set(connectedMonitors.map(\.name))
-        return settings.mouseWarpMonitorOrder.filter { known.contains($0) }
+        settings.effectiveMouseWarpMonitorOrder(for: connectedMonitors)
     }
 
     var body: some View {
         Section("Mouse Warp") {
-            Toggle("Enable Mouse Warp", isOn: Binding(
-                get: { settings.mouseWarpEnabled },
-                set: { newValue in
-                    settings.mouseWarpEnabled = newValue
-                    controller.setMouseWarpEnabled(newValue)
-                }
-            ))
+            if connectedMonitors.count > 1 {
+                Text("Mouse warp is active while more than one monitor is connected.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
 
-            if settings.mouseWarpEnabled {
                 Text("Drag monitors to arrange in physical left-to-right order:")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -217,10 +208,14 @@ private struct MouseWarpSection: View {
                             .foregroundColor(.secondary)
                     }
                 }
+            } else {
+                Text("Mouse warp turns on automatically when more than one monitor is connected.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
 
             Text(
-                "When enabled, the mouse cursor warps between monitors when it hits the screen edge, simulating horizontal arrangement for vertically-stacked displays."
+                "Mouse warp keeps pointer travel consistent across OmniWM's multi-monitor workspace model."
             )
             .font(.caption)
             .foregroundColor(.secondary)

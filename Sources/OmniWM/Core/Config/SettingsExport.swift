@@ -8,7 +8,6 @@ struct SettingsExport: Codable {
     var hotkeysEnabled: Bool
     var focusFollowsMouse: Bool
     var moveMouseToFocusedWindow: Bool
-    var mouseWarpEnabled: Bool
     var mouseWarpMonitorOrder: [String]
     var mouseWarpMargin: Int
     var gapSize: Double
@@ -91,7 +90,6 @@ extension SettingsExport {
             hotkeysEnabled: true,
             focusFollowsMouse: false,
             moveMouseToFocusedWindow: false,
-            mouseWarpEnabled: false,
             mouseWarpMonitorOrder: [],
             mouseWarpMargin: 2,
             gapSize: 8,
@@ -259,7 +257,6 @@ extension SettingsStore {
             hotkeysEnabled: hotkeysEnabled,
             focusFollowsMouse: focusFollowsMouse,
             moveMouseToFocusedWindow: moveMouseToFocusedWindow,
-            mouseWarpEnabled: mouseWarpEnabled,
             mouseWarpMonitorOrder: mouseWarpMonitorOrder,
             mouseWarpMargin: mouseWarpMargin,
             gapSize: gapSize,
@@ -342,7 +339,6 @@ extension SettingsStore {
         hotkeysEnabled = export.hotkeysEnabled
         focusFollowsMouse = export.focusFollowsMouse
         moveMouseToFocusedWindow = export.moveMouseToFocusedWindow
-        mouseWarpEnabled = export.mouseWarpEnabled
         mouseWarpMonitorOrder = export.mouseWarpMonitorOrder
         mouseWarpMargin = export.mouseWarpMargin
         gapSize = export.gapSize

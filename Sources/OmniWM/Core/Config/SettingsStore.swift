@@ -21,10 +21,6 @@ final class SettingsStore {
         didSet { defaults.set(focusFollowsWindowToMonitor, forKey: Keys.focusFollowsWindowToMonitor) }
     }
 
-    var mouseWarpEnabled: Bool {
-        didSet { defaults.set(mouseWarpEnabled, forKey: Keys.mouseWarpEnabled) }
-    }
-
     var mouseWarpMonitorOrder: [String] {
         didSet { saveMouseWarpMonitorOrder() }
     }
@@ -345,7 +341,6 @@ final class SettingsStore {
         focusFollowsMouse = defaults.object(forKey: Keys.focusFollowsMouse) as? Bool ?? false
         moveMouseToFocusedWindow = defaults.object(forKey: Keys.moveMouseToFocusedWindow) as? Bool ?? false
         focusFollowsWindowToMonitor = defaults.object(forKey: Keys.focusFollowsWindowToMonitor) as? Bool ?? false
-        mouseWarpEnabled = defaults.object(forKey: Keys.mouseWarpEnabled) as? Bool ?? false
         mouseWarpMonitorOrder = Self.loadMouseWarpMonitorOrder(from: defaults)
         niriColumnWidthPresets = Self.loadNiriColumnWidthPresets(from: defaults)
         mouseWarpMargin = defaults.object(forKey: Keys.mouseWarpMargin) as? Int ?? 2
@@ -522,6 +517,60 @@ final class SettingsStore {
     private func saveWorkspaceConfigurations() {
         guard let data = try? JSONEncoder().encode(workspaceConfigurations) else { return }
         defaults.set(data, forKey: Keys.workspaceConfigurations)
+    }
+
+    func effectiveMouseWarpMonitorOrder(for monitors: [Monitor]) -> [String] {
+        let sortedNames = Monitor.sortedByPosition(monitors).map(\.name)
+        guard !sortedNames.isEmpty else { return [] }
+
+        var remainingCounts = sortedNames.reduce(into: [String: Int]()) { counts, name in
+            counts[name, default: 0] += 1
+        }
+        var resolved: [String] = []
+
+        for name in mouseWarpMonitorOrder {
+            guard let remaining = remainingCounts[name], remaining > 0 else { continue }
+            resolved.append(name)
+            remainingCounts[name] = remaining - 1
+        }
+
+        for name in sortedNames {
+            guard let remaining = remainingCounts[name], remaining > 0 else { continue }
+            resolved.append(name)
+            remainingCounts[name] = remaining - 1
+        }
+
+        return resolved
+    }
+
+    @discardableResult
+    func persistEffectiveMouseWarpMonitorOrder(for monitors: [Monitor]) -> [String] {
+        let sortedNames = Monitor.sortedByPosition(monitors).map(\.name)
+        guard !sortedNames.isEmpty else { return [] }
+
+        var persisted = mouseWarpMonitorOrder
+        var persistedCounts = persisted.reduce(into: [String: Int]()) { counts, name in
+            counts[name, default: 0] += 1
+        }
+        let currentCounts = sortedNames.reduce(into: [String: Int]()) { counts, name in
+            counts[name, default: 0] += 1
+        }
+
+        for name in sortedNames {
+            let currentCount = currentCounts[name, default: 0]
+            let persistedCount = persistedCounts[name, default: 0]
+            guard persistedCount < currentCount else { continue }
+            for _ in 0..<(currentCount - persistedCount) {
+                persisted.append(name)
+            }
+            persistedCounts[name] = currentCount
+        }
+
+        if mouseWarpMonitorOrder != persisted {
+            mouseWarpMonitorOrder = persisted
+        }
+
+        return effectiveMouseWarpMonitorOrder(for: monitors)
     }
 
     private static func normalizedWorkspaceConfigurations(_ configs: [WorkspaceConfiguration]) -> [WorkspaceConfiguration] {
@@ -762,7 +811,6 @@ private enum Keys {
     static let focusFollowsMouse = "settings.focusFollowsMouse"
     static let moveMouseToFocusedWindow = "settings.moveMouseToFocusedWindow"
     static let focusFollowsWindowToMonitor = "settings.focusFollowsWindowToMonitor"
-    static let mouseWarpEnabled = "settings.mouseWarp.enabled"
     static let mouseWarpMonitorOrder = "settings.mouseWarp.monitorOrder"
     static let niriColumnWidthPresets = "settings.niriColumnWidthPresets"
     static let mouseWarpMargin = "settings.mouseWarp.margin"

@@ -81,6 +81,8 @@ final class WMController {
     @ObservationIgnored
     private(set) lazy var borderCoordinator = BorderCoordinator(controller: self)
     var hasStartedServices = false
+    @ObservationIgnored
+    private(set) var isMouseWarpPolicyEnabled = false
 
     let animationClock = AnimationClock()
     private let windowFocusOperations: WindowFocusOperations
@@ -157,7 +159,6 @@ final class WMController {
 
         setFocusFollowsMouse(settings.focusFollowsMouse)
         setMoveMouseToFocusedWindow(settings.moveMouseToFocusedWindow)
-        setMouseWarpEnabled(settings.mouseWarpEnabled)
 
         setWorkspaceBarEnabled(settings.workspaceBarEnabled)
         setPreventSleepEnabled(settings.preventSleepEnabled)
@@ -324,12 +325,37 @@ final class WMController {
         moveMouseToFocusedWindowEnabled = enabled
     }
 
-    func setMouseWarpEnabled(_ enabled: Bool) {
-        if enabled {
+    func shouldUseMouseWarp(for monitors: [Monitor]? = nil) -> Bool {
+        let effectiveMonitors = monitors ?? workspaceManager.monitors
+        return effectiveMonitors.count > 1
+    }
+
+    @discardableResult
+    func syncMouseWarpPolicy(for monitors: [Monitor]? = nil) -> Bool {
+        let effectiveMonitors = monitors ?? workspaceManager.monitors
+        let shouldEnable = shouldUseMouseWarp(for: effectiveMonitors)
+
+        if shouldEnable {
+            _ = settings.persistEffectiveMouseWarpMonitorOrder(for: effectiveMonitors)
+        }
+
+        guard shouldEnable != isMouseWarpPolicyEnabled else {
+            return shouldEnable
+        }
+
+        if shouldEnable {
             mouseWarpHandler.setup()
         } else {
             mouseWarpHandler.cleanup()
         }
+
+        isMouseWarpPolicyEnabled = shouldEnable
+        return shouldEnable
+    }
+
+    func resetMouseWarpPolicy() {
+        mouseWarpHandler.cleanup()
+        isMouseWarpPolicyEnabled = false
     }
 
     func insetWorkingFrame(for monitor: Monitor) -> CGRect {
