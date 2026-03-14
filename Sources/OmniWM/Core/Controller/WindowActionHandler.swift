@@ -22,73 +22,9 @@ final class WindowActionHandler {
         self.controller = controller
     }
 
-    func openWindowFinder() {
-        guard let controller else { return }
-        let entries = controller.workspaceManager.allEntries()
-        var items: [WindowFinderItem] = []
-
-        for entry in entries {
-            guard entry.layoutReason == .standard else { continue }
-
-            let title = AXWindowService.titlePreferFast(windowId: UInt32(entry.windowId)) ?? ""
-
-            let appInfo = controller.appInfoCache.info(for: entry.handle.pid)
-
-            let workspaceName = controller.workspaceManager.descriptor(for: entry.workspaceId)?.name ?? "?"
-
-            items.append(WindowFinderItem(
-                id: entry.handle.id,
-                handle: entry.handle,
-                title: title,
-                appName: appInfo?.name ?? "Unknown",
-                appIcon: appInfo?.icon,
-                workspaceName: workspaceName,
-                workspaceId: entry.workspaceId
-            ))
-        }
-
-        items.sort { ($0.appName, $0.title) < ($1.appName, $1.title) }
-
-        WindowFinderController.shared.show(windows: items) { [weak self] item in
-            self?.navigateToWindow(item)
-        }
-    }
-
     func openMenuAnywhere() {
-        guard let controller else { return }
-        guard controller.settings.menuAnywhereNativeEnabled else { return }
-        MenuAnywhereController.shared.showNativeMenu(at: controller.settings.menuAnywherePosition)
-    }
-
-    func openMenuPalette() {
-        guard let controller else { return }
-        guard controller.settings.menuAnywherePaletteEnabled else { return }
-
-        let ownBundleId = Bundle.main.bundleIdentifier
-        let frontmost = NSWorkspace.shared.frontmostApplication
-
-        let targetApp: NSRunningApplication
-        if let fm = frontmost, fm.bundleIdentifier != ownBundleId {
-            targetApp = fm
-        } else if let stored = MenuPaletteController.shared.currentApp, !stored.isTerminated {
-            targetApp = stored
-        } else {
-            return
-        }
-
-        let appElement = AXUIElementCreateApplication(targetApp.processIdentifier)
-        var windowValue: AnyObject?
-        var targetWindow: AXUIElement?
-        if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowValue) == .success {
-            targetWindow = (windowValue as! AXUIElement)
-        }
-
-        MenuPaletteController.shared.show(
-            at: controller.settings.menuAnywherePosition,
-            showShortcuts: controller.settings.menuAnywhereShowShortcuts,
-            targetApp: targetApp,
-            targetWindow: targetWindow
-        )
+        guard controller != nil else { return }
+        MenuAnywhereController.shared.showNativeMenu()
     }
 
     func toggleOverview() {
@@ -191,10 +127,10 @@ final class WindowActionHandler {
         }
     }
 
-    private func navigateToWindow(_ item: WindowFinderItem) {
+    func navigateToWindow(handle: WindowHandle) {
         guard let controller else { return }
-        guard let entry = controller.workspaceManager.entry(for: item.handle) else { return }
-        navigateToWindowInternal(token: item.handle.id, workspaceId: entry.workspaceId)
+        guard let entry = controller.workspaceManager.entry(for: handle) else { return }
+        navigateToWindowInternal(token: handle.id, workspaceId: entry.workspaceId)
     }
 
     func navigateToWindowInternal(token: WindowToken, workspaceId: WorkspaceDescriptor.ID) {

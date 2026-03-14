@@ -60,12 +60,11 @@ enum HotkeyCommand: Codable, Equatable, Hashable {
     case focusWorkspaceAnywhere(Int)
     case moveWindowToWorkspaceOnMonitor(workspaceIndex: Int, monitorDirection: Direction)
 
-    case openWindowFinder
+    case openCommandPalette
 
     case raiseAllFloatingWindows
 
     case openMenuAnywhere
-    case openMenuPalette
 
     case toggleHiddenBar
     case toggleQuakeTerminal
@@ -121,10 +120,9 @@ enum HotkeyCommand: Codable, Equatable, Hashable {
         case .workspaceBackAndForth: "Switch to Previous Workspace"
         case let .focusWorkspaceAnywhere(idx): "Focus Workspace \(idx + 1) Anywhere"
         case let .moveWindowToWorkspaceOnMonitor(wsIdx, monDir): "Move Window to Workspace \(wsIdx + 1) on \(monDir.displayName) Monitor"
-        case .openWindowFinder: "Open Window Finder"
+        case .openCommandPalette: "Open Command Palette"
         case .raiseAllFloatingWindows: "Raise All Floating Windows"
         case .openMenuAnywhere: "Open Menu Anywhere"
-        case .openMenuPalette: "Open Menu Palette"
         case .toggleHiddenBar: "Toggle Hidden Bar"
         case .toggleQuakeTerminal: "Toggle Quake Terminal"
         case .toggleWorkspaceLayout: "Toggle Workspace Layout"
@@ -155,8 +153,8 @@ enum HotkeyCommand: Codable, Equatable, Hashable {
              .swapWorkspaceWithMonitor,
              .summonWorkspace, .workspaceBackAndForth, .focusWorkspaceAnywhere,
              .moveWindowToWorkspaceOnMonitor,
-             .openWindowFinder, .raiseAllFloatingWindows,
-             .openMenuAnywhere, .openMenuPalette,
+             .openCommandPalette, .raiseAllFloatingWindows,
+             .openMenuAnywhere,
              .toggleHiddenBar, .toggleQuakeTerminal, .toggleWorkspaceLayout, .toggleOverview:
             .shared
         }

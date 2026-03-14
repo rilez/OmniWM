@@ -253,7 +253,7 @@ private func makeSettingsTestMonitor(
     @Test func settingsExportDecodesUnknownEnumStrings() throws {
         let json = """
         {
-            "version": 1,
+            "version": \(SettingsMigration.currentSettingsEpoch),
             "hotkeysEnabled": true,
             "focusFollowsMouse": false,
             "moveMouseToFocusedWindow": false,
@@ -308,10 +308,6 @@ private func makeSettingsTestMonitor(
             "gestureFingerCount": 99,
             "gestureInvertDirection": true,
             "animationsEnabled": true,
-            "menuAnywhereNativeEnabled": true,
-            "menuAnywherePaletteEnabled": true,
-            "menuAnywherePosition": "futurePos",
-            "menuAnywhereShowShortcuts": true,
             "hiddenBarEnabled": false,
             "hiddenBarIsCollapsed": false,
             "appearanceMode": "futureMode"
@@ -380,10 +376,6 @@ private func makeSettingsTestMonitor(
             scrollModifierKey: "option",
             gestureFingerCount: 4,
             gestureInvertDirection: true,
-            menuAnywhereNativeEnabled: false,
-            menuAnywherePaletteEnabled: true,
-            menuAnywherePosition: "center",
-            menuAnywhereShowShortcuts: false,
             hiddenBarEnabled: true,
             hiddenBarIsCollapsed: true,
             quakeTerminalOpacity: 0.85,
@@ -464,7 +456,7 @@ private func makeSettingsTestMonitor(
 @Suite struct IncrementalSettingsExportTests {
     @Test func incrementalExportOmitsRemovedAnimationsKeyAndDefaultHotkeys() throws {
         var export = SettingsExport.defaults()
-        export.menuAnywherePaletteEnabled = false
+        export.hiddenBarEnabled = true
 
         let data = try export.exportData(incrementalOnly: true)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -473,8 +465,22 @@ private func makeSettingsTestMonitor(
         }
 
         #expect(json["animationsEnabled"] == nil)
-        #expect((json["menuAnywherePaletteEnabled"] as? Bool) == false)
+        #expect((json["hiddenBarEnabled"] as? Bool) == true)
         #expect(json["hotkeyBindings"] == nil)
+    }
+
+    @Test func fullExportOmitsRemovedMenuAnywhereKeys() throws {
+        let export = SettingsExport.defaults()
+        let data = try export.exportData(incrementalOnly: false)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            Issue.record("Expected full export to produce a JSON object")
+            return
+        }
+
+        #expect(json["menuAnywhereNativeEnabled"] == nil)
+        #expect(json["menuAnywherePaletteEnabled"] == nil)
+        #expect(json["menuAnywherePosition"] == nil)
+        #expect(json["menuAnywhereShowShortcuts"] == nil)
     }
 
     @Test func mergedImportDataPreservesUnchangedHotkeysById() throws {
@@ -503,16 +509,16 @@ private func makeSettingsTestMonitor(
         let rawData = Data(
             """
             {
-              "version": 1,
+              "version": \(SettingsMigration.currentSettingsEpoch),
               "animationsEnabled": false,
-              "menuAnywherePaletteEnabled": false
+              "hiddenBarEnabled": true
             }
             """.utf8
         )
 
         let mergedData = try SettingsExport.mergedImportData(from: rawData)
         let decoded = try JSONDecoder().decode(SettingsExport.self, from: mergedData)
-        #expect(decoded.menuAnywherePaletteEnabled == false)
+        #expect(decoded.hiddenBarEnabled == true)
 
         let reexported = try decoded.exportData(incrementalOnly: false)
         guard let json = try JSONSerialization.jsonObject(with: reexported) as? [String: Any] else {
@@ -521,7 +527,7 @@ private func makeSettingsTestMonitor(
         }
 
         #expect(json["animationsEnabled"] == nil)
-        #expect((json["menuAnywherePaletteEnabled"] as? Bool) == false)
+        #expect((json["hiddenBarEnabled"] as? Bool) == true)
     }
 
     @Test func sameEpochLegacyWorkspaceKeysAreIgnoredOnImportAndDroppedOnReexport() throws {
@@ -634,6 +640,9 @@ private func makeSettingsTestMonitor(
         #expect(!ids.contains("swap.left"))
         #expect(!ids.contains("consumeWindow.left"))
         #expect(!ids.contains("expelWindow.left"))
+        #expect(ids.contains("openCommandPalette"))
+        #expect(!ids.contains("openWindowFinder"))
+        #expect(!ids.contains("openMenuPalette"))
         #expect(HotkeyCommand.move(.left).layoutCompatibility == .shared)
     }
 
@@ -706,6 +715,126 @@ private func makeSettingsTestMonitor(
             keyCode: UInt32(kVK_RightArrow),
             modifiers: UInt32(optionKey | shiftKey)
         ))
+    }
+
+    @Test func settingsStoreMigratesLegacyWindowFinderBindingToCommandPalette() {
+        let defaults = makeTestDefaults()
+        let rawData = Data(
+            """
+            [
+              { "id": "openWindowFinder", "binding": "Control+Option+Space" }
+            ]
+            """.utf8
+        )
+        defaults.set(rawData, forKey: "settings.hotkeyBindings")
+
+        let settings = SettingsStore(defaults: defaults)
+
+        #expect(settings.hotkeyBindings.first { $0.id == "openCommandPalette" }?.binding == KeyBinding(
+            keyCode: UInt32(kVK_Space),
+            modifiers: UInt32(controlKey | optionKey)
+        ))
+    }
+
+    @Test func settingsStoreUsesLegacyMenuPaletteBindingWhenWindowFinderBindingIsMissing() {
+        let defaults = makeTestDefaults()
+        let rawData = Data(
+            """
+            [
+              { "id": "openMenuPalette", "binding": "Control+Option+Shift+M" }
+            ]
+            """.utf8
+        )
+        defaults.set(rawData, forKey: "settings.hotkeyBindings")
+
+        let settings = SettingsStore(defaults: defaults)
+
+        #expect(settings.hotkeyBindings.first { $0.id == "openCommandPalette" }?.binding == KeyBinding(
+            keyCode: UInt32(kVK_ANSI_M),
+            modifiers: UInt32(controlKey | optionKey | shiftKey)
+        ))
+    }
+
+    @Test func explicitCommandPaletteBindingWinsOverLegacyBindings() {
+        let defaults = makeTestDefaults()
+        let rawData = Data(
+            """
+            [
+              { "id": "openCommandPalette", "binding": "Control+Option+P" },
+              { "id": "openWindowFinder", "binding": "Control+Option+Space" },
+              { "id": "openMenuPalette", "binding": "Control+Option+Shift+M" }
+            ]
+            """.utf8
+        )
+        defaults.set(rawData, forKey: "settings.hotkeyBindings")
+
+        let settings = SettingsStore(defaults: defaults)
+
+        #expect(settings.hotkeyBindings.first { $0.id == "openCommandPalette" }?.binding == KeyBinding(
+            keyCode: UInt32(kVK_ANSI_P),
+            modifiers: UInt32(controlKey | optionKey)
+        ))
+    }
+
+    @Test func mergedImportDataCanonicalizesLegacyCommandPaletteBindings() throws {
+        let rawData = Data(
+            """
+            {
+              "version": \(SettingsMigration.currentSettingsEpoch),
+              "hotkeyBindings": [
+                { "id": "openMenuPalette", "binding": "Control+Option+Shift+M" },
+                { "id": "openWindowFinder", "binding": "Control+Option+Space" }
+              ]
+            }
+            """.utf8
+        )
+
+        let mergedData = try SettingsExport.mergedImportData(from: rawData)
+        let decoded = try JSONDecoder().decode(SettingsExport.self, from: mergedData)
+
+        #expect(decoded.hotkeyBindings.first { $0.id == "openCommandPalette" }?.binding == KeyBinding(
+            keyCode: UInt32(kVK_Space),
+            modifiers: UInt32(controlKey | optionKey)
+        ))
+    }
+}
+
+@Suite @MainActor struct CommandPaletteSettingsTests {
+    @Test func commandPaletteLastModeDefaultsToWindowsAndPersists() {
+        let defaults = makeTestDefaults()
+
+        let settings = SettingsStore(defaults: defaults)
+        #expect(settings.commandPaletteLastMode == .windows)
+
+        settings.commandPaletteLastMode = .menu
+
+        let reloaded = SettingsStore(defaults: defaults)
+        #expect(reloaded.commandPaletteLastMode == .menu)
+    }
+
+    @Test func menuStatusHelpersDoNotMentionSettings() {
+        #expect(CommandPaletteController.menuModeAvailable(hasMenuFocusTarget: true) == true)
+        #expect(CommandPaletteController.menuModeAvailable(hasMenuFocusTarget: false) == false)
+        #expect(CommandPaletteController.availableMenuStatusText(for: "Safari") == "Searching menus in Safari")
+        #expect(CommandPaletteController.availableMenuStatusText(for: nil) == "Searching menus in Current App")
+        #expect(CommandPaletteController.unavailableMenuStatusText == "Open the palette while another app is frontmost to search its menus.")
+    }
+}
+
+@Suite struct SettingsSectionTests {
+    @Test func settingsSectionsExcludeMenuSection() {
+        #expect(SettingsSection.allCases.map(\.id) == [
+            "general",
+            "niri",
+            "dwindle",
+            "monitors",
+            "workspaces",
+            "borders",
+            "bar",
+            "hiddenBar",
+            "hotkeys",
+            "quakeTerminal",
+        ])
     }
 }
 
@@ -806,9 +935,12 @@ private func makeSettingsTestMonitor(
 
     @Test func startupDecisionRequiresResetWhenStoredEpochIsOlder() {
         let defaults = makeTestDefaults()
-        defaults.set(1, forKey: "settings.settingsEpoch")
+        defaults.set(SettingsMigration.currentSettingsEpoch - 1, forKey: "settings.settingsEpoch")
 
-        #expect(SettingsMigration.startupDecision(defaults: defaults) == .requireReset(storedEpoch: 1))
+        #expect(
+            SettingsMigration.startupDecision(defaults: defaults) ==
+                .requireReset(storedEpoch: SettingsMigration.currentSettingsEpoch - 1)
+        )
     }
 
     @Test func startupDecisionRequiresResetWhenStoredEpochIsNewer() {
@@ -840,7 +972,9 @@ private func makeSettingsTestMonitor(
     }
 
     @Test func validateImportEpochRejectsWrongEpochBeforeFullDecode() {
-        let rawData = Data("{\"version\":1,\"hotkeyBindings\":[{\"id\":\"move.left\",\"binding\":\"Option+Shift+Left\"}]}".utf8)
+        let rawData = Data(
+            "{\"version\":\(SettingsMigration.currentSettingsEpoch - 1),\"hotkeyBindings\":[{\"id\":\"move.left\",\"binding\":\"Option+Shift+Left\"}]}".utf8
+        )
 
         do {
             try SettingsMigration.validateImportEpoch(from: rawData)
@@ -851,7 +985,7 @@ private func makeSettingsTestMonitor(
                 return
             }
             #expect(expected == SettingsMigration.currentSettingsEpoch)
-            #expect(found == 1)
+            #expect(found == SettingsMigration.currentSettingsEpoch - 1)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }

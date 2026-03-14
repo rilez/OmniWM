@@ -6,7 +6,7 @@ enum StartupDecision: Equatable {
 }
 
 enum SettingsMigration {
-    static let currentSettingsEpoch = 3
+    static let currentSettingsEpoch = 4
 
     private static let epochKey = "settings.settingsEpoch"
     private static let patchesKey = "appliedSettingsPatches"

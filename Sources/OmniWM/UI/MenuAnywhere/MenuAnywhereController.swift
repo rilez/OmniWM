@@ -17,7 +17,7 @@ final class MenuAnywhereController: NSObject, NSMenuDelegate {
         super.init()
     }
 
-    func showNativeMenu(at position: MenuAnywherePosition) {
+    func showNativeMenu() {
         cleanupActiveMenu()
 
         guard let app = NSWorkspace.shared.frontmostApplication else { return }
@@ -38,30 +38,7 @@ final class MenuAnywhereController: NSObject, NSMenuDelegate {
         items.forEach(menu.addItem)
         activeMenu = menu
 
-        let location = menuLocation(for: position)
-        menu.popUp(positioning: nil, at: location, in: nil)
-    }
-
-    private func menuLocation(for position: MenuAnywherePosition) -> NSPoint {
-        let mouseLocation = NSEvent.mouseLocation
-        switch position {
-        case .cursor:
-            return mouseLocation
-        case .centered:
-            guard let screen = NSScreen.screen(containing: mouseLocation) ?? NSScreen.main
-            else { return mouseLocation }
-            return NSPoint(
-                x: screen.frame.midX,
-                y: screen.frame.midY
-            )
-        case .menuBarLocation:
-            guard let screen = NSScreen.screen(containing: mouseLocation) ?? NSScreen.main
-            else { return mouseLocation }
-            return NSPoint(
-                x: screen.frame.origin.x + 100,
-                y: screen.frame.maxY - 22
-            )
-        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
     private func cleanupActiveMenu() {

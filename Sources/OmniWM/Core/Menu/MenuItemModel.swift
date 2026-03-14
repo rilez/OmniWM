@@ -24,17 +24,3 @@ struct MenuItemModel: Identifiable {
         self.parentTitles = parentTitles
     }
 }
-
-enum MenuAnywherePosition: String, CaseIterable, Codable {
-    case cursor
-    case centered
-    case menuBarLocation
-
-    var displayName: String {
-        switch self {
-        case .cursor: "At Cursor"
-        case .centered: "Center of Screen"
-        case .menuBarLocation: "Menu Bar Location"
-        }
-    }
-}

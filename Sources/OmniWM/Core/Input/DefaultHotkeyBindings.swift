@@ -381,8 +381,8 @@ enum DefaultHotkeyBindings {
         }
 
         bindings.append(HotkeyBinding(
-            id: "openWindowFinder",
-            command: .openWindowFinder,
+            id: "openCommandPalette",
+            command: .openCommandPalette,
             binding: KeyBinding(keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | optionKey))
         ))
 
@@ -396,12 +396,6 @@ enum DefaultHotkeyBindings {
             id: "openMenuAnywhere",
             command: .openMenuAnywhere,
             binding: KeyBinding(keyCode: UInt32(kVK_ANSI_M), modifiers: UInt32(controlKey | optionKey))
-        ))
-
-        bindings.append(HotkeyBinding(
-            id: "openMenuPalette",
-            command: .openMenuPalette,
-            binding: KeyBinding(keyCode: UInt32(kVK_ANSI_M), modifiers: UInt32(controlKey | optionKey | shiftKey))
         ))
 
         bindings.append(HotkeyBinding(

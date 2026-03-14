@@ -69,11 +69,6 @@ struct SettingsExport: Codable {
     var gestureFingerCount: Int
     var gestureInvertDirection: Bool
 
-    var menuAnywhereNativeEnabled: Bool
-    var menuAnywherePaletteEnabled: Bool
-    var menuAnywherePosition: String
-    var menuAnywhereShowShortcuts: Bool
-
     var hiddenBarEnabled: Bool
     var hiddenBarIsCollapsed: Bool
 
@@ -143,10 +138,6 @@ extension SettingsExport {
             scrollModifierKey: ScrollModifierKey.optionShift.rawValue,
             gestureFingerCount: GestureFingerCount.three.rawValue,
             gestureInvertDirection: true,
-            menuAnywhereNativeEnabled: true,
-            menuAnywherePaletteEnabled: true,
-            menuAnywherePosition: MenuAnywherePosition.cursor.rawValue,
-            menuAnywhereShowShortcuts: true,
             hiddenBarEnabled: false,
             hiddenBarIsCollapsed: false,
             quakeTerminalOpacity: 1.0,
@@ -311,10 +302,6 @@ extension SettingsStore {
             scrollModifierKey: scrollModifierKey.rawValue,
             gestureFingerCount: gestureFingerCount.rawValue,
             gestureInvertDirection: gestureInvertDirection,
-            menuAnywhereNativeEnabled: menuAnywhereNativeEnabled,
-            menuAnywherePaletteEnabled: menuAnywherePaletteEnabled,
-            menuAnywherePosition: menuAnywherePosition.rawValue,
-            menuAnywhereShowShortcuts: menuAnywhereShowShortcuts,
             hiddenBarEnabled: hiddenBarEnabled,
             hiddenBarIsCollapsed: hiddenBarIsCollapsed,
             quakeTerminalOpacity: quakeTerminalOpacity,
@@ -404,11 +391,6 @@ extension SettingsStore {
         scrollModifierKey = ScrollModifierKey(rawValue: export.scrollModifierKey) ?? .optionShift
         gestureFingerCount = GestureFingerCount(rawValue: export.gestureFingerCount) ?? .three
         gestureInvertDirection = export.gestureInvertDirection
-
-        menuAnywhereNativeEnabled = export.menuAnywhereNativeEnabled
-        menuAnywherePaletteEnabled = export.menuAnywherePaletteEnabled
-        menuAnywherePosition = MenuAnywherePosition(rawValue: export.menuAnywherePosition) ?? .cursor
-        menuAnywhereShowShortcuts = export.menuAnywhereShowShortcuts
 
         hiddenBarEnabled = export.hiddenBarEnabled
         hiddenBarIsCollapsed = export.hiddenBarIsCollapsed

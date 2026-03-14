@@ -34,8 +34,6 @@ struct SettingsDetailView: View {
             WorkspaceBarSettingsTab(settings: settings, controller: controller)
         case .hiddenBar:
             HiddenBarSettingsTab(settings: settings, controller: controller)
-        case .menu:
-            MenuAnywhereSettingsTab(settings: settings)
         case .hotkeys:
             HotkeySettingsView(settings: settings, controller: controller)
         case .quakeTerminal:

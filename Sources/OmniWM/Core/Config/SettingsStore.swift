@@ -236,20 +236,8 @@ final class SettingsStore {
         didSet { defaults.set(gestureInvertDirection, forKey: Keys.gestureInvertDirection) }
     }
 
-    var menuAnywhereNativeEnabled: Bool {
-        didSet { defaults.set(menuAnywhereNativeEnabled, forKey: Keys.menuAnywhereNativeEnabled) }
-    }
-
-    var menuAnywherePaletteEnabled: Bool {
-        didSet { defaults.set(menuAnywherePaletteEnabled, forKey: Keys.menuAnywherePaletteEnabled) }
-    }
-
-    var menuAnywherePosition: MenuAnywherePosition {
-        didSet { defaults.set(menuAnywherePosition.rawValue, forKey: Keys.menuAnywherePosition) }
-    }
-
-    var menuAnywhereShowShortcuts: Bool {
-        didSet { defaults.set(menuAnywhereShowShortcuts, forKey: Keys.menuAnywhereShowShortcuts) }
+    var commandPaletteLastMode: CommandPaletteMode {
+        didSet { defaults.set(commandPaletteLastMode.rawValue, forKey: Keys.commandPaletteLastMode) }
     }
 
     var hiddenBarEnabled: Bool {
@@ -424,13 +412,9 @@ final class SettingsStore {
         gestureFingerCount = GestureFingerCount(rawValue: defaults.integer(forKey: Keys.gestureFingerCount)) ?? .three
         gestureInvertDirection = defaults.object(forKey: Keys.gestureInvertDirection) as? Bool ?? true
 
-        menuAnywhereNativeEnabled = defaults.object(forKey: Keys.menuAnywhereNativeEnabled) as? Bool ?? true
-        menuAnywherePaletteEnabled = defaults.object(forKey: Keys.menuAnywherePaletteEnabled) as? Bool ?? true
-        menuAnywherePosition = MenuAnywherePosition(
-            rawValue: defaults.string(forKey: Keys.menuAnywherePosition) ?? ""
-        ) ??
-            .cursor
-        menuAnywhereShowShortcuts = defaults.object(forKey: Keys.menuAnywhereShowShortcuts) as? Bool ?? true
+        commandPaletteLastMode = CommandPaletteMode(
+            rawValue: defaults.string(forKey: Keys.commandPaletteLastMode) ?? ""
+        ) ?? .windows
 
         hiddenBarEnabled = defaults.object(forKey: Keys.hiddenBarEnabled) as? Bool ?? false
         hiddenBarIsCollapsed = defaults.object(forKey: Keys.hiddenBarIsCollapsed) as? Bool ?? false
@@ -899,10 +883,7 @@ private enum Keys {
     static let gestureFingerCount = "settings.gestureFingerCount"
     static let gestureInvertDirection = "settings.gestureInvertDirection"
 
-    static let menuAnywhereNativeEnabled = "settings.menuAnywhere.nativeEnabled"
-    static let menuAnywherePaletteEnabled = "settings.menuAnywhere.paletteEnabled"
-    static let menuAnywherePosition = "settings.menuAnywhere.position"
-    static let menuAnywhereShowShortcuts = "settings.menuAnywhere.showShortcuts"
+    static let commandPaletteLastMode = "settings.commandPalette.lastMode"
 
     static let hiddenBarEnabled = "settings.hiddenBar.enabled"
     static let hiddenBarIsCollapsed = "settings.hiddenBar.isCollapsed"

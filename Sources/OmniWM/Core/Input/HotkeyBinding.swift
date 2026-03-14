@@ -74,7 +74,7 @@ struct HotkeyBinding: Codable, Equatable, Identifiable {
             .workspace
         case .focus, .focusColumn, .focusColumnFirst, .focusColumnLast,
              .focusDownOrLeft, .focusPrevious, .focusUpOrRight, .focusWindowBottom, .focusWindowTop,
-             .openMenuAnywhere, .openMenuPalette, .openWindowFinder, .toggleHiddenBar, .toggleQuakeTerminal,
+             .openCommandPalette, .openMenuAnywhere, .toggleHiddenBar, .toggleQuakeTerminal,
              .toggleOverview:
             .focus
         case .move:
@@ -125,6 +125,11 @@ struct PersistedHotkeyBinding: Codable, Equatable {
 }
 
 enum HotkeyBindingRegistry {
+    private static let commandPaletteID = "openCommandPalette"
+    private static let legacyCommandPaletteIDs = (
+        windowFinder: "openWindowFinder",
+        menuPalette: "openMenuPalette"
+    )
     private static let defaultBindings = DefaultHotkeyBindings.all()
     private static let bindingsByID = Dictionary(
         defaultBindings.map { ($0.id, $0) },
@@ -142,8 +147,32 @@ enum HotkeyBindingRegistry {
 
     static func canonicalize(_ persisted: [PersistedHotkeyBinding]) -> [HotkeyBinding] {
         var overrides: [String: KeyBinding] = [:]
-        for entry in persisted where bindingsByID[entry.id] != nil {
-            overrides[entry.id] = entry.binding
+        var commandPaletteBinding: KeyBinding?
+        var hasCommandPaletteOverride = false
+        var legacyWindowFinderBinding: KeyBinding?
+        var legacyMenuPaletteBinding: KeyBinding?
+
+        for entry in persisted {
+            switch entry.id {
+            case commandPaletteID:
+                hasCommandPaletteOverride = true
+                commandPaletteBinding = entry.binding
+            case legacyCommandPaletteIDs.windowFinder:
+                legacyWindowFinderBinding = entry.binding
+            case legacyCommandPaletteIDs.menuPalette:
+                legacyMenuPaletteBinding = entry.binding
+            default:
+                guard bindingsByID[entry.id] != nil else { continue }
+                overrides[entry.id] = entry.binding
+            }
+        }
+
+        if hasCommandPaletteOverride {
+            overrides[commandPaletteID] = commandPaletteBinding ?? .unassigned
+        } else if let legacyWindowFinderBinding, !legacyWindowFinderBinding.isUnassigned {
+            overrides[commandPaletteID] = legacyWindowFinderBinding
+        } else if let legacyMenuPaletteBinding, !legacyMenuPaletteBinding.isUnassigned {
+            overrides[commandPaletteID] = legacyMenuPaletteBinding
         }
 
         return defaultBindings.map { binding in

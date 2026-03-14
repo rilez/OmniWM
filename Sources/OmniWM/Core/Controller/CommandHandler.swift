@@ -120,14 +120,12 @@ final class CommandHandler {
                 workspaceIndex: wsIdx,
                 monitorDirection: monDir
             )
-        case .openWindowFinder:
-            controller.openWindowFinder()
+        case .openCommandPalette:
+            controller.openCommandPalette()
         case .raiseAllFloatingWindows:
             controller.raiseAllFloatingWindows()
         case .openMenuAnywhere:
             controller.openMenuAnywhere()
-        case .openMenuPalette:
-            controller.openMenuPalette()
         case .toggleHiddenBar:
             controller.toggleHiddenBar()
         case .toggleQuakeTerminal:

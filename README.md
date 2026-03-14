@@ -85,8 +85,7 @@ A powerful tiling window manager for macOS.
 
 Small demo, not fully showing everything, gif recorded at 30fps due to size, features shown:
 - real quake-style temrinal using ghostty framework
-- window finder/jumper
-- searchable and usable command pallet for any app
+- unified command palette for windows and app menus
 - App menu anywhere
 - Niri tabs
 - Niri and Dwindle layout (some animations shown)
@@ -205,9 +204,8 @@ In Niri, `Move Left / Right` expels the focused window out of multi-window colum
 | Action | Shortcut |
 |--------|----------|
 | Toggle Fullscreen | `Option + Return` |
-| Window Finder | `Ctrl + Option + Space` |
+| Command Palette | `Ctrl + Option + Space` |
 | Menu Anywhere | `Ctrl + Option + M` |
-| Menu Palette (searchable) | `Ctrl + Option + Shift + M` |
 | Quake Terminal | `` Option + ` `` |
 | Overview | `Option + Shift + O` |
 
@@ -247,18 +245,19 @@ A drop-down terminal (powered by Ghostty) that slides in from the screen edge:
 - Configure position (top/bottom/left/right/center), size, and opacity in Settings
 - Auto-hides on focus loss (optional)
 
-#### Window Finder
+#### Command Palette
 
-Quickly search and jump to any window:
+Quickly search windows or app menus from one shared palette:
 - Press `Ctrl + Option + Space`
-- Type to fuzzy-search by window title or app name
-- Use arrow keys to select, Enter to focus
+- Switch between `Windows` and `Menu`
+- Type to fuzzy-search by window title, app name, or menu item
+- Menu results always show keyboard shortcuts when available
+- Use arrow keys to select, Enter to act
 
 #### Menu Anywhere
 
 Access any application's menu from your keyboard:
 - `Ctrl + Option + M` - Shows native menu at cursor
-- `Ctrl + Option + Shift + M` - Searchable menu palette
 
 #### Overview Mode
 
