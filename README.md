@@ -128,15 +128,19 @@ brew install omniwm
 
 1. Download the latest `OmniWM.zip` from [Releases](https://github.com/BarutSRB/OmniWM/releases)
 2. Extract and move `OmniWM.app` to `/Applications`
-3. Launch OmniWM and grant Accessibility permissions when prompted
+3. In System Settings > Desktop & Dock > Mission Control, turn off `Displays have separate Spaces`
+4. Log out of macOS and log back in for that change to take effect
+5. Launch OmniWM and grant Accessibility permissions when prompted
 
 ## Quick Start
 
 1. Launch OmniWM from your Applications folder
-2. Grant Accessibility permissions in System Settings > Privacy & Security > Accessibility
-3. Windows will automatically tile in columns
-4. Use `Option + Arrow keys` to navigate between windows
-5. Click the menu bar icon to access Settings
+2. In System Settings > Desktop & Dock > Mission Control, turn off `Displays have separate Spaces`
+3. Log out of macOS and log back in for that change to take effect
+4. Grant Accessibility permissions in System Settings > Privacy & Security > Accessibility
+5. Windows will automatically tile in columns
+6. Use `Option + Arrow keys` to navigate between windows
+7. Click the menu bar icon to access Settings
 
 
 ## User Guide

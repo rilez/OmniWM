@@ -10,10 +10,19 @@ final class AppBootstrapState {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     nonisolated(unsafe) static weak var sharedBootstrap: AppBootstrapState?
+    private static let desktopAndDockSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.Desktop-Settings.extension"
+    )!
+    private static let systemSettingsAppURL = URL(fileURLWithPath: "/System/Applications/System Settings.app")
 
     private enum StartupModalAction {
         case exportBackup
         case reset
+        case quit
+    }
+
+    private enum SeparateSpacesModalAction {
+        case openSystemSettings
         case quit
     }
 
@@ -24,12 +33,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bootstrapApplication()
     }
 
-    private func bootstrapApplication(defaults: UserDefaults = .standard) {
-        switch SettingsMigration.startupDecision(defaults: defaults) {
+    private func bootstrapApplication(
+        defaults: UserDefaults = .standard,
+        spacesRequirement: DisplaysHaveSeparateSpacesRequirement = .init()
+    ) {
+        switch AppBootstrapPlanner.decision(appDefaults: defaults, spacesRequirement: spacesRequirement) {
         case .boot:
             finishBootstrap(defaults: defaults)
-        case let .requireReset(storedEpoch):
+        case let .requireSettingsReset(storedEpoch):
             runStartupResetGate(storedEpoch: storedEpoch, defaults: defaults)
+        case .requireDisplaysHaveSeparateSpacesDisabled:
+            runDisplaysHaveSeparateSpacesGate()
         }
     }
 
@@ -74,6 +88,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func runDisplaysHaveSeparateSpacesGate() {
+        switch presentDisplaysHaveSeparateSpacesModal() {
+        case .openSystemSettings:
+            openDesktopAndDockSettings()
+            NSApplication.shared.terminate(nil)
+        case .quit:
+            NSApplication.shared.terminate(nil)
+        }
+    }
+
     private func presentStartupResetModal(storedEpoch: Int?) -> StartupModalAction {
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -100,6 +124,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             return .quit
         }
+    }
+
+    private func presentDisplaysHaveSeparateSpacesModal() -> SeparateSpacesModalAction {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Turn off Displays have separate Spaces before launching OmniWM"
+        alert.informativeText =
+            "OmniWM requires shared Spaces across displays. Open System Settings > Desktop & Dock > Mission Control, " +
+            "turn off \"Displays have separate Spaces\", then log out of macOS and log back in before launching OmniWM again."
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Quit")
+
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return .openSystemSettings
+        default:
+            return .quit
+        }
+    }
+
+    private func openDesktopAndDockSettings() {
+        if NSWorkspace.shared.open(Self.desktopAndDockSettingsURL) {
+            return
+        }
+
+        _ = NSWorkspace.shared.open(Self.systemSettingsAppURL)
     }
 
     private func presentInfoAlert(title: String, message: String) {
