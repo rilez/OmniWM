@@ -257,6 +257,39 @@ private func makeSettingsTestMonitor(
 
 @Suite struct SettingsExportTests {
 
+    @Test func defaultsReflectPromotedBuiltInValues() {
+        let defaults = SettingsExport.defaults()
+
+        #expect(defaults.mouseWarpMargin == 1)
+        #expect(defaults.niriColumnWidthPresets == BuiltInSettingsDefaults.niriColumnWidthPresets)
+        #expect(defaults.outerGapLeft == 8)
+        #expect(defaults.outerGapRight == 8)
+        #expect(defaults.outerGapTop == 8)
+        #expect(defaults.outerGapBottom == 8)
+        #expect(defaults.workspaceConfigurations == BuiltInSettingsDefaults.workspaceConfigurations)
+        #expect(defaults.bordersEnabled == true)
+        #expect(defaults.borderWidth == 5.0)
+        #expect(defaults.borderColorRed == 0.084585202284378935)
+        #expect(defaults.borderColorGreen == 1.0)
+        #expect(defaults.borderColorBlue == 0.97930003794467602)
+        #expect(defaults.hotkeyBindings == HotkeyBindingRegistry.defaults())
+        #expect(defaults.workspaceBarEnabled == true)
+        #expect(defaults.workspaceBarNotchAware == true)
+        #expect(defaults.appRules == BuiltInSettingsDefaults.appRules)
+        #expect(defaults.preventSleepEnabled == false)
+        #expect(defaults.scrollSensitivity == 5.0)
+        #expect(defaults.hiddenBarIsCollapsed == true)
+        #expect(defaults.quakeTerminalEnabled == true)
+        #expect(defaults.quakeTerminalPosition == QuakeTerminalPosition.center.rawValue)
+        #expect(defaults.quakeTerminalWidthPercent == 50.0)
+        #expect(defaults.quakeTerminalHeightPercent == 50.0)
+        #expect(defaults.quakeTerminalAutoHide == false)
+        #expect(defaults.quakeTerminalMonitorMode == QuakeTerminalMonitorMode.focusedWindow.rawValue)
+        #expect(defaults.quakeTerminalUseCustomFrame == false)
+        #expect(defaults.quakeTerminalCustomFrame == nil)
+        #expect(defaults.appearanceMode == AppearanceMode.dark.rawValue)
+    }
+
     @Test func settingsExportDecodesUnknownEnumStrings() throws {
         let json = """
         {
@@ -485,7 +518,7 @@ private func makeSettingsTestMonitor(
 @Suite struct IncrementalSettingsExportTests {
     @Test func incrementalExportOmitsRemovedAnimationsKeyAndDefaultHotkeys() throws {
         var export = SettingsExport.defaults()
-        export.hiddenBarIsCollapsed = true
+        export.hiddenBarIsCollapsed = false
 
         let data = try export.exportData(incrementalOnly: true)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -494,7 +527,7 @@ private func makeSettingsTestMonitor(
         }
 
         #expect(json["animationsEnabled"] == nil)
-        #expect((json["hiddenBarIsCollapsed"] as? Bool) == true)
+        #expect((json["hiddenBarIsCollapsed"] as? Bool) == false)
         #expect(json["hotkeyBindings"] == nil)
     }
 
@@ -502,12 +535,11 @@ private func makeSettingsTestMonitor(
         var export = SettingsExport.defaults()
         export.focusFollowsWindowToMonitor = true
         export.commandPaletteLastMode = CommandPaletteMode.menu.rawValue
-        export.quakeTerminalEnabled = true
         export.quakeTerminalPosition = QuakeTerminalPosition.bottom.rawValue
         export.quakeTerminalWidthPercent = 80
         export.quakeTerminalHeightPercent = 55
         export.quakeTerminalAnimationDuration = 0.4
-        export.quakeTerminalAutoHide = false
+        export.quakeTerminalAutoHide = true
         export.quakeTerminalUseCustomFrame = true
         export.quakeTerminalCustomFrame = QuakeTerminalFrameExport(x: 10, y: 20, width: 1200, height: 700)
 
@@ -519,12 +551,12 @@ private func makeSettingsTestMonitor(
 
         #expect((json["focusFollowsWindowToMonitor"] as? Bool) == true)
         #expect(json["commandPaletteLastMode"] as? String == "menu")
-        #expect((json["quakeTerminalEnabled"] as? Bool) == true)
+        #expect(json["quakeTerminalEnabled"] == nil)
         #expect(json["quakeTerminalPosition"] as? String == "bottom")
         #expect((json["quakeTerminalWidthPercent"] as? NSNumber)?.doubleValue == 80)
         #expect((json["quakeTerminalHeightPercent"] as? NSNumber)?.doubleValue == 55)
         #expect((json["quakeTerminalAnimationDuration"] as? NSNumber)?.doubleValue == 0.4)
-        #expect((json["quakeTerminalAutoHide"] as? Bool) == false)
+        #expect((json["quakeTerminalAutoHide"] as? Bool) == true)
         #expect((json["quakeTerminalUseCustomFrame"] as? Bool) == true)
         #expect(json["quakeTerminalCustomFrameX"] == nil)
         #expect(json["quakeTerminalCustomFrameY"] == nil)
@@ -539,6 +571,20 @@ private func makeSettingsTestMonitor(
         #expect((frame["y"] as? NSNumber)?.doubleValue == 20)
         #expect((frame["width"] as? NSNumber)?.doubleValue == 1200)
         #expect((frame["height"] as? NSNumber)?.doubleValue == 700)
+    }
+
+    @Test func incrementalExportOmitsPromotedWorkspaceAndRuleDefaults() throws {
+        let data = try SettingsExport.defaults().exportData(incrementalOnly: true)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            Issue.record("Expected incremental export to produce a JSON object")
+            return
+        }
+
+        #expect(json["workspaceConfigurations"] == nil)
+        #expect(json["appRules"] == nil)
+        #expect(json["mouseWarpMonitorOrder"] == nil)
+        #expect(json["quakeTerminalUseCustomFrame"] == nil)
+        #expect(json["preventSleepEnabled"] == nil)
     }
 
     @Test func fullExportOmitsRemovedMenuAnywhereKeys() throws {
@@ -649,12 +695,18 @@ private func makeSettingsTestMonitor(
         #expect(decoded.hiddenBarIsCollapsed == true)
         #expect(decoded.focusFollowsWindowToMonitor == false)
         #expect(decoded.commandPaletteLastMode == CommandPaletteMode.windows.rawValue)
-        #expect(decoded.quakeTerminalEnabled == false)
-        #expect(decoded.quakeTerminalPosition == QuakeTerminalPosition.top.rawValue)
-        #expect(decoded.quakeTerminalWidthPercent == 100.0)
-        #expect(decoded.quakeTerminalHeightPercent == 40.0)
+        #expect(decoded.workspaceBarEnabled == true)
+        #expect(decoded.workspaceBarNotchAware == true)
+        #expect(decoded.workspaceConfigurations == BuiltInSettingsDefaults.workspaceConfigurations)
+        #expect(decoded.appRules == BuiltInSettingsDefaults.appRules)
+        #expect(decoded.preventSleepEnabled == false)
+        #expect(decoded.hotkeyBindings == HotkeyBindingRegistry.defaults())
+        #expect(decoded.quakeTerminalEnabled == true)
+        #expect(decoded.quakeTerminalPosition == QuakeTerminalPosition.center.rawValue)
+        #expect(decoded.quakeTerminalWidthPercent == 50.0)
+        #expect(decoded.quakeTerminalHeightPercent == 50.0)
         #expect(decoded.quakeTerminalAnimationDuration == 0.2)
-        #expect(decoded.quakeTerminalAutoHide == true)
+        #expect(decoded.quakeTerminalAutoHide == false)
         #expect(decoded.quakeTerminalUseCustomFrame == false)
         #expect(decoded.quakeTerminalCustomFrame == nil)
     }
@@ -1094,6 +1146,42 @@ private func makeSettingsTestMonitor(
     }
 }
 
+@Suite @MainActor struct SettingsStoreBuiltInDefaultsTests {
+    @Test func settingsStoreBootsWithPromotedDefaultsAndExcludedLocalStateStaysOut() {
+        let settings = SettingsStore(defaults: makeTestDefaults())
+
+        #expect(settings.mouseWarpMargin == 1)
+        #expect(settings.niriColumnWidthPresets == BuiltInSettingsDefaults.niriColumnWidthPresets)
+        #expect(settings.outerGapLeft == 8)
+        #expect(settings.outerGapRight == 8)
+        #expect(settings.outerGapTop == 8)
+        #expect(settings.outerGapBottom == 8)
+        #expect(settings.workspaceConfigurations == BuiltInSettingsDefaults.workspaceConfigurations)
+        #expect(settings.bordersEnabled == true)
+        #expect(settings.borderWidth == 5.0)
+        #expect(settings.borderColorRed == 0.084585202284378935)
+        #expect(settings.borderColorGreen == 1.0)
+        #expect(settings.borderColorBlue == 0.97930003794467602)
+        #expect(settings.hotkeyBindings == HotkeyBindingRegistry.defaults())
+        #expect(settings.workspaceBarEnabled == true)
+        #expect(settings.workspaceBarNotchAware == true)
+        #expect(settings.appRules == BuiltInSettingsDefaults.appRules)
+        #expect(settings.mouseWarpMonitorOrder.isEmpty)
+        #expect(settings.preventSleepEnabled == false)
+        #expect(settings.scrollSensitivity == 5.0)
+        #expect(settings.hiddenBarIsCollapsed == true)
+        #expect(settings.quakeTerminalEnabled == true)
+        #expect(settings.quakeTerminalPosition == .center)
+        #expect(settings.quakeTerminalWidthPercent == 50.0)
+        #expect(settings.quakeTerminalHeightPercent == 50.0)
+        #expect(settings.quakeTerminalAutoHide == false)
+        #expect(settings.quakeTerminalMonitorMode == .focusedWindow)
+        #expect(settings.quakeTerminalUseCustomFrame == false)
+        #expect(settings.quakeTerminalCustomFrame == nil)
+        #expect(settings.appearanceMode == .dark)
+    }
+}
+
 @Suite struct SettingsSectionTests {
     @Test func settingsSectionsExcludeMenuSection() {
         #expect(SettingsSection.allCases.map(\.id) == [
@@ -1118,9 +1206,10 @@ private func makeSettingsTestMonitor(
 
         let settings = SettingsStore(defaults: defaults)
 
-        #expect(settings.workspaceConfigurations.map(\.name) == ["1"])
-        #expect(settings.configuredWorkspaceNames() == ["1"])
-        #expect(settings.workspaceToMonitorAssignments().keys.sorted() == ["1"])
+        let defaultNames = BuiltInSettingsDefaults.workspaceConfigurations.map(\.name)
+        #expect(settings.workspaceConfigurations.map(\.name) == defaultNames)
+        #expect(settings.configuredWorkspaceNames() == defaultNames)
+        #expect(settings.workspaceToMonitorAssignments().keys.sorted() == defaultNames)
     }
 
     @Test func savingWorkspaceConfigurationsDoesNotRewriteLegacyWorkspaceKeys() {

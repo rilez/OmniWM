@@ -130,6 +130,7 @@ private func waitForFocusRefresh(on controller: WMController) async {
     @Test @MainActor func toggleHiddenBarUpdatesCollapsedStateWithoutEnableGate() {
         let settings = SettingsStore(defaults: makeFocusTestDefaults())
         let controller = WMController(settings: settings)
+        settings.hiddenBarIsCollapsed = false
 
         #expect(settings.hiddenBarIsCollapsed == false)
 

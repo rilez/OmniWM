@@ -339,13 +339,13 @@ final class SettingsStore {
         mouseWarpMonitorOrder = Self.loadMouseWarpMonitorOrder(from: defaults)
         niriColumnWidthPresets = Self.loadNiriColumnWidthPresets(from: defaults)
         niriDefaultColumnWidth = Self.loadNiriDefaultColumnWidth(from: defaults)
-        mouseWarpMargin = defaults.object(forKey: Keys.mouseWarpMargin) as? Int ?? 2
+        mouseWarpMargin = defaults.object(forKey: Keys.mouseWarpMargin) as? Int ?? 1
         gapSize = defaults.object(forKey: Keys.gapSize) as? Double ?? 8
 
-        outerGapLeft = defaults.object(forKey: Keys.outerGapLeft) as? Double ?? 0
-        outerGapRight = defaults.object(forKey: Keys.outerGapRight) as? Double ?? 0
-        outerGapTop = defaults.object(forKey: Keys.outerGapTop) as? Double ?? 0
-        outerGapBottom = defaults.object(forKey: Keys.outerGapBottom) as? Double ?? 0
+        outerGapLeft = defaults.object(forKey: Keys.outerGapLeft) as? Double ?? 8
+        outerGapRight = defaults.object(forKey: Keys.outerGapRight) as? Double ?? 8
+        outerGapTop = defaults.object(forKey: Keys.outerGapTop) as? Double ?? 8
+        outerGapBottom = defaults.object(forKey: Keys.outerGapBottom) as? Double ?? 8
 
         niriMaxWindowsPerColumn = defaults.object(forKey: Keys.niriMaxWindowsPerColumn) as? Int ?? 3
         niriMaxVisibleColumns = defaults.object(forKey: Keys.niriMaxVisibleColumns) as? Int ?? 2
@@ -359,16 +359,16 @@ final class SettingsStore {
         workspaceConfigurations = Self.loadWorkspaceConfigurations(from: defaults)
         defaultLayoutType = LayoutType(rawValue: defaults.string(forKey: Keys.defaultLayoutType) ?? "") ?? .niri
 
-        bordersEnabled = defaults.object(forKey: Keys.bordersEnabled) as? Bool ?? false
-        borderWidth = defaults.object(forKey: Keys.borderWidth) as? Double ?? 4.0
-        borderColorRed = defaults.object(forKey: Keys.borderColorRed) as? Double ?? 0.0
-        borderColorGreen = defaults.object(forKey: Keys.borderColorGreen) as? Double ?? 0.5
-        borderColorBlue = defaults.object(forKey: Keys.borderColorBlue) as? Double ?? 1.0
+        bordersEnabled = defaults.object(forKey: Keys.bordersEnabled) as? Bool ?? true
+        borderWidth = defaults.object(forKey: Keys.borderWidth) as? Double ?? 5.0
+        borderColorRed = defaults.object(forKey: Keys.borderColorRed) as? Double ?? 0.084585202284378935
+        borderColorGreen = defaults.object(forKey: Keys.borderColorGreen) as? Double ?? 1.0
+        borderColorBlue = defaults.object(forKey: Keys.borderColorBlue) as? Double ?? 0.97930003794467602
         borderColorAlpha = defaults.object(forKey: Keys.borderColorAlpha) as? Double ?? 1.0
 
         hotkeyBindings = Self.loadBindings(from: defaults)
 
-        workspaceBarEnabled = defaults.object(forKey: Keys.workspaceBarEnabled) as? Bool ?? false
+        workspaceBarEnabled = defaults.object(forKey: Keys.workspaceBarEnabled) as? Bool ?? true
         workspaceBarShowLabels = defaults.object(forKey: Keys.workspaceBarShowLabels) as? Bool ?? true
         workspaceBarWindowLevel = WorkspaceBarWindowLevel(
             rawValue: defaults.string(forKey: Keys.workspaceBarWindowLevel) ?? ""
@@ -376,7 +376,7 @@ final class SettingsStore {
         workspaceBarPosition = WorkspaceBarPosition(
             rawValue: defaults.string(forKey: Keys.workspaceBarPosition) ?? ""
         ) ?? .overlappingMenuBar
-        workspaceBarNotchAware = defaults.object(forKey: Keys.workspaceBarNotchAware) as? Bool ?? false
+        workspaceBarNotchAware = defaults.object(forKey: Keys.workspaceBarNotchAware) as? Bool ?? true
         workspaceBarDeduplicateAppIcons = defaults
             .object(forKey: Keys.workspaceBarDeduplicateAppIcons) as? Bool ?? false
         workspaceBarHideEmptyWorkspaces = defaults
@@ -402,7 +402,7 @@ final class SettingsStore {
 
         preventSleepEnabled = defaults.object(forKey: Keys.preventSleepEnabled) as? Bool ?? false
         scrollGestureEnabled = defaults.object(forKey: Keys.scrollGestureEnabled) as? Bool ?? true
-        scrollSensitivity = defaults.object(forKey: Keys.scrollSensitivity) as? Double ?? 1.0
+        scrollSensitivity = defaults.object(forKey: Keys.scrollSensitivity) as? Double ?? 5.0
         scrollModifierKey = ScrollModifierKey(rawValue: defaults.string(forKey: Keys.scrollModifierKey) ?? "") ??
             .optionShift
         gestureFingerCount = GestureFingerCount(rawValue: defaults.integer(forKey: Keys.gestureFingerCount)) ?? .three
@@ -412,26 +412,26 @@ final class SettingsStore {
             rawValue: defaults.string(forKey: Keys.commandPaletteLastMode) ?? ""
         ) ?? .windows
 
-        hiddenBarIsCollapsed = defaults.object(forKey: Keys.hiddenBarIsCollapsed) as? Bool ?? false
+        hiddenBarIsCollapsed = defaults.object(forKey: Keys.hiddenBarIsCollapsed) as? Bool ?? true
 
-        quakeTerminalEnabled = defaults.object(forKey: Keys.quakeTerminalEnabled) as? Bool ?? false
+        quakeTerminalEnabled = defaults.object(forKey: Keys.quakeTerminalEnabled) as? Bool ?? true
         quakeTerminalPosition = QuakeTerminalPosition(
             rawValue: defaults.string(forKey: Keys.quakeTerminalPosition) ?? ""
-        ) ?? .top
-        quakeTerminalWidthPercent = defaults.object(forKey: Keys.quakeTerminalWidthPercent) as? Double ?? 100.0
-        quakeTerminalHeightPercent = defaults.object(forKey: Keys.quakeTerminalHeightPercent) as? Double ?? 40.0
+        ) ?? .center
+        quakeTerminalWidthPercent = defaults.object(forKey: Keys.quakeTerminalWidthPercent) as? Double ?? 50.0
+        quakeTerminalHeightPercent = defaults.object(forKey: Keys.quakeTerminalHeightPercent) as? Double ?? 50.0
         quakeTerminalAnimationDuration = defaults.object(forKey: Keys.quakeTerminalAnimationDuration) as? Double ?? 0.2
-        quakeTerminalAutoHide = defaults.object(forKey: Keys.quakeTerminalAutoHide) as? Bool ?? true
+        quakeTerminalAutoHide = defaults.object(forKey: Keys.quakeTerminalAutoHide) as? Bool ?? false
         quakeTerminalOpacity = defaults.object(forKey: Keys.quakeTerminalOpacity) as? Double ?? 1.0
         quakeTerminalMonitorMode = QuakeTerminalMonitorMode(
             rawValue: defaults.string(forKey: Keys.quakeTerminalMonitorMode) ?? ""
-        ) ?? .mouseCursor
+        ) ?? .focusedWindow
         quakeTerminalUseCustomFrame = defaults.object(forKey: Keys.quakeTerminalUseCustomFrame) as? Bool ?? false
         quakeTerminalCustomFrameX = defaults.object(forKey: Keys.quakeTerminalCustomFrameX) as? Double
         quakeTerminalCustomFrameY = defaults.object(forKey: Keys.quakeTerminalCustomFrameY) as? Double
         quakeTerminalCustomFrameWidth = defaults.object(forKey: Keys.quakeTerminalCustomFrameWidth) as? Double
         quakeTerminalCustomFrameHeight = defaults.object(forKey: Keys.quakeTerminalCustomFrameHeight) as? Double
-        appearanceMode = AppearanceMode(rawValue: defaults.string(forKey: Keys.appearanceMode) ?? "") ?? .automatic
+        appearanceMode = AppearanceMode(rawValue: defaults.string(forKey: Keys.appearanceMode) ?? "") ?? .dark
     }
 
     private static func loadBindings(from defaults: UserDefaults) -> [HotkeyBinding] {
@@ -572,7 +572,7 @@ final class SettingsStore {
             .sorted { $0.sortOrder < $1.sortOrder }
 
         if normalized.isEmpty {
-            return [WorkspaceConfiguration(name: "1", monitorAssignment: .main)]
+            return BuiltInSettingsDefaults.workspaceConfigurations
         }
 
         return normalized
@@ -626,7 +626,7 @@ final class SettingsStore {
         guard let data = defaults.data(forKey: Keys.appRules),
               let rules = try? JSONDecoder().decode([AppRule].self, from: data)
         else {
-            return []
+            return BuiltInSettingsDefaults.appRules
         }
         return rules
     }
@@ -766,8 +766,7 @@ final class SettingsStore {
         defaults.set(data, forKey: Keys.mouseWarpMonitorOrder)
     }
 
-    nonisolated static let defaultColumnWidthPresets: [Double] = NiriLayoutEngine.defaultPresetColumnWidthValues
-        .map(Double.init)
+    nonisolated static let defaultColumnWidthPresets: [Double] = BuiltInSettingsDefaults.niriColumnWidthPresets
 
     static func validatedPresets(_ presets: [Double]) -> [Double] {
         let result = presets.map { min(1.0, max(0.05, $0)) }
