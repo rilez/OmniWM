@@ -168,7 +168,14 @@ struct HotkeyBindingRow: View {
     let onCancel: () -> Void
     let onClear: () -> Void
 
+    @State private var showHotkeyHelp = false
+    @State private var hotkeyHelpTask: Task<Void, Never>?
+
+    private let hoverHelpDelayNs: UInt64 = 120_000_000
+
     var body: some View {
+        let helpText = binding.binding.humanReadableString
+
         HStack {
             HStack(spacing: 6) {
                 Text(binding.command.displayName)
@@ -195,7 +202,10 @@ struct HotkeyBindingRow: View {
                 KeyRecorderView(onCapture: onBindingCaptured, onCancel: onCancel)
                     .frame(width: 100, height: 24)
             } else {
-                Button(action: onStartRecording) {
+                Button(action: {
+                    hideHotkeyHelp()
+                    onStartRecording()
+                }) {
                     Text(binding.binding.displayString)
                         .font(.system(.body, design: .monospaced))
                         .frame(width: 80)
@@ -205,10 +215,20 @@ struct HotkeyBindingRow: View {
                         .cornerRadius(4)
                 }
                 .buttonStyle(.plain)
-                .help(binding.binding.humanReadableString)
+                .overlay(alignment: .top) {
+                    if showHotkeyHelp {
+                        HotkeyHoverTooltip(text: helpText)
+                            .offset(y: -34)
+                            .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .bottom)))
+                    }
+                }
+                .onHover(perform: updateHotkeyHover)
 
                 if !binding.binding.isUnassigned {
-                    Button(action: onClear) {
+                    Button(action: {
+                        hideHotkeyHelp()
+                        onClear()
+                    }) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.secondary)
                     }
@@ -218,5 +238,56 @@ struct HotkeyBindingRow: View {
             }
         }
         .padding(.vertical, 2)
+        .zIndex(showHotkeyHelp ? 1 : 0)
+        .animation(.easeOut(duration: 0.1), value: showHotkeyHelp)
+        .onDisappear {
+            cancelHotkeyHelpTask()
+        }
+    }
+
+    private func updateHotkeyHover(_ hovering: Bool) {
+        cancelHotkeyHelpTask()
+
+        guard hovering else {
+            showHotkeyHelp = false
+            return
+        }
+
+        hotkeyHelpTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: hoverHelpDelayNs)
+            guard !Task.isCancelled else { return }
+            showHotkeyHelp = true
+        }
+    }
+
+    private func hideHotkeyHelp() {
+        cancelHotkeyHelpTask()
+        showHotkeyHelp = false
+    }
+
+    private func cancelHotkeyHelpTask() {
+        hotkeyHelpTask?.cancel()
+        hotkeyHelpTask = nil
+    }
+}
+
+private struct HotkeyHoverTooltip: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.primary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+            .allowsHitTesting(false)
     }
 }

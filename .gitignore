@@ -26,3 +26,7 @@ dist/
 
 # External frameworks (downloaded/built separately)
 Frameworks/
+
+# Codex
+.codex-home/
+.tmp/

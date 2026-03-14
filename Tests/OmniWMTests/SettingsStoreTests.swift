@@ -507,6 +507,32 @@ private func makeSettingsTestMonitor(
         #expect(try JSONDecoder().decode(KeyBinding.self, from: data) == binding)
     }
 
+    @Test func keypadBindingsUseReadableStringsAndDistinctCompactBadges() throws {
+        let binding = KeyBinding(
+            keyCode: UInt32(kVK_ANSI_Keypad1),
+            modifiers: UInt32(controlKey) | UInt32(optionKey) | UInt32(cmdKey)
+        )
+
+        let data = try JSONEncoder().encode(binding)
+        let decodedJSON = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+
+        #expect(binding.displayString == "⌃⌥⌘KP1")
+        #expect(binding.humanReadableString == "Control+Option+Command+Keypad 1")
+        #expect(decodedJSON as? String == "Control+Option+Command+Keypad 1")
+        #expect(try JSONDecoder().decode(KeyBinding.self, from: data) == binding)
+    }
+
+    @Test func keypadActionKeysUseCanonicalReadableNames() {
+        let binding = KeyBinding(
+            keyCode: UInt32(kVK_ANSI_KeypadEnter),
+            modifiers: UInt32(cmdKey)
+        )
+
+        #expect(binding.displayString == "⌘KPEnter")
+        #expect(binding.humanReadableString == "Command+Keypad Enter")
+        #expect(KeySymbolMapper.fromHumanReadable("Command+Keypad Enter") == binding)
+    }
+
     @Test func unknownKeyCodesFallBackToLegacyNumericEncoding() throws {
         let binding = KeyBinding(keyCode: 200, modifiers: UInt32(controlKey))
 
@@ -519,6 +545,18 @@ private func makeSettingsTestMonitor(
         #expect((json["keyCode"] as? NSNumber)?.uint32Value == 200)
         #expect((json["modifiers"] as? NSNumber)?.uint32Value == UInt32(controlKey))
         #expect(try JSONDecoder().decode(KeyBinding.self, from: data) == binding)
+    }
+
+    @Test func keypadDigitsRemainDistinctFromTopRowDigits() {
+        let modifiers = UInt32(controlKey) | UInt32(optionKey) | UInt32(cmdKey)
+        let topRow = KeyBinding(keyCode: UInt32(kVK_ANSI_1), modifiers: modifiers)
+        let keypad = KeyBinding(keyCode: UInt32(kVK_ANSI_Keypad1), modifiers: modifiers)
+
+        #expect(topRow != keypad)
+        #expect(topRow.displayString == "⌃⌥⌘1")
+        #expect(keypad.displayString == "⌃⌥⌘KP1")
+        #expect(topRow.humanReadableString == "Control+Option+Command+1")
+        #expect(keypad.humanReadableString == "Control+Option+Command+Keypad 1")
     }
 }
 
