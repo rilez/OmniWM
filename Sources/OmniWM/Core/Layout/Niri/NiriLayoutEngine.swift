@@ -214,6 +214,40 @@ final class NiriLayoutEngine {
         return root.columns
     }
 
+    struct SingleWindowLayoutContext {
+        let container: NiriContainer
+        let window: NiriWindow
+        let aspectRatio: CGFloat
+    }
+
+    func singleWindowLayoutContext(in workspaceId: WorkspaceDescriptor.ID) -> SingleWindowLayoutContext? {
+        guard let aspectRatio = effectiveSingleWindowAspectRatio(in: workspaceId).ratio else {
+            return nil
+        }
+
+        let workspaceColumns = columns(in: workspaceId)
+        guard workspaceColumns.count == 1,
+              let column = workspaceColumns.first,
+              !column.isTabbed
+        else {
+            return nil
+        }
+
+        let windows = column.windowNodes
+        guard windows.count == 1,
+              let window = windows.first,
+              window.sizingMode != .fullscreen
+        else {
+            return nil
+        }
+
+        return SingleWindowLayoutContext(
+            container: column,
+            window: window,
+            aspectRatio: aspectRatio
+        )
+    }
+
     func wrapIndex(_ idx: Int, total: Int) -> Int? {
         guard total > 0 else { return nil }
         if infiniteLoop {

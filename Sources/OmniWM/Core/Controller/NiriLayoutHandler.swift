@@ -489,6 +489,11 @@ import QuartzCore
             }
         }
 
+        let usesSingleWindowAspectRatio = pass.engine.singleWindowLayoutContext(in: pass.wsId) != nil
+        if usesSingleWindowAspectRatio {
+            resetViewportForSingleWindowAspectRatio(state: &state)
+        }
+
         let offsetBefore = state.viewOffsetPixels.current()
         var viewportNeedsRecalc = false
 
@@ -500,7 +505,8 @@ import QuartzCore
             }
         }
 
-        if !isGestureOrAnimation,
+        if !usesSingleWindowAspectRatio,
+           !isGestureOrAnimation,
            snapshot.isActiveWorkspace,
            let selectedId = state.selectedNodeId,
            let selectedNode = pass.engine.findNode(by: selectedId)
@@ -554,15 +560,19 @@ import QuartzCore
             state.selectedNodeId = newNode.id
 
             if wasEmpty {
-                let cols = pass.engine.columns(in: pass.wsId)
-                state.transitionToColumn(
-                    0,
-                    columns: cols,
-                    gap: pass.gap,
-                    viewportWidth: pass.insetFrame.width,
-                    animate: false,
-                    centerMode: pass.engine.centerFocusedColumn
-                )
+                if pass.engine.singleWindowLayoutContext(in: pass.wsId) != nil {
+                    resetViewportForSingleWindowAspectRatio(state: &state)
+                } else {
+                    let cols = pass.engine.columns(in: pass.wsId)
+                    state.transitionToColumn(
+                        0,
+                        columns: cols,
+                        gap: pass.gap,
+                        viewportWidth: pass.insetFrame.width,
+                        animate: false,
+                        centerMode: pass.engine.centerFocusedColumn
+                    )
+                }
             } else if let newCol = pass.engine.column(of: newNode),
                       let newColIdx = pass.engine.columnIndex(of: newCol, in: pass.wsId) {
                 if newCol.cachedWidth <= 0 {
@@ -614,6 +624,14 @@ import QuartzCore
         }
 
         return (newWindowToken, rememberedFocusToken)
+    }
+
+    private func resetViewportForSingleWindowAspectRatio(state: inout ViewportState) {
+        state.activeColumnIndex = 0
+        state.viewOffsetPixels = .static(0)
+        state.activatePrevColumnOnRemoval = nil
+        state.viewOffsetToRestore = nil
+        state.selectionProgress = 0
     }
 
     private func computeLayoutPlan(

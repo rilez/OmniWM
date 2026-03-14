@@ -161,6 +161,21 @@ extension NiriLayoutEngine {
             .offsetBy(dx: workspaceOffset, dy: 0)
             .roundedToPhysicalPixels(scale: effectiveScale)
 
+        if let singleWindowContext = singleWindowLayoutContext(in: workspaceId) {
+            layoutSingleWindowWorkspace(
+                singleWindowContext,
+                workingFrame: workingFrame,
+                fullscreenRect: canonicalFullscreenRect,
+                renderedFullscreenRect: renderedFullscreenRect,
+                workspaceOffset: workspaceOffset,
+                scale: effectiveScale,
+                time: time,
+                result: &frames,
+                orientation: orientation
+            )
+            return
+        }
+
         for container in containers {
             switch orientation {
             case .horizontal:
@@ -390,6 +405,75 @@ extension NiriLayoutEngine {
                 height: canonicalRect.height
             ).roundedToPhysicalPixels(scale: scale)
         }
+    }
+
+    func aspectFittedSingleWindowRect(
+        in workingFrame: CGRect,
+        aspectRatio: CGFloat,
+        scale: CGFloat
+    ) -> CGRect {
+        guard aspectRatio > 0,
+              workingFrame.width > 0,
+              workingFrame.height > 0
+        else {
+            return workingFrame.roundedToPhysicalPixels(scale: scale)
+        }
+
+        let currentRatio = workingFrame.width / workingFrame.height
+        if abs(currentRatio - aspectRatio) < 0.001 {
+            return workingFrame.roundedToPhysicalPixels(scale: scale)
+        }
+
+        var width = workingFrame.width
+        var height = workingFrame.height
+
+        if currentRatio > aspectRatio {
+            width = height * aspectRatio
+        } else {
+            height = width / aspectRatio
+        }
+
+        return CGRect(
+            x: workingFrame.minX + (workingFrame.width - width) / 2,
+            y: workingFrame.minY + (workingFrame.height - height) / 2,
+            width: width,
+            height: height
+        ).roundedToPhysicalPixels(scale: scale)
+    }
+
+    private func layoutSingleWindowWorkspace(
+        _ context: SingleWindowLayoutContext,
+        workingFrame: CGRect,
+        fullscreenRect: CGRect,
+        renderedFullscreenRect: CGRect,
+        workspaceOffset: CGFloat,
+        scale: CGFloat,
+        time: TimeInterval,
+        result: inout [WindowToken: CGRect],
+        orientation: Monitor.Orientation
+    ) {
+        let canonicalRect = aspectFittedSingleWindowRect(
+            in: workingFrame,
+            aspectRatio: context.aspectRatio,
+            scale: scale
+        )
+        let renderOffset = context.container.renderOffset(at: time)
+        let renderedRect = canonicalRect
+            .offsetBy(dx: workspaceOffset + renderOffset.x, dy: renderOffset.y)
+            .roundedToPhysicalPixels(scale: scale)
+
+        layoutContainer(
+            container: context.container,
+            canonicalContainerRect: canonicalRect,
+            renderedContainerRect: renderedRect,
+            fullscreenRect: fullscreenRect,
+            renderedFullscreenRect: renderedFullscreenRect,
+            secondaryGap: 0,
+            scale: scale,
+            animationTime: time,
+            result: &result,
+            orientation: orientation
+        )
     }
 
     private func layoutContainer(

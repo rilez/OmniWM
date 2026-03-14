@@ -64,6 +64,17 @@ extension NiriLayoutEngine {
         monitors[monitorId]?.resolvedSettings?.alwaysCenterSingleColumn ?? alwaysCenterSingleColumn
     }
 
+    func effectiveSingleWindowAspectRatio(for monitorId: Monitor.ID) -> SingleWindowAspectRatio {
+        monitors[monitorId]?.resolvedSettings?.singleWindowAspectRatio ?? singleWindowAspectRatio
+    }
+
+    func effectiveSingleWindowAspectRatio(in workspaceId: WorkspaceDescriptor.ID) -> SingleWindowAspectRatio {
+        guard let monitorId = monitorContaining(workspace: workspaceId) else {
+            return singleWindowAspectRatio
+        }
+        return effectiveSingleWindowAspectRatio(for: monitorId)
+    }
+
     func effectiveInfiniteLoop(for monitorId: Monitor.ID) -> Bool {
         monitors[monitorId]?.resolvedSettings?.infiniteLoop ?? infiniteLoop
     }

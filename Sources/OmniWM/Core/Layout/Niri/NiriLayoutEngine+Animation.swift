@@ -271,6 +271,16 @@ extension NiriLayoutEngine {
         workingFrame: CGRect,
         gaps: CGFloat
     ) -> CGRect? {
+        if let singleWindowContext = singleWindowLayoutContext(in: workspaceId),
+           singleWindowContext.window.token == token
+        {
+            return aspectFittedSingleWindowRect(
+                in: workingFrame,
+                aspectRatio: singleWindowContext.aspectRatio,
+                scale: 1.0
+            )
+        }
+
         guard let windowNode = findNode(for: token),
               let column = windowNode.parent as? NiriContainer,
               let colIdx = columnIndex(of: column, in: workspaceId)

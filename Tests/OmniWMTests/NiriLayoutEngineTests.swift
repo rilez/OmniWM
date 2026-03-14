@@ -232,9 +232,10 @@ private func hasAnyVisibilityChange(
         #expect(fallbackNode != nil)
     }
 
-    @Test func firstWindowUsesBalancedWidthWhenDefaultWidthIsAuto() {
+    @Test func firstWindowUsesBalancedWidthWhenDefaultWidthIsAutoWhenSingleWindowRatioIsDisabled() {
         let engine = NiriLayoutEngine(maxWindowsPerColumn: 3, maxVisibleColumns: 3)
         engine.presetColumnWidths = [.proportion(0.85), .proportion(1.0), .proportion(0.5)]
+        engine.singleWindowAspectRatio = .none
         let wsId = UUID()
 
         let window = engine.addWindow(handle: makeTestHandle(), to: wsId, afterSelection: nil)
@@ -246,6 +247,71 @@ private func hasAnyVisibilityChange(
 
         #expect(column.width == .proportion(1.0 / 3.0))
         #expect(column.presetWidthIdx == nil)
+    }
+
+    @Test func singleWindowAspectRatioCentersLoneWindowFrame() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 3, maxVisibleColumns: 3)
+        engine.singleWindowAspectRatio = .ratio4x3
+        engine.alwaysCenterSingleColumn = false
+        let wsId = UUID()
+        let window = engine.addWindow(handle: makeTestHandle(), to: wsId, afterSelection: nil)
+        let monitor = makeLayoutPlanTestMonitor()
+
+        let layout = engine.calculateCombinedLayoutWithVisibility(
+            in: wsId,
+            monitor: monitor,
+            gaps: LayoutGaps(horizontal: 8, vertical: 8),
+            state: ViewportState()
+        )
+
+        guard let frame = layout.frames[window.token] else {
+            Issue.record("Expected a rendered frame for the single Niri window")
+            return
+        }
+
+        #expect(frame == CGRect(x: 240, y: 0, width: 1440, height: 1080))
+    }
+
+    @Test func addingSecondWindowReturnsToNormalColumnSizingAfterSingleWindowOverride() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 3, maxVisibleColumns: 3)
+        engine.singleWindowAspectRatio = .ratio4x3
+        engine.alwaysCenterSingleColumn = false
+        let wsId = UUID()
+        let gap: CGFloat = 8
+        let firstWindow = engine.addWindow(handle: makeTestHandle(), to: wsId, afterSelection: nil)
+        let monitor = makeLayoutPlanTestMonitor()
+
+        let singleWindowLayout = engine.calculateCombinedLayoutWithVisibility(
+            in: wsId,
+            monitor: monitor,
+            gaps: LayoutGaps(horizontal: gap, vertical: gap),
+            state: ViewportState()
+        )
+
+        let secondWindow = engine.addWindow(handle: makeTestHandle(), to: wsId, afterSelection: firstWindow.id)
+        let twoWindowLayout = engine.calculateCombinedLayoutWithVisibility(
+            in: wsId,
+            monitor: monitor,
+            gaps: LayoutGaps(horizontal: gap, vertical: gap),
+            state: ViewportState()
+        )
+
+        guard let singleFrame = singleWindowLayout.frames[firstWindow.token],
+              let firstFrame = twoWindowLayout.frames[firstWindow.token],
+              let secondFrame = twoWindowLayout.frames[secondWindow.token]
+        else {
+            Issue.record("Expected rendered frames before and after adding a second Niri window")
+            return
+        }
+
+        let expectedColumnWidth = ((monitor.visibleFrame.width - gap) / 3).roundedToPhysicalPixel(scale: 2.0)
+
+        #expect(engine.columns(in: wsId).count == 2)
+        #expect(firstFrame.width < singleFrame.width)
+        #expect(abs(firstFrame.width - expectedColumnWidth) < 0.6)
+        #expect(abs(secondFrame.width - expectedColumnWidth) < 0.6)
+        #expect(firstFrame.height == monitor.visibleFrame.height)
+        #expect(secondFrame.height == monitor.visibleFrame.height)
     }
 
     @Test func additionalWindowUsesExplicitDefaultWidthWhenCreatingNewColumn() {
@@ -1118,6 +1184,64 @@ private func hasAnyVisibilityChange(
         #expect(niriMonitor.workspaceSwitch?.orderedWorkspaceIds == [ws1, ws2])
         #expect(layout1.frames[handle1.id]?.minX == 0)
         #expect((layout2.frames[handle2.id]?.minX ?? 0) > 0)
+    }
+
+    @Test @MainActor func relayoutPlanUsesResolvedMonitorSingleWindowAspectRatio() async throws {
+        let monitor = makeLayoutPlanTestMonitor(name: "SquareTest")
+        let controller = makeLayoutPlanTestController(monitors: [monitor])
+        guard let workspaceId = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id
+        else {
+            Issue.record("Missing active workspace for Niri settings test")
+            return
+        }
+
+        controller.enableNiriLayout(
+            maxWindowsPerColumn: 3,
+            centerFocusedColumn: .never,
+            alwaysCenterSingleColumn: false
+        )
+        controller.updateNiriConfig(
+            maxVisibleColumns: 3,
+            centerFocusedColumn: .never,
+            alwaysCenterSingleColumn: false,
+            singleWindowAspectRatio: .ratio4x3
+        )
+        await waitForLayoutPlanRefreshWork(on: controller)
+        controller.syncMonitorsToNiriEngine()
+
+        let token = addLayoutPlanTestWindow(on: controller, workspaceId: workspaceId, windowId: 881)
+
+        let baselinePlans = try await controller.niriLayoutHandler.layoutWithNiriEngine(
+            activeWorkspaces: [workspaceId]
+        )
+        guard let baselinePlan = baselinePlans.first,
+              let baselineFrame = baselinePlan.diff.frameChanges.first(where: { $0.token == token })?.frame
+        else {
+            Issue.record("Expected a baseline Niri frame for the single window")
+            return
+        }
+
+        controller.settings.updateNiriSettings(
+            MonitorNiriSettings(
+                monitorName: monitor.name,
+                monitorDisplayId: monitor.displayId,
+                singleWindowAspectRatio: .square
+            )
+        )
+        controller.updateMonitorNiriSettings()
+
+        let overridePlans = try await controller.niriLayoutHandler.layoutWithNiriEngine(
+            activeWorkspaces: [workspaceId]
+        )
+        guard let overridePlan = overridePlans.first,
+              let overrideFrame = overridePlan.diff.frameChanges.first(where: { $0.token == token })?.frame
+        else {
+            Issue.record("Expected a Niri frame after applying monitor override settings")
+            return
+        }
+
+        #expect(baselineFrame.width > overrideFrame.width)
+        #expect(abs(overrideFrame.width - overrideFrame.height) < 0.5)
     }
 
     @Test @MainActor func snapshotPlanIncludesViewportPatchAndActivationForNewWindow() async throws {
