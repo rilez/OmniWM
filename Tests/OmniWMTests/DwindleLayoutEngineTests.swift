@@ -333,4 +333,83 @@ private func configureWorkspacesAsDwindle(
         #expect(controller.dwindleLayoutHandler.dwindleAnimationByDisplay[monitor.displayId] == nil)
         #expect(controller.workspaceManager.hiddenState(for: token)?.workspaceInactive == true)
     }
+
+    @Test func summonWindowRightReinsertsWindowAsRightSibling() {
+        let engine = DwindleLayoutEngine()
+        let wsId = UUID()
+        let anchor = makeTestHandle(pid: 81)
+        let summoned = makeTestHandle(pid: 82)
+
+        _ = engine.syncWindows([anchor, summoned], in: wsId, focusedHandle: anchor)
+        _ = engine.calculateLayout(
+            for: wsId,
+            screen: CGRect(x: 0, y: 0, width: 1600, height: 1000)
+        )
+
+        let moved = engine.summonWindowRight(summoned.id, beside: anchor.id, in: wsId)
+        let frames = engine.calculateLayout(
+            for: wsId,
+            screen: CGRect(x: 0, y: 0, width: 1600, height: 1000)
+        )
+
+        guard let anchorFrame = frames[anchor.id],
+              let summonedFrame = frames[summoned.id]
+        else {
+            Issue.record("Expected both frames after Dwindle summon-right")
+            return
+        }
+
+        #expect(moved)
+        #expect(summonedFrame.minX >= anchorFrame.maxX - 1.0)
+        #expect(engine.selectedNode(in: wsId)?.windowToken == summoned.id)
+    }
+
+    @Test func preselectionAddsCrossWorkspaceWindowAsRightSibling() {
+        let engine = DwindleLayoutEngine()
+        let targetWorkspaceId = UUID()
+        let sourceWorkspaceId = UUID()
+        let anchor = makeTestHandle(pid: 91)
+        let summoned = makeTestHandle(pid: 92)
+        let fallback = makeTestHandle(pid: 93)
+
+        _ = engine.syncWindows([anchor], in: targetWorkspaceId, focusedHandle: anchor)
+        _ = engine.syncWindows([summoned, fallback], in: sourceWorkspaceId, focusedHandle: summoned)
+        _ = engine.calculateLayout(
+            for: targetWorkspaceId,
+            screen: CGRect(x: 0, y: 0, width: 1600, height: 1000)
+        )
+        _ = engine.calculateLayout(
+            for: sourceWorkspaceId,
+            screen: CGRect(x: 0, y: 0, width: 1600, height: 1000)
+        )
+
+        guard let anchorNode = engine.findNode(for: anchor.id) else {
+            Issue.record("Expected anchor node for Dwindle cross-workspace summon")
+            return
+        }
+
+        engine.setSelectedNode(anchorNode, in: targetWorkspaceId)
+        engine.setPreselection(.right, in: targetWorkspaceId)
+        engine.removeWindow(token: summoned.id, from: sourceWorkspaceId)
+        _ = engine.syncWindows(
+            [anchor.id, summoned.id],
+            in: targetWorkspaceId,
+            focusedToken: anchor.id
+        )
+
+        let targetFrames = engine.calculateLayout(
+            for: targetWorkspaceId,
+            screen: CGRect(x: 0, y: 0, width: 1600, height: 1000)
+        )
+
+        guard let anchorFrame = targetFrames[anchor.id],
+              let summonedFrame = targetFrames[summoned.id]
+        else {
+            Issue.record("Expected target workspace frames after cross-workspace Dwindle summon")
+            return
+        }
+
+        #expect(engine.windowCount(in: sourceWorkspaceId) == 1)
+        #expect(summonedFrame.minX >= anchorFrame.maxX - 1.0)
+    }
 }

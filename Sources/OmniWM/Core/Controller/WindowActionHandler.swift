@@ -133,6 +133,58 @@ final class WindowActionHandler {
         navigateToWindowInternal(token: handle.id, workspaceId: entry.workspaceId)
     }
 
+    func summonWindowRight(handle: WindowHandle) {
+        guard let controller,
+              let currentWorkspace = controller.activeWorkspace(),
+              let focusedToken = controller.workspaceManager.focusedToken,
+              let focusedEntry = controller.workspaceManager.entry(for: focusedToken),
+              focusedEntry.workspaceId == currentWorkspace.id
+        else {
+            return
+        }
+
+        summonWindowRight(
+            handle: handle,
+            anchorToken: focusedToken,
+            anchorWorkspaceId: currentWorkspace.id
+        )
+    }
+
+    func summonWindowRight(
+        handle: WindowHandle,
+        anchorToken: WindowToken,
+        anchorWorkspaceId: WorkspaceDescriptor.ID
+    ) {
+        guard let controller,
+              let anchorEntry = controller.workspaceManager.entry(for: anchorToken),
+              anchorEntry.workspaceId == anchorWorkspaceId,
+              let targetEntry = controller.workspaceManager.entry(for: handle)
+        else {
+            return
+        }
+
+        let token = handle.id
+        guard token != anchorToken else { return }
+
+        let targetWorkspaceId = anchorWorkspaceId
+        switch layoutType(for: targetWorkspaceId) {
+        case .dwindle:
+            summonWindowRightInDwindle(
+                token: token,
+                sourceWorkspaceId: targetEntry.workspaceId,
+                targetWorkspaceId: targetWorkspaceId,
+                focusedToken: anchorToken
+            )
+        case .niri, .defaultLayout:
+            summonWindowRightInNiri(
+                token: token,
+                sourceWorkspaceId: targetEntry.workspaceId,
+                targetWorkspaceId: targetWorkspaceId,
+                focusedToken: anchorToken
+            )
+        }
+    }
+
     func navigateToWindowInternal(token: WindowToken, workspaceId: WorkspaceDescriptor.ID) {
         guard let controller else { return }
         guard let engine = controller.niriEngine else { return }
@@ -178,6 +230,130 @@ final class WindowActionHandler {
         controller.layoutRefreshController.commitWorkspaceTransition(reason: .workspaceTransition) { [weak controller] in
             controller?.focusWindow(token)
         }
+    }
+
+    private func summonWindowRightInNiri(
+        token: WindowToken,
+        sourceWorkspaceId: WorkspaceDescriptor.ID,
+        targetWorkspaceId: WorkspaceDescriptor.ID,
+        focusedToken: WindowToken
+    ) {
+        guard let controller,
+              let engine = controller.niriEngine,
+              let focusedNode = engine.findNode(for: focusedToken),
+              let focusedColumn = engine.findColumn(containing: focusedNode, in: targetWorkspaceId),
+              let focusedColumnIndex = engine.columnIndex(of: focusedColumn, in: targetWorkspaceId)
+        else {
+            return
+        }
+
+        let insertIndex = focusedColumnIndex + 1
+        let sourceLayoutType = layoutType(for: sourceWorkspaceId)
+
+        if sourceWorkspaceId == targetWorkspaceId {
+            guard controller.niriLayoutHandler.insertWindowInNewColumn(
+                handle: WindowHandle(id: token),
+                insertIndex: insertIndex,
+                in: targetWorkspaceId
+            ) else {
+                return
+            }
+            commitSummonedWindowFocus(token: token, workspaceId: targetWorkspaceId, startNiriScrollAnimation: true)
+            return
+        }
+
+        guard controller.workspaceNavigationHandler.moveWindow(
+            handle: WindowHandle(id: token),
+            toWorkspaceId: targetWorkspaceId
+        ) else {
+            return
+        }
+
+        if sourceLayoutType == .dwindle {
+            commitSummonedWindowFocus(
+                token: token,
+                workspaceId: targetWorkspaceId,
+                rememberedFocusToken: focusedToken,
+                startNiriScrollAnimation: true
+            )
+            return
+        }
+
+        guard controller.niriLayoutHandler.insertWindowInNewColumn(
+            handle: WindowHandle(id: token),
+            insertIndex: insertIndex,
+            in: targetWorkspaceId
+        ) else {
+            return
+        }
+        commitSummonedWindowFocus(token: token, workspaceId: targetWorkspaceId, startNiriScrollAnimation: true)
+    }
+
+    private func summonWindowRightInDwindle(
+        token: WindowToken,
+        sourceWorkspaceId: WorkspaceDescriptor.ID,
+        targetWorkspaceId: WorkspaceDescriptor.ID,
+        focusedToken: WindowToken
+    ) {
+        guard let controller,
+              let engine = controller.dwindleEngine,
+              let focusedNode = engine.findNode(for: focusedToken),
+              focusedNode.isLeaf
+        else {
+            return
+        }
+
+        if sourceWorkspaceId == targetWorkspaceId {
+            guard engine.summonWindowRight(token, beside: focusedToken, in: targetWorkspaceId) else {
+                return
+            }
+            commitSummonedWindowFocus(token: token, workspaceId: targetWorkspaceId)
+            return
+        }
+
+        engine.setSelectedNode(focusedNode, in: targetWorkspaceId)
+        engine.setPreselection(.right, in: targetWorkspaceId)
+
+        guard controller.workspaceNavigationHandler.moveWindow(
+            handle: WindowHandle(id: token),
+            toWorkspaceId: targetWorkspaceId
+        ) else {
+            return
+        }
+
+        commitSummonedWindowFocus(token: token, workspaceId: targetWorkspaceId)
+    }
+
+    private func commitSummonedWindowFocus(
+        token: WindowToken,
+        workspaceId: WorkspaceDescriptor.ID,
+        rememberedFocusToken: WindowToken? = nil,
+        startNiriScrollAnimation: Bool = false
+    ) {
+        guard let controller else { return }
+
+        _ = controller.workspaceManager.applySessionPatch(
+            .init(
+                workspaceId: workspaceId,
+                viewportState: nil,
+                rememberedFocusToken: rememberedFocusToken ?? token
+            )
+        )
+        controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand) { [weak controller] in
+            controller?.focusWindow(token)
+        }
+        if startNiriScrollAnimation {
+            controller.layoutRefreshController.startScrollAnimation(for: workspaceId)
+        }
+    }
+
+    private func layoutType(for workspaceId: WorkspaceDescriptor.ID) -> LayoutType {
+        guard let controller,
+              let workspaceName = controller.workspaceManager.descriptor(for: workspaceId)?.name
+        else {
+            return .defaultLayout
+        }
+        return controller.settings.layoutType(for: workspaceName)
     }
 
     func focusWorkspaceFromBar(named name: String) {

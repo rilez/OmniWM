@@ -529,6 +529,17 @@ final class WMController {
     func openCommandPalette() { CommandPaletteController.shared.show(wmController: self) }
     func openMenuAnywhere() { windowActionHandler.openMenuAnywhere() }
     func navigateToCommandPaletteWindow(_ handle: WindowHandle) { windowActionHandler.navigateToWindow(handle: handle) }
+    func summonCommandPaletteWindowRight(
+        _ handle: WindowHandle,
+        anchorToken: WindowToken,
+        anchorWorkspaceId: WorkspaceDescriptor.ID
+    ) {
+        windowActionHandler.summonWindowRight(
+            handle: handle,
+            anchorToken: anchorToken,
+            anchorWorkspaceId: anchorWorkspaceId
+        )
+    }
     func toggleOverview() { windowActionHandler.toggleOverview() }
     func raiseAllFloatingWindows() { windowActionHandler.raiseAllFloatingWindows() }
     func isOverviewOpen() -> Bool { windowActionHandler.isOverviewOpen() }

@@ -807,6 +807,52 @@ final class DwindleLayoutEngine {
         return handle
     }
 
+    @discardableResult
+    func summonWindowRight(
+        _ token: WindowToken,
+        beside anchorToken: WindowToken,
+        in workspaceId: WorkspaceDescriptor.ID
+    ) -> Bool {
+        guard token != anchorToken,
+              let sourceNode = findNode(for: token),
+              let anchorNode = findNode(for: anchorToken),
+              sourceNode.isLeaf,
+              anchorNode.isLeaf
+        else {
+            return false
+        }
+
+        let preservedConstraints = windowConstraints[token]
+        let preservedFullscreen = sourceNode.isFullscreen
+
+        removeWindow(token: token, from: workspaceId)
+
+        guard let updatedAnchorNode = findNode(for: anchorToken) else {
+            if let preservedConstraints {
+                windowConstraints[token] = preservedConstraints
+            }
+            return false
+        }
+
+        setSelectedNode(updatedAnchorNode, in: workspaceId)
+        setPreselection(.right, in: workspaceId)
+
+        let reinsertedLeaf = addWindow(
+            token: token,
+            to: workspaceId,
+            activeWindowFrame: updatedAnchorNode.cachedFrame
+        )
+
+        if let preservedConstraints {
+            updateWindowConstraints(for: token, constraints: preservedConstraints)
+        }
+        if preservedFullscreen {
+            reinsertedLeaf.kind = .leaf(handle: token, fullscreen: true)
+        }
+
+        return true
+    }
+
     func moveSelectionToRoot(stable: Bool, in workspaceId: WorkspaceDescriptor.ID) {
         guard let selected = selectedNode(in: workspaceId) else { return }
         let leaf = selected.isLeaf ? selected : selected.descendToFirstLeaf()

@@ -1926,6 +1926,95 @@ private func hasAnyVisibilityChange(
         #expect(columns[1].presetWidthIdx == nil)
     }
 
+    @Test func insertWindowInNewColumnPlacesWindowImmediatelyRightOfFocusedColumn() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 3, maxVisibleColumns: 3)
+        let wsId = UUID()
+        let root = NiriRoot(workspaceId: wsId)
+        engine.roots[wsId] = root
+
+        let leftColumn = NiriContainer()
+        let focusedColumn = NiriContainer()
+        let trailingColumn = NiriContainer()
+        root.appendChild(leftColumn)
+        root.appendChild(focusedColumn)
+        root.appendChild(trailingColumn)
+
+        let targetWindow = NiriWindow(token: makeTestHandle(pid: 51).id)
+        let focusedWindow = NiriWindow(token: makeTestHandle(pid: 52).id)
+        let trailingWindow = NiriWindow(token: makeTestHandle(pid: 53).id)
+
+        leftColumn.appendChild(targetWindow)
+        focusedColumn.appendChild(focusedWindow)
+        trailingColumn.appendChild(trailingWindow)
+
+        engine.tokenToNode[targetWindow.token] = targetWindow
+        engine.tokenToNode[focusedWindow.token] = focusedWindow
+        engine.tokenToNode[trailingWindow.token] = trailingWindow
+
+        var state = ViewportState()
+        let inserted = engine.insertWindowInNewColumn(
+            targetWindow,
+            insertIndex: 2,
+            in: wsId,
+            state: &state,
+            workingFrame: CGRect(x: 0, y: 0, width: 1600, height: 900),
+            gaps: 8
+        )
+
+        let orderedWindowIds = engine.columns(in: wsId).compactMap { $0.windowNodes.first?.token.windowId }
+
+        #expect(inserted)
+        #expect(orderedWindowIds == [focusedWindow.token.windowId, targetWindow.token.windowId, trailingWindow.token.windowId])
+    }
+
+    @Test func moveWindowToWorkspaceThenInsertColumnPreservesSourceFallbackSelection() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 3, maxVisibleColumns: 3)
+        let sourceWorkspaceId = UUID()
+        let targetWorkspaceId = UUID()
+
+        let targetWindow = engine.addWindow(handle: makeTestHandle(pid: 61), to: sourceWorkspaceId, afterSelection: nil)
+        let fallbackWindow = engine.addWindow(
+            handle: makeTestHandle(pid: 62),
+            to: sourceWorkspaceId,
+            afterSelection: targetWindow.id
+        )
+        let focusedWindow = engine.addWindow(handle: makeTestHandle(pid: 63), to: targetWorkspaceId, afterSelection: nil)
+
+        var sourceState = ViewportState()
+        sourceState.selectedNodeId = targetWindow.id
+        var targetState = ViewportState()
+        targetState.selectedNodeId = focusedWindow.id
+
+        let moved = engine.moveWindowToWorkspace(
+            targetWindow,
+            from: sourceWorkspaceId,
+            to: targetWorkspaceId,
+            sourceState: &sourceState,
+            targetState: &targetState
+        )
+        guard let movedWindow = engine.findNode(for: targetWindow.token) else {
+            Issue.record("Expected moved window in target workspace")
+            return
+        }
+
+        var targetInsertState = targetState
+        let inserted = engine.insertWindowInNewColumn(
+            movedWindow,
+            insertIndex: 1,
+            in: targetWorkspaceId,
+            state: &targetInsertState,
+            workingFrame: CGRect(x: 0, y: 0, width: 1600, height: 900),
+            gaps: 8
+        )
+
+        let orderedWindowIds = engine.columns(in: targetWorkspaceId).compactMap { $0.windowNodes.first?.token.windowId }
+
+        #expect(moved?.newFocusNodeId == fallbackWindow.id)
+        #expect(sourceState.selectedNodeId == fallbackWindow.id)
+        #expect(inserted)
+        #expect(orderedWindowIds == [focusedWindow.token.windowId, targetWindow.token.windowId])
+    }
+
     @Test func toggleColumnWidthFollowsOrderedDuplicatePresetsFromExplicitDefaultMatch() {
         let engine = NiriLayoutEngine(maxWindowsPerColumn: 3, maxVisibleColumns: 3)
         engine.presetColumnWidths = [

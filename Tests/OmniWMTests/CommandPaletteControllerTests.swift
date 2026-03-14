@@ -1,3 +1,5 @@
+import AppKit
+import ApplicationServices
 import Foundation
 import Testing
 
@@ -22,6 +24,20 @@ private func makeCommandPaletteWindowItem(windowId: Int) -> CommandPaletteWindow
         appName: "Test App",
         appIcon: nil,
         workspaceName: "1"
+    )
+}
+
+@MainActor
+private func makeCommandPaletteSummonAnchor(
+    wmController: WMController,
+    windowId: Int = 11
+) -> CommandPaletteSummonAnchor {
+    guard let workspaceId = wmController.activeWorkspace()?.id else {
+        fatalError("Expected active workspace for summon-anchor test fixture")
+    }
+    return .init(
+        token: WindowToken(pid: 4343, windowId: windowId),
+        workspaceId: workspaceId
     )
 }
 
@@ -85,6 +101,62 @@ private func makeCommandPaletteAppSnapshot(
         controller.selectCurrent()
 
         #expect(navigatedHandle == second.handle)
+    }
+
+    @Test func selectCurrentSummonsSelectedWindowAfterDismiss() {
+        var summonedHandle: WindowHandle?
+        var summonedAnchorToken: WindowToken?
+        var summonedAnchorWorkspaceId: WorkspaceDescriptor.ID?
+        var environment = CommandPaletteEnvironment()
+        environment.summonWindowRight = { _, handle, anchorToken, anchorWorkspaceId in
+            summonedHandle = handle
+            summonedAnchorToken = anchorToken
+            summonedAnchorWorkspaceId = anchorWorkspaceId
+        }
+
+        let controller = CommandPaletteController(environment: environment)
+        let wmController = makeCommandPaletteTestWMController()
+        let item = makeCommandPaletteWindowItem(windowId: 303)
+        let summonAnchor = makeCommandPaletteSummonAnchor(wmController: wmController)
+
+        controller.setWindowSelectionStateForTests(
+            wmController: wmController,
+            items: [item],
+            selectedItemID: .window(item.id),
+            summonAnchor: summonAnchor
+        )
+
+        controller.selectCurrent(trigger: .summonRight)
+
+        #expect(summonedHandle == item.handle)
+        #expect(summonedAnchorToken == summonAnchor.token)
+        #expect(summonedAnchorWorkspaceId == summonAnchor.workspaceId)
+        #expect(controller.selectedItemID == nil)
+        #expect(controller.filteredWindowItems.isEmpty)
+    }
+
+    @Test func selectCurrentDoesNotSummonWithoutAnchor() {
+        var didSummon = false
+        var environment = CommandPaletteEnvironment()
+        environment.summonWindowRight = { _, _, _, _ in
+            didSummon = true
+        }
+
+        let controller = CommandPaletteController(environment: environment)
+        let wmController = makeCommandPaletteTestWMController()
+        let item = makeCommandPaletteWindowItem(windowId: 404)
+
+        controller.setWindowSelectionStateForTests(
+            wmController: wmController,
+            items: [item],
+            selectedItemID: .window(item.id)
+        )
+
+        controller.selectCurrent(trigger: .summonRight)
+
+        #expect(didSummon == false)
+        #expect(controller.selectedItemID == .window(item.id))
+        #expect(controller.filteredWindowItems.map(\.id) == [item.id])
     }
 
     @Test func resolveMenuTargetPrefersCurrentExternalApp() {
@@ -173,12 +245,69 @@ private func makeCommandPaletteAppSnapshot(
 
     @Test func windowsStatusTextReflectsMenuAvailability() {
         #expect(
-            CommandPaletteController.windowsStatusText(isMenuModeAvailable: true)
-                == "Use Command-1 for windows and Command-2 for menu search."
+            CommandPaletteController.windowsStatusText(
+                isMenuModeAvailable: true,
+                isSummonRightAvailable: true
+            )
+                == "Enter jumps. Shift-Enter summons right. Command-2 searches menus."
         )
         #expect(
-            CommandPaletteController.windowsStatusText(isMenuModeAvailable: false)
-                == "Menu search becomes available after you open the palette while another app is frontmost."
+            CommandPaletteController.windowsStatusText(
+                isMenuModeAvailable: false,
+                isSummonRightAvailable: true
+            )
+                == "Enter jumps. Shift-Enter summons right."
         )
+        #expect(
+            CommandPaletteController.windowsStatusText(
+                isMenuModeAvailable: true,
+                isSummonRightAvailable: false
+            )
+                == "Enter jumps. Shift-Enter unavailable for this session. Command-2 searches menus."
+        )
+        #expect(
+            CommandPaletteController.windowsStatusText(
+                isMenuModeAvailable: false,
+                isSummonRightAvailable: false
+            )
+                == "Enter jumps. Shift-Enter unavailable for this session."
+        )
+    }
+
+    @Test func selectionTriggerHandlesReturnAndKeypadEnter() {
+        let controller = CommandPaletteController()
+
+        #expect(controller.selectionTriggerForTests(keyCode: 36, modifierFlags: []) == .primary)
+        #expect(controller.selectionTriggerForTests(keyCode: 76, modifierFlags: []) == .primary)
+        #expect(controller.selectionTriggerForTests(keyCode: 36, modifierFlags: .shift) == .summonRight)
+        #expect(controller.selectionTriggerForTests(keyCode: 76, modifierFlags: .shift) == .summonRight)
+    }
+
+    @Test func resolveSummonAnchorFallsBackToLastFocusedMemory() {
+        let wmController = makeCommandPaletteTestWMController()
+        guard let workspaceId = wmController.activeWorkspace()?.id else {
+            Issue.record("Missing active workspace for summon-anchor test")
+            return
+        }
+
+        let handle = WindowHandle(id: WindowToken(pid: 5151, windowId: 5151))
+        let token = wmController.workspaceManager.addWindow(
+            AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: 5151),
+            pid: handle.pid,
+            windowId: handle.windowId,
+            to: workspaceId
+        )
+        guard let storedHandle = wmController.workspaceManager.handle(for: token) else {
+            Issue.record("Missing managed handle for summon-anchor test")
+            return
+        }
+
+        _ = wmController.workspaceManager.rememberFocus(storedHandle, in: workspaceId)
+        _ = wmController.workspaceManager.enterNonManagedFocus(appFullscreen: false)
+
+        let anchor = CommandPaletteController.resolveSummonAnchor(for: wmController)
+
+        #expect(anchor?.token == storedHandle.id)
+        #expect(anchor?.workspaceId == workspaceId)
     }
 }

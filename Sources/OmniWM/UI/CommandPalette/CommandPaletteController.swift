@@ -37,6 +37,11 @@ struct CommandPaletteAppSnapshot: Equatable {
     }
 }
 
+struct CommandPaletteSummonAnchor: Equatable {
+    let token: WindowToken
+    let workspaceId: WorkspaceDescriptor.ID
+}
+
 private struct CommandPaletteFocusTarget {
     let app: CommandPaletteAppSnapshot
     let focusedWindow: AXUIElement?
@@ -45,6 +50,11 @@ private struct CommandPaletteFocusTarget {
 enum CommandPaletteSelectionID: Hashable {
     case window(WindowToken)
     case menu(UUID)
+}
+
+enum CommandPaletteSelectionTrigger {
+    case primary
+    case summonRight
 }
 
 private final class CommandPaletteActionBox: @unchecked Sendable {
@@ -64,6 +74,17 @@ struct CommandPaletteEnvironment {
     var activateOmniWM: () -> Void = { NSApp.activate(ignoringOtherApps: true) }
     var navigateToWindow: (WMController, WindowHandle) -> Void = { controller, handle in
         controller.navigateToCommandPaletteWindow(handle)
+    }
+    var summonWindowRight: (WMController, WindowHandle, WindowToken, WorkspaceDescriptor.ID) -> Void = {
+        controller,
+        handle,
+        anchorToken,
+        anchorWorkspaceId in
+        controller.summonCommandPaletteWindowRight(
+            handle,
+            anchorToken: anchorToken,
+            anchorWorkspaceId: anchorWorkspaceId
+        )
     }
     var scheduleMenuAction: (@escaping () -> Void) -> Void = { action in
         let box = CommandPaletteActionBox(action)
@@ -108,6 +129,7 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
     private weak var wmController: WMController?
     private var restoreFocusTarget: CommandPaletteFocusTarget?
     private var menuFocusTarget: CommandPaletteFocusTarget?
+    private var summonAnchor: CommandPaletteSummonAnchor?
     private var cachedMenuTargetApp: CommandPaletteAppSnapshot?
     private var hasLoadedMenuItems = false
     private var menuLoadGeneration = 0
@@ -122,6 +144,7 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
 
     private enum SelectionAction {
         case navigateWindow(WMController, WindowHandle)
+        case summonWindowRight(WMController, WindowHandle, CommandPaletteSummonAnchor)
         case pressMenu(CommandPaletteFocusTarget, AXUIElement)
     }
 
@@ -142,6 +165,10 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
         Self.menuModeAvailable(hasMenuFocusTarget: menuFocusTarget != nil)
     }
 
+    var isSummonRightAvailable: Bool {
+        summonAnchor != nil
+    }
+
     var menuStatusText: String {
         if let menuFocusTarget {
             return Self.availableMenuStatusText(for: menuFocusTarget.app.localizedName)
@@ -158,6 +185,7 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
 
         restoreFocusTarget = captureFrontmostFocusTarget()
         menuFocusTarget = resolveMenuFocusTarget()
+        summonAnchor = Self.resolveSummonAnchor(for: wmController)
         windows = buildWindowItems(from: wmController)
         menuItems = []
         hasLoadedMenuItems = false
@@ -200,11 +228,41 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
         "Searching menus in \(appName ?? "Current App")"
     }
 
-    static func windowsStatusText(isMenuModeAvailable: Bool) -> String {
-        if isMenuModeAvailable {
-            return "Use Command-1 for windows and Command-2 for menu search."
+    static func windowsStatusText(
+        isMenuModeAvailable: Bool,
+        isSummonRightAvailable: Bool
+    ) -> String {
+        let summonText = if isSummonRightAvailable {
+            "Shift-Enter summons right."
+        } else {
+            "Shift-Enter unavailable for this session."
         }
-        return "Menu search becomes available after you open the palette while another app is frontmost."
+        if isMenuModeAvailable {
+            return "Enter jumps. \(summonText) Command-2 searches menus."
+        }
+        return "Enter jumps. \(summonText)"
+    }
+
+    static func resolveSummonAnchor(for wmController: WMController) -> CommandPaletteSummonAnchor? {
+        guard let activeWorkspace = wmController.activeWorkspace() else { return nil }
+
+        let anchorToken = if let focusedToken = wmController.workspaceManager.focusedToken,
+                             let entry = wmController.workspaceManager.entry(for: focusedToken),
+                             entry.workspaceId == activeWorkspace.id
+        {
+            focusedToken
+        } else {
+            wmController.workspaceManager.lastFocusedToken(in: activeWorkspace.id)
+        }
+
+        guard let anchorToken,
+              let entry = wmController.workspaceManager.entry(for: anchorToken),
+              entry.workspaceId == activeWorkspace.id
+        else {
+            return nil
+        }
+
+        return .init(token: anchorToken, workspaceId: activeWorkspace.id)
     }
 
     static func resolveMenuTarget(
@@ -484,7 +542,8 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
-        let commandOnly = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command
+        let relevantModifiers = event.modifierFlags.intersection([.shift, .command, .control, .option])
+        let commandOnly = relevantModifiers == .command
 
         if commandOnly,
            let characters = event.charactersIgnoringModifiers,
@@ -503,11 +562,27 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
         case 125:
             moveSelection(by: 1)
             return true
-        case 36, 76:
-            selectCurrent()
-            return true
         default:
-            return false
+            guard let trigger = Self.selectionTrigger(
+                forKeyCode: event.keyCode,
+                modifierFlags: relevantModifiers
+            ) else {
+                return false
+            }
+            selectCurrent(trigger: trigger)
+            return true
+        }
+    }
+
+    private static func selectionTrigger(
+        forKeyCode keyCode: UInt16,
+        modifierFlags: NSEvent.ModifierFlags
+    ) -> CommandPaletteSelectionTrigger? {
+        switch keyCode {
+        case 36, 76:
+            return modifierFlags == .shift ? .summonRight : .primary
+        default:
+            return nil
         }
     }
 
@@ -527,8 +602,8 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
         selectedItemID = selectionList[newIndex]
     }
 
-    func selectCurrent() {
-        guard let action = resolvedSelectionAction() else { return }
+    func selectCurrent(trigger: CommandPaletteSelectionTrigger = .primary) {
+        guard let action = resolvedSelectionAction(for: trigger) else { return }
         dismiss(reason: .selection)
         performSelectionAction(action)
     }
@@ -547,6 +622,7 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
 
         restoreFocusTarget = nil
         menuFocusTarget = nil
+        summonAnchor = nil
         wmController = nil
         hasLoadedMenuItems = false
         searchText = ""
@@ -573,7 +649,9 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
         }
     }
 
-    private func resolvedSelectionAction() -> SelectionAction? {
+    private func resolvedSelectionAction(
+        for trigger: CommandPaletteSelectionTrigger
+    ) -> SelectionAction? {
         switch selectedMode {
         case .windows:
             let filtered = filteredWindowItems
@@ -583,7 +661,13 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
             else {
                 return nil
             }
-            return .navigateWindow(wmController, item.handle)
+            switch trigger {
+            case .primary:
+                return .navigateWindow(wmController, item.handle)
+            case .summonRight:
+                guard let summonAnchor else { return nil }
+                return .summonWindowRight(wmController, item.handle, summonAnchor)
+            }
         case .menu:
             let filtered = filteredMenuItems
             guard case let .menu(id)? = selectedItemID,
@@ -600,6 +684,13 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
         switch action {
         case let .navigateWindow(wmController, handle):
             environment.navigateToWindow(wmController, handle)
+        case let .summonWindowRight(wmController, handle, summonAnchor):
+            environment.summonWindowRight(
+                wmController,
+                handle,
+                summonAnchor.token,
+                summonAnchor.workspaceId
+            )
         case let .pressMenu(target, element):
             focus(target: target)
             environment.scheduleMenuAction { [environment] in
@@ -713,13 +804,15 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
     func setWindowSelectionStateForTests(
         wmController: WMController,
         items: [CommandPaletteWindowItem],
-        selectedItemID: CommandPaletteSelectionID?
+        selectedItemID: CommandPaletteSelectionID?,
+        summonAnchor: CommandPaletteSummonAnchor? = nil
     ) {
         self.wmController = wmController
         windows = items
         menuItems = []
         selectedMode = .windows
         self.selectedItemID = selectedItemID
+        self.summonAnchor = summonAnchor
     }
 
     func setMenuAvailabilityForTests(_ target: CommandPaletteAppSnapshot?) {
@@ -729,6 +822,13 @@ final class CommandPaletteController: NSObject, ObservableObject, NSWindowDelega
     @discardableResult
     func handleModeShortcutForTests(_ characters: String) -> Bool {
         handleModeShortcut(characters)
+    }
+
+    func selectionTriggerForTests(
+        keyCode: UInt16,
+        modifierFlags: NSEvent.ModifierFlags
+    ) -> CommandPaletteSelectionTrigger? {
+        Self.selectionTrigger(forKeyCode: keyCode, modifierFlags: modifierFlags)
     }
 }
 
@@ -750,9 +850,6 @@ private struct CommandPaletteView: View {
                     TextField(searchPlaceholder, text: $controller.searchText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 18))
-                        .onSubmit {
-                            controller.selectCurrent()
-                        }
                     if !controller.searchText.isEmpty {
                         Button(action: { controller.searchText = "" }) {
                             Image(systemName: "xmark.circle.fill")
@@ -837,7 +934,10 @@ private struct CommandPaletteView: View {
     private var statusText: String {
         switch controller.selectedMode {
         case .windows:
-            CommandPaletteController.windowsStatusText(isMenuModeAvailable: controller.isMenuModeAvailable)
+            CommandPaletteController.windowsStatusText(
+                isMenuModeAvailable: controller.isMenuModeAvailable,
+                isSummonRightAvailable: controller.isSummonRightAvailable
+            )
         case .menu:
             controller.menuStatusText
         }

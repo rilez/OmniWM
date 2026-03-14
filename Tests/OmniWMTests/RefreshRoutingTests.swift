@@ -155,6 +155,19 @@ private func resetRefreshSpies(
 }
 
 @MainActor
+private func configureWorkspaceLayouts(
+    on controller: WMController,
+    layoutsByName: [String: LayoutType]
+) {
+    controller.settings.workspaceConfigurations = layoutsByName.keys.sorted().map { name in
+        WorkspaceConfiguration(
+            name: name,
+            layoutType: layoutsByName[name] ?? .defaultLayout
+        )
+    }
+}
+
+@MainActor
 private func addFocusedWindow(
     on controller: WMController,
     workspaceId: WorkspaceDescriptor.ID,
@@ -618,6 +631,194 @@ private func prepareNiriState(
         #expect(recorder.relayoutEvents.map(\.1) == [.immediateRelayout])
         #expect(recorder.fullRescanReasons.isEmpty)
         #expect(controller.workspaceManager.lastFocusedToken(in: targetWorkspaceId) == nil)
+        assertNoLegacyReasons(recorder)
+    }
+
+    @Test @MainActor func summonWindowRightIntoNiriUsesImmediateRelayoutOnly() async {
+        let controller = makeRefreshTestController()
+        guard let targetWorkspaceId = controller.activeWorkspace()?.id else {
+            Issue.record("Missing target workspace for Niri summon-right test")
+            return
+        }
+
+        let handles = await prepareNiriState(
+            on: controller,
+            assignments: [
+                (workspaceId: targetWorkspaceId, windowId: 9101),
+                (workspaceId: targetWorkspaceId, windowId: 9102),
+                (workspaceId: targetWorkspaceId, windowId: 9103)
+            ],
+            focusedWindowId: 9101
+        )
+        guard let summonedHandle = handles[9102] else {
+            Issue.record("Missing summoned handle for Niri summon-right test")
+            return
+        }
+
+        let recorder = RefreshEventRecorder()
+        installRefreshSpies(on: controller, recorder: recorder)
+
+        controller.windowActionHandler.summonWindowRight(handle: summonedHandle)
+        await waitForRefreshWork(on: controller)
+
+        guard let engine = controller.niriEngine else {
+            Issue.record("Missing Niri engine after summon-right test setup")
+            return
+        }
+
+        let orderedWindowIds = engine.columns(in: targetWorkspaceId).compactMap { $0.windowNodes.first?.token.windowId }
+
+        #expect(recorder.relayoutEvents.map(\.0) == [.layoutCommand])
+        #expect(recorder.relayoutEvents.map(\.1) == [.immediateRelayout])
+        #expect(controller.workspaceManager.lastFocusedToken(in: targetWorkspaceId)?.windowId == 9102)
+        #expect(orderedWindowIds == [9101, 9102, 9103])
+        assertNoLegacyReasons(recorder)
+    }
+
+    @Test @MainActor func paletteSummonWindowRightIntoNiriUsesCapturedAnchorWhenManagedFocusIsNil() async {
+        let controller = makeRefreshTestController()
+        guard let targetWorkspaceId = controller.activeWorkspace()?.id,
+              let sourceWorkspaceId = controller.workspaceManager.workspaceId(for: "2", createIfMissing: true)
+        else {
+            Issue.record("Missing workspace for palette summon-right Niri test")
+            return
+        }
+
+        let handles = await prepareNiriState(
+            on: controller,
+            assignments: [
+                (workspaceId: targetWorkspaceId, windowId: 9301),
+                (workspaceId: targetWorkspaceId, windowId: 9303),
+                (workspaceId: sourceWorkspaceId, windowId: 9302),
+            ],
+            focusedWindowId: 9301
+        )
+        guard let anchorHandle = handles[9301],
+              let summonedHandle = handles[9302]
+        else {
+            Issue.record("Missing handles for palette summon-right Niri test")
+            return
+        }
+
+        _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: false)
+
+        let recorder = RefreshEventRecorder()
+        installRefreshSpies(on: controller, recorder: recorder)
+
+        controller.windowActionHandler.summonWindowRight(
+            handle: summonedHandle,
+            anchorToken: anchorHandle.id,
+            anchorWorkspaceId: targetWorkspaceId
+        )
+        await waitForRefreshWork(on: controller)
+
+        guard let engine = controller.niriEngine else {
+            Issue.record("Missing Niri engine after palette summon-right test")
+            return
+        }
+
+        let orderedWindowIds = engine.columns(in: targetWorkspaceId).compactMap { $0.windowNodes.first?.token.windowId }
+
+        #expect(recorder.relayoutEvents.map(\.0) == [.layoutCommand])
+        #expect(recorder.relayoutEvents.map(\.1) == [.immediateRelayout])
+        #expect(controller.workspaceManager.workspace(for: summonedHandle.id) == targetWorkspaceId)
+        #expect(controller.workspaceManager.lastFocusedToken(in: targetWorkspaceId)?.windowId == 9302)
+        #expect(orderedWindowIds == [9301, 9302, 9303])
+        assertNoLegacyReasons(recorder)
+    }
+
+    @Test @MainActor func paletteSummonWindowRightIntoNiriNoOpsWhenAnchorDisappears() async {
+        let controller = makeRefreshTestController()
+        guard let targetWorkspaceId = controller.activeWorkspace()?.id,
+              let sourceWorkspaceId = controller.workspaceManager.workspaceId(for: "2", createIfMissing: true)
+        else {
+            Issue.record("Missing workspace for stale-anchor Niri test")
+            return
+        }
+
+        let handles = await prepareNiriState(
+            on: controller,
+            assignments: [
+                (workspaceId: targetWorkspaceId, windowId: 9401),
+                (workspaceId: sourceWorkspaceId, windowId: 9402),
+            ],
+            focusedWindowId: 9401
+        )
+        guard let anchorHandle = handles[9401],
+              let summonedHandle = handles[9402]
+        else {
+            Issue.record("Missing handles for stale-anchor Niri test")
+            return
+        }
+
+        _ = controller.workspaceManager.removeWindow(
+            pid: anchorHandle.pid,
+            windowId: anchorHandle.windowId
+        )
+
+        let recorder = RefreshEventRecorder()
+        installRefreshSpies(on: controller, recorder: recorder)
+
+        controller.windowActionHandler.summonWindowRight(
+            handle: summonedHandle,
+            anchorToken: anchorHandle.id,
+            anchorWorkspaceId: targetWorkspaceId
+        )
+        await waitForRefreshWork(on: controller)
+
+        #expect(recorder.relayoutEvents.isEmpty)
+        #expect(recorder.fullRescanReasons.isEmpty)
+        #expect(controller.workspaceManager.workspace(for: summonedHandle.id) == sourceWorkspaceId)
+        assertNoLegacyReasons(recorder)
+    }
+
+    @Test @MainActor func summonWindowRightIntoDwindleUsesImmediateRelayoutOnly() async {
+        let controller = makeRefreshTestController()
+        guard let targetWorkspaceId = controller.activeWorkspace()?.id else {
+            Issue.record("Missing target workspace for Dwindle summon-right test")
+            return
+        }
+
+        configureWorkspaceLayouts(
+            on: controller,
+            layoutsByName: ["1": .dwindle]
+        )
+        controller.enableDwindleLayout()
+        await waitForRefreshWork(on: controller)
+
+        let anchorHandle = addFocusedWindow(on: controller, workspaceId: targetWorkspaceId, windowId: 9201)
+        _ = addWindow(on: controller, workspaceId: targetWorkspaceId, pid: getpid(), windowId: 9202)
+        let summonedHandle = addWindow(
+            on: controller,
+            workspaceId: targetWorkspaceId,
+            pid: getpid(),
+            windowId: 9203
+        )
+        controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
+        await waitForRefreshWork(on: controller)
+
+        let recorder = RefreshEventRecorder()
+        installRefreshSpies(on: controller, recorder: recorder)
+
+        controller.windowActionHandler.summonWindowRight(handle: summonedHandle)
+        await waitForRefreshWork(on: controller)
+
+        guard let monitor = controller.workspaceManager.monitor(for: targetWorkspaceId),
+              let frames = controller.dwindleEngine?.calculateLayout(
+                  for: targetWorkspaceId,
+                  screen: monitor.visibleFrame
+              ),
+              let anchorFrame = frames[anchorHandle.id],
+              let summonedFrame = frames[summonedHandle.id]
+        else {
+            Issue.record("Missing Dwindle frames after summon-right")
+            return
+        }
+
+        #expect(recorder.relayoutEvents.map(\.0) == [.layoutCommand])
+        #expect(recorder.relayoutEvents.map(\.1) == [.immediateRelayout])
+        #expect(controller.workspaceManager.lastFocusedToken(in: targetWorkspaceId)?.windowId == 9203)
+        #expect(summonedFrame.minX >= anchorFrame.maxX - 1.0)
         assertNoLegacyReasons(recorder)
     }
 

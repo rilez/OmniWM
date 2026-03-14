@@ -981,8 +981,9 @@ final class WorkspaceNavigationHandler {
         }
     }
 
-    func moveWindowFromOverview(handle: WindowHandle, toWorkspaceId targetWsId: WorkspaceDescriptor.ID) {
-        guard let controller else { return }
+    @discardableResult
+    func moveWindow(handle: WindowHandle, toWorkspaceId targetWsId: WorkspaceDescriptor.ID) -> Bool {
+        guard let controller else { return false }
         let token = handle.id
 
         let currentWorkspaceId = controller.workspaceManager.workspace(for: token)
@@ -991,7 +992,7 @@ final class WorkspaceNavigationHandler {
             from: currentWorkspaceId,
             to: targetWsId
         )
-        guard transferResult.succeeded else { return }
+        guard transferResult.succeeded else { return false }
 
         controller.workspaceManager.setWorkspace(for: token, to: targetWsId)
         applySessionPatch(workspaceId: targetWsId, rememberedFocusToken: token)
@@ -1000,6 +1001,8 @@ final class WorkspaceNavigationHandler {
             let sourceState = controller.workspaceManager.niriViewportState(for: currentWorkspaceId)
             controller.recoverSourceFocusAfterMove(in: currentWorkspaceId, preferredNodeId: sourceState.selectedNodeId)
         }
+
+        return true
     }
 
     func moveFocusedWindowToMonitor(direction: Direction) {

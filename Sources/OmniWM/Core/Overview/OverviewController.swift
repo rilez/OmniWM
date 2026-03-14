@@ -717,7 +717,7 @@ private extension OverviewController {
         switch target {
         case let .workspaceMove(targetWsId):
             guard targetWsId != session.workspaceId else { return }
-            wmController.workspaceNavigationHandler.moveWindowFromOverview(
+            wmController.workspaceNavigationHandler.moveWindow(
                 handle: session.handle,
                 toWorkspaceId: targetWsId
             )
@@ -725,13 +725,13 @@ private extension OverviewController {
         case let .niriWindowInsert(targetWsId, targetHandle, position):
             guard isNiriLayout(workspaceId: targetWsId) else { return }
             if targetWsId != session.workspaceId {
-                wmController.workspaceNavigationHandler.moveWindowFromOverview(
+                wmController.workspaceNavigationHandler.moveWindow(
                     handle: session.handle,
                     toWorkspaceId: targetWsId
                 )
             }
             let niriPosition = overviewInsertPositionToNiri(position)
-            wmController.niriLayoutHandler.overviewInsertWindow(
+            wmController.niriLayoutHandler.insertWindow(
                 handle: session.handle,
                 targetHandle: targetHandle,
                 position: niriPosition,
@@ -742,12 +742,12 @@ private extension OverviewController {
         case let .niriColumnInsert(targetWsId, insertIndex):
             guard isNiriLayout(workspaceId: targetWsId) else { return }
             if targetWsId != session.workspaceId {
-                wmController.workspaceNavigationHandler.moveWindowFromOverview(
+                wmController.workspaceNavigationHandler.moveWindow(
                     handle: session.handle,
                     toWorkspaceId: targetWsId
                 )
             }
-            wmController.niriLayoutHandler.overviewInsertWindowInNewColumn(
+            wmController.niriLayoutHandler.insertWindowInNewColumn(
                 handle: session.handle,
                 insertIndex: insertIndex,
                 in: targetWsId

@@ -1184,13 +1184,13 @@ import QuartzCore
         }
     }
 
-    func overviewInsertWindow(
+    @discardableResult
+    func insertWindow(
         handle: WindowHandle,
         targetHandle: WindowHandle,
         position: InsertPosition,
         in workspaceId: WorkspaceDescriptor.ID
-    ) {
-        guard let controller else { return }
+    ) -> Bool {
         var didMove = false
         withNiriWorkspaceContext(for: workspaceId) { engine, wsId, state, monitor, workingFrame, gaps in
             guard let source = engine.findNode(for: handle) else { return }
@@ -1205,18 +1205,15 @@ import QuartzCore
                 gaps: gaps
             )
         }
-        if didMove {
-            controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
-            controller.layoutRefreshController.startScrollAnimation(for: workspaceId)
-        }
+        return didMove
     }
 
-    func overviewInsertWindowInNewColumn(
+    @discardableResult
+    func insertWindowInNewColumn(
         handle: WindowHandle,
         insertIndex: Int,
         in workspaceId: WorkspaceDescriptor.ID
-    ) {
-        guard let controller else { return }
+    ) -> Bool {
         var didMove = false
         withNiriWorkspaceContext(for: workspaceId) { engine, wsId, state, monitor, workingFrame, gaps in
             guard let window = engine.findNode(for: handle) else { return }
@@ -1229,10 +1226,7 @@ import QuartzCore
                 gaps: gaps
             )
         }
-        if didMove {
-            controller.layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
-            controller.layoutRefreshController.startScrollAnimation(for: workspaceId)
-        }
+        return didMove
     }
 }
 
