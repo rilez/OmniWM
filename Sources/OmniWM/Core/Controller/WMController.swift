@@ -28,7 +28,6 @@ final class WMController {
     var hotkeysEnabled: Bool = true
     private(set) var focusFollowsMouseEnabled: Bool = false
     private(set) var moveMouseToFocusedWindowEnabled: Bool = false
-    private(set) var workspaceBarVersion: Int = 0
 
     let settings: SettingsStore
     let workspaceManager: WorkspaceManager
@@ -244,7 +243,6 @@ final class WMController {
     }
 
     func updateWorkspaceBar() {
-        workspaceBarVersion += 1
         workspaceBarManager.update()
     }
 

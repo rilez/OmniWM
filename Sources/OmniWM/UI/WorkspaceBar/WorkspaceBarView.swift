@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 
 struct WorkspaceBarItem: Identifiable {
@@ -25,17 +26,60 @@ struct WorkspaceBarWindowInfo: Identifiable {
     let isFocused: Bool
 }
 
+struct WorkspaceBarSnapshot {
+    let items: [WorkspaceBarItem]
+    let showLabels: Bool
+    let backgroundOpacity: Double
+    let barHeight: CGFloat
+}
+
+@MainActor @Observable
+final class WorkspaceBarModel {
+    var snapshot: WorkspaceBarSnapshot
+
+    init(snapshot: WorkspaceBarSnapshot) {
+        self.snapshot = snapshot
+    }
+}
+
 @MainActor
 struct WorkspaceBarView: View {
-    let controller: WMController
-    let settings: SettingsStore
-    let resolvedSettings: ResolvedBarSettings
-    let monitor: Monitor
-    let barHeight: CGFloat
+    let model: WorkspaceBarModel
+    let onFocusWorkspace: (WorkspaceBarItem) -> Void
+    let onFocusWindow: (WindowToken) -> Void
+
+    var body: some View {
+        WorkspaceBarContentView(
+            snapshot: model.snapshot,
+            onFocusWorkspace: onFocusWorkspace,
+            onFocusWindow: onFocusWindow
+        )
+    }
+}
+
+@MainActor
+struct WorkspaceBarMeasurementView: View {
+    let snapshot: WorkspaceBarSnapshot
+
+    var body: some View {
+        WorkspaceBarContentView(
+            snapshot: snapshot,
+            onFocusWorkspace: { _ in },
+            onFocusWindow: { _ in }
+        )
+        .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+@MainActor
+private struct WorkspaceBarContentView: View {
+    let snapshot: WorkspaceBarSnapshot
+    let onFocusWorkspace: (WorkspaceBarItem) -> Void
+    let onFocusWindow: (WindowToken) -> Void
 
     @Environment(\.colorScheme) var colorScheme: ColorScheme
 
-    private var itemHeight: CGFloat { max(16, barHeight - 4) }
+    private var itemHeight: CGFloat { max(16, snapshot.barHeight - 4) }
     private var iconSize: CGFloat { max(12, itemHeight - 6) }
     private let workspaceSpacing: CGFloat = 8
     private let windowSpacing: CGFloat = 2
@@ -43,22 +87,22 @@ struct WorkspaceBarView: View {
 
     private var backgroundColor: Color {
         colorScheme == .dark
-            ? Color.white.opacity(resolvedSettings.backgroundOpacity)
-            : Color.black.opacity(resolvedSettings.backgroundOpacity * 0.5)
+            ? Color.white.opacity(snapshot.backgroundOpacity)
+            : Color.black.opacity(snapshot.backgroundOpacity * 0.5)
     }
 
     var body: some View {
         HStack(spacing: workspaceSpacing) {
-            ForEach(workspaceItems, id: \.id) { item in
+            ForEach(snapshot.items, id: \.id) { item in
                 WorkspaceItemView(
                     item: item,
                     iconSize: iconSize,
                     itemHeight: itemHeight,
                     windowSpacing: windowSpacing,
                     cornerRadius: cornerRadius,
-                    showLabels: resolvedSettings.showLabels,
-                    onFocusWorkspace: { focusWorkspace(item) },
-                    onFocusWindow: { token in focusWindow(token) }
+                    showLabels: snapshot.showLabels,
+                    onFocusWorkspace: { onFocusWorkspace(item) },
+                    onFocusWindow: onFocusWindow
                 )
             }
         }
@@ -69,23 +113,6 @@ struct WorkspaceBarView: View {
                 .fill(backgroundColor)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
         )
-    }
-
-    private var workspaceItems: [WorkspaceBarItem] {
-        _ = controller.workspaceBarVersion
-        return controller.workspaceBarItems(
-            for: monitor,
-            deduplicate: resolvedSettings.deduplicateAppIcons,
-            hideEmpty: resolvedSettings.hideEmptyWorkspaces
-        )
-    }
-
-    private func focusWorkspace(_ item: WorkspaceBarItem) {
-        controller.focusWorkspaceFromBar(named: item.name)
-    }
-
-    private func focusWindow(_ token: WindowToken) {
-        controller.focusWindowFromBar(token: token)
     }
 }
 

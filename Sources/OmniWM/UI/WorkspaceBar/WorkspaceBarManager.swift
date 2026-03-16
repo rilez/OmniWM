@@ -47,15 +47,50 @@ enum WorkspaceBarPosition: String, CaseIterable, Identifiable {
 
 @MainActor
 final class WorkspaceBarManager {
-    private struct MonitorBarInstance {
+    final class MonitorBarInstance {
         let monitorId: Monitor.ID
         let panel: WorkspaceBarPanel
         let hostingView: NSHostingView<WorkspaceBarView>
+        let measurementView: NSHostingView<WorkspaceBarMeasurementView>
+        let model: WorkspaceBarModel
+
+        var monitor: Monitor
+        var lastAppliedFrame: NSRect?
+        var screenDisplayId: CGDirectDisplayID?
+
+        init(
+            monitor: Monitor,
+            panel: WorkspaceBarPanel,
+            hostingView: NSHostingView<WorkspaceBarView>,
+            measurementView: NSHostingView<WorkspaceBarMeasurementView>,
+            model: WorkspaceBarModel,
+            screenDisplayId: CGDirectDisplayID?
+        ) {
+            monitorId = monitor.id
+            self.monitor = monitor
+            self.panel = panel
+            self.hostingView = hostingView
+            self.measurementView = measurementView
+            self.model = model
+            self.screenDisplayId = screenDisplayId
+        }
+    }
+
+    var monitorProvider: @MainActor () -> [Monitor] = { Monitor.current() }
+    var screenProvider: @MainActor (CGDirectDisplayID) -> NSScreen? = { displayId in
+        NSScreen.screens.first(where: { $0.displayId == displayId })
+    }
+    var panelFactory: @MainActor @Sendable () -> WorkspaceBarPanel = {
+        WorkspaceBarManager.defaultPanel()
+    }
+    var frameApplier: @MainActor @Sendable (WorkspaceBarPanel, NSRect) -> Void = { panel, frame in
+        panel.setFrame(frame, display: true)
     }
 
     private var barsByMonitor: [Monitor.ID: MonitorBarInstance] = [:]
     private var screenObserver: Any?
     private var sleepWakeObserver: Any?
+    private var pendingReconfigureTask: Task<Void, Never>?
     private weak var controller: WMController?
     private weak var settings: SettingsStore?
 
@@ -68,26 +103,31 @@ final class WorkspaceBarManager {
         self.controller = controller
         self.settings = settings
 
+        cancelPendingReconfigure()
+
         guard settings.workspaceBarEnabled else {
             removeAllBars()
             return
         }
 
-        setupBars()
+        reconfigureBars()
     }
 
     func update() {
         guard let settings, settings.workspaceBarEnabled else {
+            cancelPendingReconfigure()
             removeAllBars()
             return
         }
 
-        setupBars()
+        refreshBarsContent()
     }
 
     func setEnabled(_ enabled: Bool) {
+        cancelPendingReconfigure()
+
         if enabled {
-            setupBars()
+            reconfigureBars()
         } else {
             removeAllBars()
         }
@@ -95,16 +135,20 @@ final class WorkspaceBarManager {
 
     func updateSettings() {
         guard settings != nil else { return }
-        setupBars()
+        cancelPendingReconfigure()
+        reconfigureBars()
     }
 
-    private func setupBars() {
+    func reconfigureBars() {
+        reconfigureBars(using: monitorProvider())
+    }
+
+    func reconfigureBars(using monitors: [Monitor]) {
         guard controller != nil, let settings else { return }
 
-        let currentMonitors = Monitor.current()
         var existingMonitorIds = Set(barsByMonitor.keys)
 
-        for monitor in currentMonitors {
+        for monitor in monitors {
             existingMonitorIds.remove(monitor.id)
             let resolved = settings.resolvedBarSettings(for: monitor)
 
@@ -114,7 +158,10 @@ final class WorkspaceBarManager {
             }
 
             if let existing = barsByMonitor[monitor.id] {
-                updateBarForMonitor(monitor, instance: existing)
+                if !updateBarForMonitor(monitor, instance: existing) {
+                    removeBarForMonitor(monitor.id)
+                    createBarForMonitor(monitor)
+                }
             } else {
                 createBarForMonitor(monitor)
             }
@@ -125,58 +172,115 @@ final class WorkspaceBarManager {
         }
     }
 
+    func scheduleReconfigure(after delayNanoseconds: UInt64) {
+        scheduleDeferredUpdate(after: delayNanoseconds) { [weak self] in
+            self?.reconfigureBars()
+        }
+    }
+
+    private func refreshBarsContent() {
+        guard let settings, settings.workspaceBarEnabled else { return }
+
+        let currentMonitors = Dictionary(uniqueKeysWithValues: monitorProvider().map { ($0.id, $0) })
+        for instance in barsByMonitor.values {
+            let monitor = currentMonitors[instance.monitorId] ?? instance.monitor
+            refreshBarContent(for: monitor, instance: instance)
+        }
+    }
+
     private func createBarForMonitor(_ monitor: Monitor) {
         guard let controller, let settings else { return }
 
         let resolved = settings.resolvedBarSettings(for: monitor)
-        let panel = createPanel()
+        let snapshot = makeSnapshot(for: monitor, resolved: resolved)
+        let model = WorkspaceBarModel(snapshot: snapshot)
 
-        if let screen = NSScreen.screens.first(where: { $0.displayId == monitor.displayId }) {
-            panel.targetScreen = screen
-        }
-
-        let barHeight = max(menuBarHeight(for: monitor), resolved.height)
-        let contentView = WorkspaceBarView(
-            controller: controller,
-            settings: settings,
-            resolvedSettings: resolved,
-            monitor: monitor,
-            barHeight: CGFloat(barHeight)
+        let hostingView = NSHostingView(
+            rootView: WorkspaceBarView(
+                model: model,
+                onFocusWorkspace: { [weak controller] item in
+                    controller?.focusWorkspaceFromBar(named: item.name)
+                },
+                onFocusWindow: { [weak controller] token in
+                    controller?.focusWindowFromBar(token: token)
+                }
+            )
         )
-        let hostingView = NSHostingView(rootView: contentView)
+        configureHostingView(hostingView)
 
+        let measurementView = NSHostingView(rootView: WorkspaceBarMeasurementView(snapshot: snapshot))
+
+        let panel = panelFactory()
+        let screen = screenProvider(monitor.displayId)
+        panel.targetScreen = screen
         panel.contentView = hostingView
-        applySettingsToPanel(panel, for: monitor)
+        applySettingsToPanel(panel, resolved: resolved)
 
         let instance = MonitorBarInstance(
-            monitorId: monitor.id,
+            monitor: monitor,
             panel: panel,
-            hostingView: hostingView
+            hostingView: hostingView,
+            measurementView: measurementView,
+            model: model,
+            screenDisplayId: screen?.displayId
         )
         barsByMonitor[monitor.id] = instance
 
-        updateBarFrameAndPosition(for: monitor, instance: instance)
+        updateBarFrameAndPosition(
+            for: monitor,
+            resolved: resolved,
+            snapshot: snapshot,
+            instance: instance
+        )
         panel.orderFrontRegardless()
     }
 
-    private func updateBarForMonitor(_ monitor: Monitor, instance: MonitorBarInstance) {
-        guard let controller, let settings else { return }
+    private func updateBarForMonitor(_ monitor: Monitor, instance: MonitorBarInstance) -> Bool {
+        guard let settings else { return false }
 
-        if let screen = NSScreen.screens.first(where: { $0.displayId == monitor.displayId }) {
-            instance.panel.targetScreen = screen
+        let screen = screenProvider(monitor.displayId)
+        let nextScreenDisplayId = screen?.displayId
+
+        if let currentScreenDisplayId = instance.screenDisplayId,
+           nextScreenDisplayId != currentScreenDisplayId {
+            return false
         }
 
+        if nextScreenDisplayId == nil, instance.screenDisplayId != nil {
+            return false
+        }
+
+        instance.monitor = monitor
+        instance.panel.targetScreen = screen
+        instance.screenDisplayId = nextScreenDisplayId
+
         let resolved = settings.resolvedBarSettings(for: monitor)
-        let barHeight = max(menuBarHeight(for: monitor), resolved.height)
-        instance.hostingView.rootView = WorkspaceBarView(
-            controller: controller,
-            settings: settings,
-            resolvedSettings: resolved,
-            monitor: monitor,
-            barHeight: CGFloat(barHeight)
+        let snapshot = makeSnapshot(for: monitor, resolved: resolved)
+        instance.model.snapshot = snapshot
+        applySettingsToPanel(instance.panel, resolved: resolved)
+        updateBarFrameAndPosition(
+            for: monitor,
+            resolved: resolved,
+            snapshot: snapshot,
+            instance: instance
         )
-        applySettingsToPanel(instance.panel, for: monitor)
-        updateBarFrameAndPosition(for: monitor, instance: instance)
+        return true
+    }
+
+    private func refreshBarContent(for monitor: Monitor, instance: MonitorBarInstance) {
+        guard let settings else { return }
+
+        instance.monitor = monitor
+
+        let resolved = settings.resolvedBarSettings(for: monitor)
+        let snapshot = makeSnapshot(for: monitor, resolved: resolved)
+        instance.model.snapshot = snapshot
+        updateBarFrameAndPosition(
+            for: monitor,
+            resolved: resolved,
+            snapshot: snapshot,
+            instance: instance
+        )
     }
 
     private func removeBarForMonitor(_ monitorId: Monitor.ID) {
@@ -195,7 +299,60 @@ final class WorkspaceBarManager {
         barsByMonitor.removeAll()
     }
 
-    private func createPanel() -> WorkspaceBarPanel {
+    private func updateBarFrameAndPosition(
+        for monitor: Monitor,
+        resolved: ResolvedBarSettings,
+        snapshot: WorkspaceBarSnapshot,
+        instance: MonitorBarInstance
+    ) {
+        let fittingWidth = measuredWidth(for: snapshot, using: instance.measurementView)
+        let frame = Self.barFrame(
+            fittingWidth: fittingWidth,
+            monitor: monitor,
+            resolved: resolved,
+            menuBarHeight: menuBarHeight(for: monitor)
+        )
+
+        guard instance.lastAppliedFrame != frame else { return }
+
+        frameApplier(instance.panel, frame)
+        instance.lastAppliedFrame = frame
+    }
+
+    private func measuredWidth(
+        for snapshot: WorkspaceBarSnapshot,
+        using measurementView: NSHostingView<WorkspaceBarMeasurementView>
+    ) -> CGFloat {
+        measurementView.rootView = WorkspaceBarMeasurementView(snapshot: snapshot)
+        measurementView.layoutSubtreeIfNeeded()
+        return measurementView.fittingSize.width
+    }
+
+    private func makeSnapshot(
+        for monitor: Monitor,
+        resolved: ResolvedBarSettings
+    ) -> WorkspaceBarSnapshot {
+        let items = controller?.workspaceBarItems(
+            for: monitor,
+            deduplicate: resolved.deduplicateAppIcons,
+            hideEmpty: resolved.hideEmptyWorkspaces
+        ) ?? []
+
+        return WorkspaceBarSnapshot(
+            items: items,
+            showLabels: resolved.showLabels,
+            backgroundOpacity: resolved.backgroundOpacity,
+            barHeight: CGFloat(max(menuBarHeight(for: monitor), resolved.height))
+        )
+    }
+
+    private func configureHostingView<Content: View>(_ hostingView: NSHostingView<Content>) {
+        if #available(macOS 13.0, *) {
+            hostingView.sizingOptions = []
+        }
+    }
+
+    private static func defaultPanel() -> WorkspaceBarPanel {
         let panel = WorkspaceBarPanel(
             contentRect: .zero,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -216,19 +373,6 @@ final class WorkspaceBarManager {
         panel.isMovableByWindowBackground = false
 
         return panel
-    }
-
-    private func updateBarFrameAndPosition(for monitor: Monitor, instance: MonitorBarInstance) {
-        guard let settings else { return }
-
-        let resolved = settings.resolvedBarSettings(for: monitor)
-        let frame = Self.barFrame(
-            fittingWidth: instance.hostingView.fittingSize.width,
-            monitor: monitor,
-            resolved: resolved,
-            menuBarHeight: menuBarHeight(for: monitor)
-        )
-        instance.panel.setFrame(frame, display: true)
     }
 
     nonisolated static func effectivePosition(for monitor: Monitor, resolved: ResolvedBarSettings) -> WorkspaceBarPosition {
@@ -265,9 +409,8 @@ final class WorkspaceBarManager {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                self?.setupBars()
+            Task { @MainActor [weak self] in
+                self?.scheduleReconfigure(after: 150_000_000)
             }
         }
     }
@@ -278,20 +421,46 @@ final class WorkspaceBarManager {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                self?.handleWakeFromSleep()
+            Task { @MainActor [weak self] in
+                self?.scheduleDeferredUpdate(after: 500_000_000) { [weak self] in
+                    self?.handleWakeFromSleep()
+                }
             }
         }
+    }
+
+    private func scheduleDeferredUpdate(
+        after delayNanoseconds: UInt64,
+        action: @escaping @MainActor () -> Void
+    ) {
+        cancelPendingReconfigure()
+        pendingReconfigureTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: delayNanoseconds)
+            } catch {
+                return
+            }
+
+            guard let self else { return }
+            self.pendingReconfigureTask = nil
+            action()
+        }
+    }
+
+    private func cancelPendingReconfigure() {
+        pendingReconfigureTask?.cancel()
+        pendingReconfigureTask = nil
     }
 
     private func handleWakeFromSleep() {
         guard let settings, settings.workspaceBarEnabled else { return }
         removeAllBars()
-        setupBars()
+        reconfigureBars()
     }
 
     func cleanup() {
+        cancelPendingReconfigure()
+
         if let observer = screenObserver {
             NotificationCenter.default.removeObserver(observer)
             screenObserver = nil
@@ -303,14 +472,26 @@ final class WorkspaceBarManager {
         removeAllBars()
     }
 
-    private func applySettingsToPanel(_ panel: NSPanel, for monitor: Monitor) {
-        guard let settings else { return }
-        let resolved = settings.resolvedBarSettings(for: monitor)
+    private func applySettingsToPanel(_ panel: NSPanel, resolved: ResolvedBarSettings) {
         panel.level = resolved.windowLevel.nsWindowLevel
     }
 
     private func menuBarHeight(for monitor: Monitor) -> Double {
         let h = monitor.frame.maxY - monitor.visibleFrame.maxY
         return h > 0 ? h : 28
+    }
+}
+
+extension WorkspaceBarManager {
+    func activeBarCountForTests() -> Int {
+        barsByMonitor.count
+    }
+
+    func hostingViewIdentifierForTests(on monitorId: Monitor.ID) -> ObjectIdentifier? {
+        barsByMonitor[monitorId].map { ObjectIdentifier($0.hostingView) }
+    }
+
+    func lastAppliedFrameForTests(on monitorId: Monitor.ID) -> CGRect? {
+        barsByMonitor[monitorId]?.lastAppliedFrame
     }
 }
