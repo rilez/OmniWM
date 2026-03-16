@@ -49,7 +49,7 @@ final class WMController {
     @ObservationIgnored
     private lazy var workspaceBarManager: WorkspaceBarManager = .init()
     @ObservationIgnored
-    private lazy var hiddenBarController: HiddenBarController = .init(settings: settings)
+    private let hiddenBarController: HiddenBarController
     @ObservationIgnored
     private lazy var quakeTerminalController: QuakeTerminalController = .init(settings: settings)
 
@@ -91,9 +91,11 @@ final class WMController {
 
     init(
         settings: SettingsStore,
+        hiddenBarController: HiddenBarController? = nil,
         windowFocusOperations: WindowFocusOperations = .live
     ) {
         self.settings = settings
+        self.hiddenBarController = hiddenBarController ?? HiddenBarController(settings: settings)
         self.windowFocusOperations = windowFocusOperations
         workspaceManager = WorkspaceManager(settings: settings)
         focusCoordinator = FocusOperationCoordinator()
@@ -165,7 +167,6 @@ final class WMController {
 
         setWorkspaceBarEnabled(settings.workspaceBarEnabled)
         setPreventSleepEnabled(settings.preventSleepEnabled)
-        hiddenBarController.setup()
         setQuakeTerminalEnabled(settings.quakeTerminalEnabled)
 
         setEnabled(true)
@@ -211,7 +212,6 @@ final class WMController {
 
     func cleanupUIOnStop() {
         workspaceBarManager.cleanup()
-        hiddenBarController.cleanup()
     }
 
     func setPreventSleepEnabled(_ enabled: Bool) {

@@ -284,6 +284,17 @@ Hide or reveal status bar icons using a separator item:
 - Right-click the OmniWM menu bar icon to toggle
 - Optional hotkey exists but is unassigned by default
 
+#### Recovery
+
+If OmniWM's owned menu-bar items come up in a bad order, clear their saved positions and expand the hidden bar:
+
+```bash
+defaults write com.barut.OmniWM settings.hiddenBar.isCollapsed -bool false
+defaults delete com.barut.OmniWM "NSStatusItem Preferred Position omniwm_main"
+defaults delete com.barut.OmniWM "NSStatusItem Preferred Position omniwm_hiddenbar_separator"
+killall OmniWM
+```
+
 ### Tips
 
 - **Workspaces** - Create named workspaces in Settings to organize by project or context

@@ -222,38 +222,41 @@ final class WorkspaceBarManager {
         guard let settings else { return }
 
         let resolved = settings.resolvedBarSettings(for: monitor)
-        let fittingSize = instance.hostingView.fittingSize
-        let screenFrame = monitor.frame
-        let visibleFrame = monitor.visibleFrame
-        let barHeight = max(menuBarHeight(for: monitor), resolved.height)
+        let frame = Self.barFrame(
+            fittingWidth: instance.hostingView.fittingSize.width,
+            monitor: monitor,
+            resolved: resolved,
+            menuBarHeight: menuBarHeight(for: monitor)
+        )
+        instance.panel.setFrame(frame, display: true)
+    }
 
-        let notchAware = resolved.notchAware
-        let screenHasNotch = monitor.hasNotch
-
-        let width: CGFloat
-        var x: CGFloat
-        let height = CGFloat(barHeight)
-
-        var y: CGFloat = if resolved.position == .belowMenuBar {
-            visibleFrame.maxY - height
-        } else {
-            visibleFrame.maxY
+    nonisolated static func effectivePosition(for monitor: Monitor, resolved: ResolvedBarSettings) -> WorkspaceBarPosition {
+        if monitor.hasNotch,
+           resolved.notchAware,
+           resolved.position == .overlappingMenuBar
+        {
+            return .belowMenuBar
         }
+        return resolved.position
+    }
 
-        if notchAware, screenHasNotch {
-            let notchClearance: CGFloat = 120
-            x = screenFrame.midX + notchClearance
-            let rightPadding: CGFloat = 20
-            width = max(screenFrame.maxX - x - rightPadding, 100)
-        } else {
-            width = max(fittingSize.width, 300)
-            x = screenFrame.midX - width / 2
-        }
+    nonisolated static func barFrame(
+        fittingWidth: CGFloat,
+        monitor: Monitor,
+        resolved: ResolvedBarSettings,
+        menuBarHeight: Double
+    ) -> NSRect {
+        let effectivePosition = effectivePosition(for: monitor, resolved: resolved)
+        let width = max(fittingWidth, 300)
+        let height = CGFloat(max(menuBarHeight, resolved.height))
+        var x = monitor.frame.midX - width / 2
+        var y = effectivePosition == .belowMenuBar ? monitor.visibleFrame.maxY - height : monitor.visibleFrame.maxY
 
         x += CGFloat(resolved.xOffset)
         y += CGFloat(resolved.yOffset)
 
-        instance.panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
+        return NSRect(x: x, y: y, width: width, height: height)
     }
 
     private func setupScreenChangeObserver() {

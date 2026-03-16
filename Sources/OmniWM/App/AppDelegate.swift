@@ -51,13 +51,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsMigration.persistCurrentEpoch(defaults: defaults)
 
         let settings = SettingsStore(defaults: defaults)
-        let controller = WMController(settings: settings)
+        let hiddenBarController = HiddenBarController(settings: settings)
+        let controller = WMController(settings: settings, hiddenBarController: hiddenBarController)
         controller.applyPersistedSettings(settings)
 
         AppDelegate.sharedBootstrap?.settings = settings
         AppDelegate.sharedBootstrap?.controller = controller
 
-        statusBarController = StatusBarController(settings: settings, controller: controller)
+        statusBarController = StatusBarController(
+            settings: settings,
+            controller: controller,
+            hiddenBarController: hiddenBarController,
+            defaults: defaults
+        )
         statusBarController?.setup()
     }
 

@@ -9,7 +9,6 @@ enum SettingsMigration {
     static let currentSettingsEpoch = 4
 
     private static let epochKey = "settings.settingsEpoch"
-    private static let patchesKey = "appliedSettingsPatches"
     private static let ownedSettingsPrefix = "settings."
 
     enum MigrationError: LocalizedError {
@@ -87,7 +86,7 @@ enum SettingsMigration {
 
     static func ownedSettingsSnapshot(defaults: UserDefaults = .standard) -> [String: Any] {
         defaults.dictionaryRepresentation().filter { key, _ in
-            key.hasPrefix(ownedSettingsPrefix) || key == patchesKey
+            key.hasPrefix(ownedSettingsPrefix)
         }
     }
 

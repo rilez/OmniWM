@@ -1320,7 +1320,6 @@ private func makeSettingsTestMonitor(
         defaults.set("ws1,ws2", forKey: "settings.persistentWorkspaces")
         defaults.set("ws1=Studio Display", forKey: "settings.workspaceAssignments")
         defaults.set(Data("payload".utf8), forKey: "settings.workspaceConfigurations")
-        defaults.set(7, forKey: "appliedSettingsPatches")
 
         SettingsMigration.resetOwnedSettings(defaults: defaults)
 
@@ -1328,7 +1327,6 @@ private func makeSettingsTestMonitor(
         #expect(defaults.object(forKey: "settings.persistentWorkspaces") == nil)
         #expect(defaults.object(forKey: "settings.workspaceAssignments") == nil)
         #expect(defaults.object(forKey: "settings.workspaceConfigurations") == nil)
-        #expect(defaults.object(forKey: "appliedSettingsPatches") == nil)
         #expect(defaults.integer(forKey: "settings.settingsEpoch") == SettingsMigration.currentSettingsEpoch)
     }
 
