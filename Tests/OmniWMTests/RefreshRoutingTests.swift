@@ -60,6 +60,7 @@ private func makeRefreshTestController(
 private func cleanupRefreshTestController(_ controller: WMController) {
     controller.layoutRefreshController.resetDebugState()
     controller.layoutRefreshController.resetState()
+    controller.resetWorkspaceBarRefreshDebugStateForTests()
     controller.axManager.currentWindowsAsyncOverride = nil
     controller.axEventHandler.resetDebugStateForTests()
     controller.axEventHandler.isFullscreenProvider = nil
@@ -83,6 +84,7 @@ private func waitForRefreshWork(on controller: WMController) async {
 @MainActor
 private func waitForSettledRefreshWork(on controller: WMController) async {
     await controller.layoutRefreshController.waitForSettledRefreshWorkForTests()
+    await controller.waitForWorkspaceBarRefreshForTests()
 }
 
 @MainActor
@@ -371,6 +373,94 @@ private func prepareNiriState(
         #expect(RefreshReason.appHidden.requestRoute == .visibilityRefresh)
         #expect(RefreshReason.appUnhidden.requestRoute == .visibilityRefresh)
         #expect(RefreshReason.windowDestroyed.requestRoute == .windowRemoval)
+    }
+
+    @Test @MainActor func workspaceBarRefreshRequestsCoalesceOnNextMainTurn() async {
+        let controller = makeRefreshTestController()
+        defer { cleanupRefreshTestController(controller) }
+
+        controller.requestWorkspaceBarRefresh()
+        controller.requestWorkspaceBarRefresh()
+        controller.requestWorkspaceBarRefresh()
+
+        #expect(controller.workspaceBarRefreshDebugState.requestCount == 3)
+        #expect(controller.workspaceBarRefreshDebugState.scheduledCount == 1)
+        #expect(controller.workspaceBarRefreshDebugState.executionCount == 0)
+        #expect(controller.workspaceBarRefreshDebugState.isQueued)
+
+        await controller.waitForWorkspaceBarRefreshForTests()
+
+        #expect(controller.workspaceBarRefreshDebugState.scheduledCount == 1)
+        #expect(controller.workspaceBarRefreshDebugState.executionCount == 1)
+        #expect(!controller.workspaceBarRefreshDebugState.isQueued)
+    }
+
+    @Test @MainActor func workspaceBarRefreshRunsAfterPostLayoutActions() async {
+        let controller = makeRefreshTestController()
+        defer { cleanupRefreshTestController(controller) }
+
+        var eventOrder: [String] = []
+        var executionCountDuringPostLayout = -1
+        controller.workspaceBarRefreshExecutionHookForTests = {
+            eventOrder.append("workspaceBar")
+        }
+
+        controller.layoutRefreshController.commitWorkspaceTransition(
+            reason: .workspaceTransition
+        ) {
+            executionCountDuringPostLayout = controller.workspaceBarRefreshDebugState.executionCount
+            eventOrder.append("postLayout")
+        }
+
+        await waitForRefreshWork(on: controller)
+
+        #expect(executionCountDuringPostLayout == 0)
+        #expect(controller.workspaceBarRefreshDebugState.executionCount == 0)
+        #expect(controller.workspaceBarRefreshDebugState.isQueued)
+
+        await controller.waitForWorkspaceBarRefreshForTests()
+
+        #expect(eventOrder == ["postLayout", "workspaceBar"])
+        #expect(controller.workspaceBarRefreshDebugState.executionCount == 1)
+    }
+
+    @Test @MainActor func queuedWorkspaceBarRefreshIsCanceledDuringUICleanup() async {
+        let controller = makeRefreshTestController()
+        defer { cleanupRefreshTestController(controller) }
+
+        controller.requestWorkspaceBarRefresh()
+        #expect(controller.workspaceBarRefreshDebugState.isQueued)
+
+        controller.cleanupUIOnStop()
+        await controller.waitForWorkspaceBarRefreshForTests()
+
+        #expect(controller.workspaceBarRefreshDebugState.executionCount == 0)
+        #expect(!controller.workspaceBarRefreshDebugState.isQueued)
+    }
+
+    @Test @MainActor func unlockAndWorkspaceConfigUseSingleDeferredWorkspaceBarRefresh() async {
+        let controller = makeRefreshTestController()
+        defer { cleanupRefreshTestController(controller) }
+
+        let lifecycleManager = ServiceLifecycleManager(controller: controller)
+
+        controller.resetWorkspaceBarRefreshDebugStateForTests()
+        lifecycleManager.handleUnlockDetected()
+        await waitForRefreshWork(on: controller)
+        await controller.waitForWorkspaceBarRefreshForTests()
+
+        #expect(controller.workspaceBarRefreshDebugState.requestCount == 1)
+        #expect(controller.workspaceBarRefreshDebugState.scheduledCount == 1)
+        #expect(controller.workspaceBarRefreshDebugState.executionCount == 1)
+
+        controller.resetWorkspaceBarRefreshDebugStateForTests()
+        controller.updateWorkspaceConfig()
+        await waitForRefreshWork(on: controller)
+        await controller.waitForWorkspaceBarRefreshForTests()
+
+        #expect(controller.workspaceBarRefreshDebugState.requestCount == 1)
+        #expect(controller.workspaceBarRefreshDebugState.scheduledCount == 1)
+        #expect(controller.workspaceBarRefreshDebugState.executionCount == 1)
     }
 
     @Test @MainActor func niriConfigAndEnableUseRelayoutOnly() async {

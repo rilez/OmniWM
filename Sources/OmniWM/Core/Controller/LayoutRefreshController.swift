@@ -404,10 +404,6 @@ import QuartzCore
             niriHandler.updateTabbedColumnOverlays()
         }
 
-        if plan.effects.updateWorkspaceBar {
-            controller.updateWorkspaceBar()
-        }
-
         if plan.effects.refreshFocusedBorderForVisibilityState {
             refreshFocusedBorderForVisibilityState(on: controller)
         }
@@ -418,6 +414,10 @@ import QuartzCore
 
         for postLayoutAction in plan.postLayoutActions {
             postLayoutAction()
+        }
+
+        if plan.effects.requestWorkspaceBarRefresh {
+            controller.requestWorkspaceBarRefresh()
         }
 
         if plan.effects.markInitialRefreshComplete {
@@ -842,7 +842,7 @@ import QuartzCore
         }
 
         if refresh.kind != .visibilityRefresh, refresh.needsVisibilityReconciliation {
-            plan.effects.updateWorkspaceBar = true
+            plan.effects.requestWorkspaceBarRefresh = true
             plan.effects.updateTabbedOverlays = true
             plan.effects.refreshFocusedBorderForVisibilityState = true
         }
@@ -850,7 +850,7 @@ import QuartzCore
 
     private func buildVisibilityExecutionPlan() -> RefreshExecutionPlan {
         var effects = RefreshExecutionEffects()
-        effects.updateWorkspaceBar = true
+        effects.requestWorkspaceBarRefresh = true
         effects.updateTabbedOverlays = true
         effects.refreshFocusedBorderForVisibilityState = true
         return RefreshExecutionPlan(effects: effects)
@@ -889,7 +889,7 @@ import QuartzCore
 
         var effects = RefreshExecutionEffects()
         effects.visibility = .init(activeWorkspaceIds: activeWorkspaceIds)
-        effects.updateWorkspaceBar = true
+        effects.requestWorkspaceBarRefresh = true
         effects.updateTabbedOverlays = updateTabbedOverlays
         if recoverFocus,
            !controller.workspaceManager.isAppFullscreenActive,
@@ -966,7 +966,7 @@ import QuartzCore
 
         var effects = RefreshExecutionEffects()
         effects.visibility = .init(activeWorkspaceIds: activeWorkspaceIds)
-        effects.updateWorkspaceBar = true
+        effects.requestWorkspaceBarRefresh = true
         effects.updateTabbedOverlays = updateTabbedOverlays
         effects.focusValidationWorkspaceIds = focusValidationWorkspaceIds
 
@@ -1067,7 +1067,7 @@ import QuartzCore
 
         var effects = RefreshExecutionEffects()
         effects.visibility = .init(activeWorkspaceIds: activeWorkspaceIds)
-        effects.updateWorkspaceBar = true
+        effects.requestWorkspaceBarRefresh = true
         effects.updateTabbedOverlays = updateTabbedOverlays
         if !controller.workspaceManager.isAppFullscreenActive,
            !controller.workspaceManager.hasPendingNativeFullscreenTransition,
@@ -1332,11 +1332,17 @@ import QuartzCore
 
         if didComplete {
             if !didExecuteRefreshExecutionPlan, let controller {
+                let shouldRequestWorkspaceBarRefresh =
+                    completedRefresh.kind != .visibilityRefresh && completedRefresh.needsVisibilityReconciliation
+
                 if completedRefresh.kind != .visibilityRefresh, completedRefresh.needsVisibilityReconciliation {
                     performVisibilitySideEffects(on: controller)
                 }
                 for postLayoutAction in completedRefresh.postLayoutActions {
                     postLayoutAction()
+                }
+                if shouldRequestWorkspaceBarRefresh {
+                    controller.requestWorkspaceBarRefresh()
                 }
             }
             if let followUpRefresh = completedRefresh.followUpRefresh {
@@ -1461,7 +1467,6 @@ import QuartzCore
     }
 
     private func performVisibilitySideEffects(on controller: WMController) {
-        controller.updateWorkspaceBar()
         controller.niriLayoutHandler.updateTabbedColumnOverlays()
         refreshFocusedBorderForVisibilityState(on: controller)
     }

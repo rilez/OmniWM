@@ -78,6 +78,33 @@ private func lastAppliedBorderFrame(on controller: WMController) -> CGRect? {
 }
 
 @Suite(.serialized) struct AXEventHandlerTests {
+    @Test @MainActor func titleChangedQueuesWorkspaceBarRefreshWithoutRelayout() async {
+        let controller = makeAXEventTestController()
+
+        var relayoutReasons: [RefreshReason] = []
+        controller.resetWorkspaceBarRefreshDebugStateForTests()
+        controller.layoutRefreshController.resetDebugState()
+        controller.layoutRefreshController.debugHooks.onRelayout = { reason, _ in
+            relayoutReasons.append(reason)
+            return true
+        }
+
+        controller.axEventHandler.cgsEventObserver(
+            CGSEventObserver.shared,
+            didReceive: .titleChanged(windowId: 811)
+        )
+
+        #expect(controller.workspaceBarRefreshDebugState.requestCount == 1)
+        #expect(controller.workspaceBarRefreshDebugState.executionCount == 0)
+        #expect(controller.workspaceBarRefreshDebugState.isQueued)
+
+        await controller.waitForWorkspaceBarRefreshForTests()
+
+        #expect(controller.workspaceBarRefreshDebugState.scheduledCount == 1)
+        #expect(controller.workspaceBarRefreshDebugState.executionCount == 1)
+        #expect(relayoutReasons.isEmpty)
+    }
+
     @Test @MainActor func malformedActivationPayloadFallsBackToNonManagedFocus() {
         let controller = makeAXEventTestController()
         controller.hasStartedServices = true
@@ -626,6 +653,7 @@ private func lastAppliedBorderFrame(on controller: WMController) -> CGRect? {
             AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: Int(windowId))
         }
         controller.axEventHandler.windowTypeProvider = { _, _ in .tiling }
+        controller.resetWorkspaceBarRefreshDebugStateForTests()
         relayoutReasons.removeAll()
         subscriptions.removeAll()
 
@@ -638,6 +666,7 @@ private func lastAppliedBorderFrame(on controller: WMController) -> CGRect? {
             didReceive: .created(windowId: 842, spaceId: 0)
         )
         await controller.layoutRefreshController.waitForRefreshWorkForTests()
+        await controller.waitForWorkspaceBarRefreshForTests()
 
         let replacementToken = WindowToken(pid: getpid(), windowId: 842)
         guard let replacementEntry = controller.workspaceManager.entry(for: replacementToken) else {
@@ -658,6 +687,9 @@ private func lastAppliedBorderFrame(on controller: WMController) -> CGRect? {
         #expect(engine.findNode(for: replacementToken)?.id == oldNode.id)
         #expect(relayoutReasons.isEmpty)
         #expect(subscriptions == [[842], [842]])
+        #expect(controller.workspaceBarRefreshDebugState.requestCount == 1)
+        #expect(controller.workspaceBarRefreshDebugState.scheduledCount == 1)
+        #expect(controller.workspaceBarRefreshDebugState.executionCount == 1)
         #expect(lastAppliedBorderWindowId(on: controller) == 842)
         #expect(lastAppliedBorderFrame(on: controller) == observedFrame)
     }
@@ -765,13 +797,8 @@ private func lastAppliedBorderFrame(on controller: WMController) -> CGRect? {
     @Test @MainActor func unmatchedGhosttyCreateAdmitsAfterFlushWindow() async {
         let controller = makeAXEventTestController(trackedGhosttyBundleId: currentTestBundleId())
 
-        var relayoutReasons: [RefreshReason] = []
         var subscriptions: [[UInt32]] = []
         controller.layoutRefreshController.resetDebugState()
-        controller.layoutRefreshController.debugHooks.onRelayout = { reason, _ in
-            relayoutReasons.append(reason)
-            return true
-        }
         controller.axEventHandler.windowSubscriptionHandler = { windowIds in
             subscriptions.append(windowIds)
         }
@@ -783,6 +810,7 @@ private func lastAppliedBorderFrame(on controller: WMController) -> CGRect? {
             AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: Int(windowId))
         }
         controller.axEventHandler.windowTypeProvider = { _, _ in .tiling }
+        controller.resetWorkspaceBarRefreshDebugStateForTests()
 
         controller.axEventHandler.cgsEventObserver(
             CGSEventObserver.shared,
@@ -793,10 +821,15 @@ private func lastAppliedBorderFrame(on controller: WMController) -> CGRect? {
 
         controller.axEventHandler.flushPendingGhosttyReplacementEventsForTests()
         await controller.layoutRefreshController.waitForRefreshWorkForTests()
+        await controller.waitForWorkspaceBarRefreshForTests()
 
         #expect(controller.workspaceManager.entry(forPid: getpid(), windowId: 844) != nil)
-        #expect(relayoutReasons == [.axWindowCreated])
+        #expect(controller.layoutRefreshController.debugCounters.relayoutExecutions == 1)
+        #expect(controller.layoutRefreshController.debugCounters.executedByReason[.axWindowCreated] == 1)
         #expect(subscriptions == [[844]])
+        #expect(controller.workspaceBarRefreshDebugState.requestCount == 1)
+        #expect(controller.workspaceBarRefreshDebugState.scheduledCount == 1)
+        #expect(controller.workspaceBarRefreshDebugState.executionCount == 1)
     }
 
     @Test @MainActor func floatingCreatedWindowIsNotInsertedIntoManagedWorkspaceModel() {

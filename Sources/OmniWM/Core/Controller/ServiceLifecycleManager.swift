@@ -188,7 +188,6 @@ final class ServiceLifecycleManager {
     func handleUnlockDetected() {
         guard let controller else { return }
         controller.layoutRefreshController.requestFullRescan(reason: .unlock)
-        controller.updateWorkspaceBar()
     }
 
     func performStartupRefresh() {

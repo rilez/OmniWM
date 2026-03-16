@@ -24,6 +24,13 @@ struct WindowFocusOperations {
 
 @MainActor @Observable
 final class WMController {
+    struct WorkspaceBarRefreshDebugState {
+        var requestCount: Int = 0
+        var scheduledCount: Int = 0
+        var executionCount: Int = 0
+        var isQueued: Bool = false
+    }
+
     var isEnabled: Bool = true
     var hotkeysEnabled: Bool = true
     private(set) var focusFollowsMouseEnabled: Bool = false
@@ -47,6 +54,10 @@ final class WMController {
     lazy var borderManager: BorderManager = .init()
     @ObservationIgnored
     private lazy var workspaceBarManager: WorkspaceBarManager = .init()
+    @ObservationIgnored
+    private var workspaceBarRefreshGeneration: UInt64 = 0
+    @ObservationIgnored
+    private var pendingWorkspaceBarRefreshGeneration: UInt64?
     @ObservationIgnored
     private let hiddenBarController: HiddenBarController
     @ObservationIgnored
@@ -84,6 +95,10 @@ final class WMController {
     private(set) var isMouseWarpPolicyEnabled = false
     @ObservationIgnored
     private let ownedWindowRegistry = OwnedWindowRegistry.shared
+    @ObservationIgnored
+    private(set) var workspaceBarRefreshDebugState = WorkspaceBarRefreshDebugState()
+    @ObservationIgnored
+    var workspaceBarRefreshExecutionHookForTests: (() -> Void)?
 
     let animationClock = AnimationClock()
     private let windowFocusOperations: WindowFocusOperations
@@ -202,6 +217,7 @@ final class WMController {
     }
 
     func setWorkspaceBarEnabled(_ enabled: Bool) {
+        cancelPendingWorkspaceBarRefresh()
         if enabled {
             workspaceBarManager.setup(controller: self, settings: settings)
         } else {
@@ -210,6 +226,7 @@ final class WMController {
     }
 
     func cleanupUIOnStop() {
+        cancelPendingWorkspaceBarRefresh()
         workspaceBarManager.cleanup()
     }
 
@@ -242,8 +259,22 @@ final class WMController {
         quakeTerminalController.reloadOpacityConfig()
     }
 
-    func updateWorkspaceBar() {
-        workspaceBarManager.update()
+    func requestWorkspaceBarRefresh() {
+        workspaceBarRefreshDebugState.requestCount += 1
+
+        guard settings.workspaceBarEnabled else { return }
+        guard pendingWorkspaceBarRefreshGeneration == nil else { return }
+
+        let generation = workspaceBarRefreshGeneration
+        pendingWorkspaceBarRefreshGeneration = generation
+        workspaceBarRefreshDebugState.scheduledCount += 1
+        workspaceBarRefreshDebugState.isQueued = true
+
+        DispatchQueue.main.async { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.flushRequestedWorkspaceBarRefresh(expectedGeneration: generation)
+            }
+        }
     }
 
     func isManagedWindowDisplayable(_ handle: WindowHandle) -> Bool {
@@ -382,7 +413,6 @@ final class WMController {
         workspaceManager.applySettings()
         syncMonitorsToNiriEngine()
         layoutRefreshController.requestFullRescan(reason: .workspaceConfigChanged)
-        updateWorkspaceBar()
     }
 
     func rebuildAppRulesCache() {
@@ -399,6 +429,45 @@ final class WMController {
 
     var hotkeyRegistrationFailures: Set<HotkeyCommand> {
         hotkeys.registrationFailures
+    }
+
+    private func flushRequestedWorkspaceBarRefresh(expectedGeneration: UInt64) {
+        guard pendingWorkspaceBarRefreshGeneration == expectedGeneration,
+              workspaceBarRefreshGeneration == expectedGeneration
+        else {
+            return
+        }
+
+        pendingWorkspaceBarRefreshGeneration = nil
+        workspaceBarRefreshDebugState.isQueued = false
+
+        guard settings.workspaceBarEnabled else { return }
+
+        workspaceBarRefreshDebugState.executionCount += 1
+        workspaceBarRefreshExecutionHookForTests?()
+        workspaceBarManager.update()
+    }
+
+    private func cancelPendingWorkspaceBarRefresh() {
+        pendingWorkspaceBarRefreshGeneration = nil
+        workspaceBarRefreshGeneration &+= 1
+        workspaceBarRefreshDebugState.isQueued = false
+    }
+
+    func waitForWorkspaceBarRefreshForTests() async {
+        for _ in 0..<100 {
+            await Task.yield()
+            if !workspaceBarRefreshDebugState.isQueued {
+                break
+            }
+        }
+        await Task.yield()
+    }
+
+    func resetWorkspaceBarRefreshDebugStateForTests() {
+        cancelPendingWorkspaceBarRefresh()
+        workspaceBarRefreshDebugState = .init()
+        workspaceBarRefreshExecutionHookForTests = nil
     }
 
     func enableNiriLayout(

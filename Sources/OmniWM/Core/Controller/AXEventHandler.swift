@@ -133,7 +133,7 @@ final class AXEventHandler: CGSEventDelegate {
             handleAppActivation(pid: pid)
 
         case .titleChanged:
-            controller.updateWorkspaceBar()
+            controller.requestWorkspaceBarRefresh()
         }
     }
 
@@ -255,7 +255,6 @@ final class AXEventHandler: CGSEventDelegate {
             workspaceId: candidate.workspaceId,
             appFullscreen: isFullscreenProvider?(candidate.axRef) ?? AXWindowService.isFullscreen(candidate.axRef)
         ) {
-            controller.updateWorkspaceBar()
             controller.layoutRefreshController.requestRelayout(reason: .axWindowCreated)
             return
         }
@@ -275,7 +274,6 @@ final class AXEventHandler: CGSEventDelegate {
             windowId: candidate.token.windowId,
             to: candidate.workspaceId
         )
-        controller.updateWorkspaceBar()
 
         Task { @MainActor [weak self] in
             guard let self, let controller = self.controller else { return }
@@ -565,7 +563,7 @@ final class AXEventHandler: CGSEventDelegate {
             newWindow: axRef
         )
         subscribeToWindows([windowId])
-        controller.updateWorkspaceBar()
+        controller.requestWorkspaceBarRefresh()
         controller.niriLayoutHandler.updateTabbedColumnOverlays()
         refreshBorderAfterManagedRekey(entry: entry)
 
