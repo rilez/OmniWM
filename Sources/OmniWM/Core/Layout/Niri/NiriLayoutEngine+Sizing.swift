@@ -2,6 +2,30 @@ import AppKit
 import Foundation
 
 extension NiriLayoutEngine {
+    private func cachedWidthForResizeStart(
+        _ column: NiriContainer,
+        in workspaceId: WorkspaceDescriptor.ID,
+        workingFrame: CGRect,
+        gaps: CGFloat
+    ) -> CGFloat {
+        if column.cachedWidth <= 0 {
+            if let singleWindowContext = singleWindowLayoutContext(in: workspaceId),
+               singleWindowContext.container === column
+            {
+                column.cachedWidth = resolvedSingleWindowRect(
+                    for: singleWindowContext,
+                    in: workingFrame,
+                    scale: 1.0,
+                    gaps: gaps
+                ).width
+            } else {
+                column.resolveAndCacheWidth(workingAreaWidth: workingFrame.width, gaps: gaps)
+            }
+        }
+
+        return column.cachedWidth
+    }
+
     private func ensureSelectionVisibleForPendingWidth(
         _ column: NiriContainer,
         targetWidth: CGFloat,
@@ -93,6 +117,13 @@ extension NiriLayoutEngine {
     ) {
         guard !presetColumnWidths.isEmpty else { return }
 
+        let previousWidth = cachedWidthForResizeStart(
+            column,
+            in: workspaceId,
+            workingFrame: workingFrame,
+            gaps: gaps
+        )
+
         if column.isFullWidth {
             column.isFullWidth = false
             if let saved = column.savedWidth {
@@ -132,6 +163,7 @@ extension NiriLayoutEngine {
         let newWidth = presetColumnWidths[nextIdx].asProportionalSize
         column.width = newWidth
         column.presetWidthIdx = nextIdx
+        column.hasManualSingleWindowWidthOverride = true
 
         let workingAreaWidth = workingFrame.width
         let targetPixels: CGFloat
@@ -141,11 +173,6 @@ extension NiriLayoutEngine {
         case .fixed(let f):
             targetPixels = f
         }
-
-        if column.cachedWidth <= 0 {
-            column.resolveAndCacheWidth(workingAreaWidth: workingAreaWidth, gaps: gaps)
-        }
-        let previousWidth = column.cachedWidth
 
         column.animateWidthTo(
             newWidth: targetPixels,
@@ -173,6 +200,12 @@ extension NiriLayoutEngine {
         gaps: CGFloat
     ) {
         let workingAreaWidth = workingFrame.width
+        let previousWidth = cachedWidthForResizeStart(
+            column,
+            in: workspaceId,
+            workingFrame: workingFrame,
+            gaps: gaps
+        )
         let targetPixels: CGFloat
         if column.isFullWidth {
             column.isFullWidth = false
@@ -180,6 +213,7 @@ extension NiriLayoutEngine {
                 column.width = saved
                 column.savedWidth = nil
             }
+            column.hasManualSingleWindowWidthOverride = true
             switch column.width {
             case .proportion(let p):
                 targetPixels = (workingAreaWidth - gaps) * p
@@ -190,13 +224,9 @@ extension NiriLayoutEngine {
             column.savedWidth = column.width
             column.isFullWidth = true
             column.presetWidthIdx = nil
+            column.hasManualSingleWindowWidthOverride = true
             targetPixels = workingAreaWidth
         }
-
-        if column.cachedWidth <= 0 {
-            column.resolveAndCacheWidth(workingAreaWidth: workingAreaWidth, gaps: gaps)
-        }
-        let previousWidth = column.cachedWidth
 
         column.animateWidthTo(
             newWidth: targetPixels,

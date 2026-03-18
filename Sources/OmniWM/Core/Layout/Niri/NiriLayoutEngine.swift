@@ -194,6 +194,7 @@ final class NiriLayoutEngine {
         column.cachedWidth = 0
         column.isFullWidth = false
         column.savedWidth = nil
+        column.hasManualSingleWindowWidthOverride = false
         column.widthAnimation = nil
         column.targetWidth = nil
     }

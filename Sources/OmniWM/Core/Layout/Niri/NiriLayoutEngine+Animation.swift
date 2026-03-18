@@ -274,10 +274,11 @@ extension NiriLayoutEngine {
         if let singleWindowContext = singleWindowLayoutContext(in: workspaceId),
            singleWindowContext.window.token == token
         {
-            return aspectFittedSingleWindowRect(
+            return resolvedSingleWindowRect(
+                for: singleWindowContext,
                 in: workingFrame,
-                aspectRatio: singleWindowContext.aspectRatio,
-                scale: 1.0
+                scale: 1.0,
+                gaps: gaps
             )
         }
 

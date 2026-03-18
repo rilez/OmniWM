@@ -169,6 +169,7 @@ extension NiriLayoutEngine {
                 renderedFullscreenRect: renderedFullscreenRect,
                 workspaceOffset: workspaceOffset,
                 scale: effectiveScale,
+                gaps: gaps.horizontal,
                 time: time,
                 result: &frames,
                 orientation: orientation
@@ -441,6 +442,50 @@ extension NiriLayoutEngine {
         ).roundedToPhysicalPixels(scale: scale)
     }
 
+    private func centeredSingleWindowRect(
+        in workingFrame: CGRect,
+        width: CGFloat,
+        scale: CGFloat
+    ) -> CGRect {
+        CGRect(
+            x: workingFrame.minX + (workingFrame.width - width) / 2,
+            y: workingFrame.minY,
+            width: width,
+            height: workingFrame.height
+        ).roundedToPhysicalPixels(scale: scale)
+    }
+
+    func resolvedSingleWindowRect(
+        for context: SingleWindowLayoutContext,
+        in workingFrame: CGRect,
+        scale: CGFloat,
+        gaps: CGFloat
+    ) -> CGRect {
+        guard context.container.hasManualSingleWindowWidthOverride else {
+            return aspectFittedSingleWindowRect(
+                in: workingFrame,
+                aspectRatio: context.aspectRatio,
+                scale: scale
+            )
+        }
+
+        if context.container.cachedWidth <= 0 {
+            context.container.resolveAndCacheWidth(workingAreaWidth: workingFrame.width, gaps: gaps)
+        }
+
+        let resolvedWidth = min(workingFrame.width, max(0, context.container.cachedWidth))
+        guard resolvedWidth > 0 else {
+            return workingFrame.roundedToPhysicalPixels(scale: scale)
+        }
+
+        // Manual lone-window width commands bypass ratio mode but remain centered.
+        return centeredSingleWindowRect(
+            in: workingFrame,
+            width: resolvedWidth,
+            scale: scale
+        )
+    }
+
     private func layoutSingleWindowWorkspace(
         _ context: SingleWindowLayoutContext,
         workingFrame: CGRect,
@@ -448,14 +493,16 @@ extension NiriLayoutEngine {
         renderedFullscreenRect: CGRect,
         workspaceOffset: CGFloat,
         scale: CGFloat,
+        gaps: CGFloat,
         time: TimeInterval,
         result: inout [WindowToken: CGRect],
         orientation: Monitor.Orientation
     ) {
-        let canonicalRect = aspectFittedSingleWindowRect(
+        let canonicalRect = resolvedSingleWindowRect(
+            for: context,
             in: workingFrame,
-            aspectRatio: context.aspectRatio,
-            scale: scale
+            scale: scale,
+            gaps: gaps
         )
         let renderOffset = context.container.renderOffset(at: time)
         let renderedRect = canonicalRect

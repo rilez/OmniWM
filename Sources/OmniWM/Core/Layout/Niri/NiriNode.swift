@@ -313,6 +313,8 @@ class NiriContainer: NiriNode {
 
     var savedWidth: ProportionalSize?
 
+    var hasManualSingleWindowWidthOverride: Bool = false
+
     var height: ProportionalSize = .default
 
     var cachedHeight: CGFloat = 0

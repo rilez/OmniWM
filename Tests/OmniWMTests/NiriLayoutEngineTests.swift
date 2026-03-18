@@ -327,6 +327,256 @@ private func hasAnyVisibilityChange(
         #expect(frame == CGRect(x: 240, y: 0, width: 1440, height: 1080))
     }
 
+    @Test func singleWindowManualWidthOverrideKeepsWindowCenteredWhenAlwaysCenterSingleColumnDisabled() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 3, maxVisibleColumns: 3)
+        engine.singleWindowAspectRatio = .ratio4x3
+        engine.alwaysCenterSingleColumn = false
+        engine.animationClock = AnimationClock()
+        let wsId = UUID()
+        let gap: CGFloat = 8
+        let window = engine.addWindow(handle: makeTestHandle(), to: wsId, afterSelection: nil)
+        let monitor = makeLayoutPlanTestMonitor()
+
+        guard let column = engine.column(of: window) else {
+            Issue.record("Expected a column for single-window manual width override test")
+            return
+        }
+
+        var state = ViewportState()
+        engine.toggleColumnWidth(
+            column,
+            forwards: true,
+            in: wsId,
+            state: &state,
+            workingFrame: monitor.visibleFrame,
+            gaps: gap
+        )
+
+        guard let settleBaseTime = engine.animationClock?.now() else {
+            Issue.record("Expected animation clock for single-window manual width override test")
+            return
+        }
+
+        let settleTime = settleBaseTime + 2.0
+        let settledState = settledLayoutState(from: state, column: column, settleTime: settleTime)
+        let layout = engine.calculateCombinedLayoutWithVisibility(
+            in: wsId,
+            monitor: monitor,
+            gaps: LayoutGaps(horizontal: gap, vertical: gap),
+            state: settledState,
+            animationTime: settleTime
+        )
+
+        guard let frame = layout.frames[window.token] else {
+            Issue.record("Expected a rendered frame for single-window manual width override test")
+            return
+        }
+
+        #expect(column.hasManualSingleWindowWidthOverride)
+        #expect(abs(frame.width - 956) < 0.6)
+        #expect(abs(frame.midX - monitor.visibleFrame.midX) < 0.6)
+        #expect(frame.height == monitor.visibleFrame.height)
+    }
+
+    @Test func singleWindowFullWidthRoundTripRestoresPriorManualWidthAndCentering() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 3, maxVisibleColumns: 3)
+        engine.singleWindowAspectRatio = .ratio4x3
+        engine.alwaysCenterSingleColumn = false
+        engine.animationClock = AnimationClock()
+        let wsId = UUID()
+        let gap: CGFloat = 8
+        let window = engine.addWindow(handle: makeTestHandle(), to: wsId, afterSelection: nil)
+        let monitor = makeLayoutPlanTestMonitor()
+
+        guard let column = engine.column(of: window) else {
+            Issue.record("Expected a column for single-window full-width round-trip test")
+            return
+        }
+
+        var state = ViewportState()
+        engine.toggleColumnWidth(
+            column,
+            forwards: true,
+            in: wsId,
+            state: &state,
+            workingFrame: monitor.visibleFrame,
+            gaps: gap
+        )
+
+        guard let firstBaseTime = engine.animationClock?.now() else {
+            Issue.record("Expected animation clock for single-window full-width round-trip test")
+            return
+        }
+
+        let firstSettleTime = firstBaseTime + 2.0
+        state = settledLayoutState(from: state, column: column, settleTime: firstSettleTime)
+        let resizedLayout = engine.calculateCombinedLayoutWithVisibility(
+            in: wsId,
+            monitor: monitor,
+            gaps: LayoutGaps(horizontal: gap, vertical: gap),
+            state: state,
+            animationTime: firstSettleTime
+        )
+
+        guard let resizedFrame = resizedLayout.frames[window.token] else {
+            Issue.record("Expected a resized frame before toggling full width")
+            return
+        }
+
+        engine.toggleFullWidth(
+            column,
+            in: wsId,
+            state: &state,
+            workingFrame: monitor.visibleFrame,
+            gaps: gap
+        )
+
+        guard let secondBaseTime = engine.animationClock?.now() else {
+            Issue.record("Expected animation clock after enabling full width")
+            return
+        }
+
+        let secondSettleTime = secondBaseTime + 2.0
+        state = settledLayoutState(from: state, column: column, settleTime: secondSettleTime)
+        let fullWidthLayout = engine.calculateCombinedLayoutWithVisibility(
+            in: wsId,
+            monitor: monitor,
+            gaps: LayoutGaps(horizontal: gap, vertical: gap),
+            state: state,
+            animationTime: secondSettleTime
+        )
+
+        guard let fullWidthFrame = fullWidthLayout.frames[window.token] else {
+            Issue.record("Expected a full-width frame for single-window round-trip test")
+            return
+        }
+
+        engine.toggleFullWidth(
+            column,
+            in: wsId,
+            state: &state,
+            workingFrame: monitor.visibleFrame,
+            gaps: gap
+        )
+
+        guard let thirdBaseTime = engine.animationClock?.now() else {
+            Issue.record("Expected animation clock after disabling full width")
+            return
+        }
+
+        let thirdSettleTime = thirdBaseTime + 2.0
+        state = settledLayoutState(from: state, column: column, settleTime: thirdSettleTime)
+        let restoredLayout = engine.calculateCombinedLayoutWithVisibility(
+            in: wsId,
+            monitor: monitor,
+            gaps: LayoutGaps(horizontal: gap, vertical: gap),
+            state: state,
+            animationTime: thirdSettleTime
+        )
+
+        guard let restoredFrame = restoredLayout.frames[window.token] else {
+            Issue.record("Expected a restored frame after full-width round-trip")
+            return
+        }
+
+        #expect(abs(fullWidthFrame.minX - monitor.visibleFrame.minX) < 0.6)
+        #expect(abs(fullWidthFrame.maxX - monitor.visibleFrame.maxX) < 0.6)
+        #expect(abs(restoredFrame.width - resizedFrame.width) < 0.6)
+        #expect(abs(restoredFrame.midX - monitor.visibleFrame.midX) < 0.6)
+    }
+
+    @Test func singleWindowManualWidthTargetFrameMatchesRenderedFrame() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 3, maxVisibleColumns: 3)
+        engine.singleWindowAspectRatio = .ratio4x3
+        engine.alwaysCenterSingleColumn = false
+        engine.animationClock = AnimationClock()
+        let wsId = UUID()
+        let gap: CGFloat = 8
+        let window = engine.addWindow(handle: makeTestHandle(), to: wsId, afterSelection: nil)
+        let monitor = makeLayoutPlanTestMonitor()
+
+        guard let column = engine.column(of: window) else {
+            Issue.record("Expected a column for single-window target-frame regression test")
+            return
+        }
+
+        var state = ViewportState()
+        engine.toggleColumnWidth(
+            column,
+            forwards: true,
+            in: wsId,
+            state: &state,
+            workingFrame: monitor.visibleFrame,
+            gaps: gap
+        )
+
+        guard let settleBaseTime = engine.animationClock?.now() else {
+            Issue.record("Expected animation clock for single-window target-frame regression test")
+            return
+        }
+
+        let settleTime = settleBaseTime + 2.0
+        state = settledLayoutState(from: state, column: column, settleTime: settleTime)
+        let layout = engine.calculateCombinedLayoutWithVisibility(
+            in: wsId,
+            monitor: monitor,
+            gaps: LayoutGaps(horizontal: gap, vertical: gap),
+            state: state,
+            animationTime: settleTime
+        )
+
+        guard let renderedFrame = layout.frames[window.token],
+              let targetFrame = engine.targetFrameForWindow(
+                  window.token,
+                  in: wsId,
+                  state: state,
+                  workingFrame: monitor.visibleFrame,
+                  gaps: gap
+              )
+        else {
+            Issue.record("Expected rendered and target frames for single-window target-frame regression test")
+            return
+        }
+
+        #expect(renderedFrame == targetFrame)
+    }
+
+    @Test func defaultColumnWidthMatchingPresetKeepsSingleWindowAspectRatioUntilManualResize() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 3, maxVisibleColumns: 3)
+        engine.presetColumnWidths = [
+            .proportion(0.85),
+            .proportion(1.0),
+            .proportion(0.5)
+        ]
+        engine.defaultColumnWidth = 0.85
+        engine.singleWindowAspectRatio = .ratio4x3
+        engine.alwaysCenterSingleColumn = false
+        let wsId = UUID()
+        let window = engine.addWindow(handle: makeTestHandle(), to: wsId, afterSelection: nil)
+        let monitor = makeLayoutPlanTestMonitor()
+
+        guard let column = engine.column(of: window) else {
+            Issue.record("Expected a column for preset-matching single-window ratio test")
+            return
+        }
+
+        let layout = engine.calculateCombinedLayoutWithVisibility(
+            in: wsId,
+            monitor: monitor,
+            gaps: LayoutGaps(horizontal: 8, vertical: 8),
+            state: ViewportState()
+        )
+
+        guard let frame = layout.frames[window.token] else {
+            Issue.record("Expected a rendered frame for preset-matching single-window ratio test")
+            return
+        }
+
+        #expect(column.presetWidthIdx == 0)
+        #expect(!column.hasManualSingleWindowWidthOverride)
+        #expect(frame == CGRect(x: 240, y: 0, width: 1440, height: 1080))
+    }
+
     @Test func addingSecondWindowReturnsToNormalColumnSizingAfterSingleWindowOverride() {
         let engine = NiriLayoutEngine(maxWindowsPerColumn: 3, maxVisibleColumns: 3)
         engine.singleWindowAspectRatio = .ratio4x3
