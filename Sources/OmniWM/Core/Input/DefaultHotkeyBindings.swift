@@ -284,6 +284,18 @@ enum DefaultHotkeyBindings {
         ))
 
         bindings.append(HotkeyBinding(
+            id: "assignFocusedWindowToScratchpad",
+            command: .assignFocusedWindowToScratchpad,
+            binding: .unassigned
+        ))
+
+        bindings.append(HotkeyBinding(
+            id: "toggleScratchpadWindow",
+            command: .toggleScratchpadWindow,
+            binding: .unassigned
+        ))
+
+        bindings.append(HotkeyBinding(
             id: "openMenuAnywhere",
             command: .openMenuAnywhere,
             binding: KeyBinding(keyCode: UInt32(kVK_ANSI_M), modifiers: UInt32(controlKey | optionKey))

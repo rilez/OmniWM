@@ -1228,4 +1228,39 @@ private func workspaceConfigurations(
         #expect(manager.niriViewportState(for: workspaceId).selectedNodeId == selectedNodeId)
         #expect(manager.lastFocusedToken(in: workspaceId) == handle.id)
     }
+
+    @Test @MainActor func scratchpadTokenRekeysAndClearsOnWindowRemoval() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .main)
+        ]
+
+        let manager = WorkspaceManager(settings: settings)
+        let monitor = makeWorkspaceManagerTestMonitor(displayId: 340, name: "Main", x: 0, y: 0)
+        manager.applyMonitorConfigurationChange([monitor])
+
+        guard let workspaceId = manager.workspaceId(for: "1", createIfMissing: true) else {
+            Issue.record("Failed to create workspace")
+            return
+        }
+
+        let token = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 3501),
+            pid: 3501,
+            windowId: 3501,
+            to: workspaceId,
+            mode: .floating
+        )
+        #expect(manager.setScratchpadToken(token))
+        #expect(manager.scratchpadToken() == token)
+
+        let rekeyedToken = WindowToken(pid: 3501, windowId: 3502)
+        let newAXRef = makeWorkspaceManagerTestWindow(windowId: 3502)
+        #expect(manager.rekeyWindow(from: token, to: rekeyedToken, newAXRef: newAXRef) != nil)
+        #expect(manager.scratchpadToken() == rekeyedToken)
+
+        _ = manager.removeWindow(pid: rekeyedToken.pid, windowId: rekeyedToken.windowId)
+        #expect(manager.scratchpadToken() == nil)
+    }
 }

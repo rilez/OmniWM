@@ -83,6 +83,7 @@ struct HotkeyBinding: Codable, Equatable, Identifiable {
              .swapWorkspaceWithMonitor, .moveWindowToWorkspaceOnMonitor:
             .monitor
         case .balanceSizes, .moveToRoot, .raiseAllFloatingWindows, .toggleFocusedWindowFloating,
+             .assignFocusedWindowToScratchpad, .toggleScratchpadWindow,
              .toggleFullscreen, .toggleNativeFullscreen,
              .toggleSplit, .swapSplit, .resizeInDirection, .preselect, .preselectClear, .toggleWorkspaceLayout:
             .layout

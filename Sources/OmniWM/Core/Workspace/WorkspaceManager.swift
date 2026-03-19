@@ -66,6 +66,7 @@ final class WorkspaceManager {
         var previousInteractionMonitorId: Monitor.ID?
         var monitorSessions: [Monitor.ID: MonitorSession] = [:]
         var workspaceSessions: [WorkspaceDescriptor.ID: WorkspaceSession] = [:]
+        var scratchpadToken: WindowToken?
         var focus = FocusSession()
     }
 
@@ -154,6 +155,24 @@ final class WorkspaceManager {
 
     var isAppFullscreenActive: Bool {
         sessionState.focus.isAppFullscreenActive
+    }
+
+    func scratchpadToken() -> WindowToken? {
+        sessionState.scratchpadToken
+    }
+
+    @discardableResult
+    func setScratchpadToken(_ token: WindowToken?) -> Bool {
+        updateScratchpadToken(token, notify: true)
+    }
+
+    @discardableResult
+    func clearScratchpadIfMatches(_ token: WindowToken) -> Bool {
+        clearScratchpadToken(matching: token, notify: true)
+    }
+
+    func isScratchpadToken(_ token: WindowToken) -> Bool {
+        sessionState.scratchpadToken == token
     }
 
     var hasPendingNativeFullscreenTransition: Bool {
@@ -642,51 +661,61 @@ final class WorkspaceManager {
     }
 
     func preferredFocusToken(in workspaceId: WorkspaceDescriptor.ID) -> WindowToken? {
-        if let pendingToken = sessionState.focus.pendingManagedFocus.token,
-           sessionState.focus.pendingManagedFocus.workspaceId == workspaceId,
-           windowMode(for: pendingToken) == .tiling,
-           entry(for: pendingToken)?.workspaceId == workspaceId
+        if let pendingToken = eligibleFocusCandidate(
+            sessionState.focus.pendingManagedFocus.token,
+            in: workspaceId,
+            mode: .tiling
+        ),
+           sessionState.focus.pendingManagedFocus.workspaceId == workspaceId
         {
             return pendingToken
         }
 
-        if let remembered = sessionState.focus.lastTiledFocusedByWorkspace[workspaceId],
-           entry(for: remembered)?.workspaceId == workspaceId
-        {
+        if let remembered = eligibleFocusCandidate(
+            sessionState.focus.lastTiledFocusedByWorkspace[workspaceId],
+            in: workspaceId,
+            mode: .tiling
+        ) {
             return remembered
         }
 
-        if let confirmed = sessionState.focus.focusedToken,
-           windowMode(for: confirmed) == .tiling,
-           entry(for: confirmed)?.workspaceId == workspaceId
-        {
+        if let confirmed = eligibleFocusCandidate(
+            sessionState.focus.focusedToken,
+            in: workspaceId,
+            mode: .tiling
+        ) {
             return confirmed
         }
 
-        return tiledEntries(in: workspaceId).first?.token
+        return tiledEntries(in: workspaceId).first { !isHiddenInCorner($0.token) }?.token
     }
 
     func resolveWorkspaceFocusToken(in workspaceId: WorkspaceDescriptor.ID) -> WindowToken? {
-        if let remembered = sessionState.focus.lastTiledFocusedByWorkspace[workspaceId],
-           entry(for: remembered)?.workspaceId == workspaceId
-        {
+        if let remembered = eligibleFocusCandidate(
+            sessionState.focus.lastTiledFocusedByWorkspace[workspaceId],
+            in: workspaceId,
+            mode: .tiling
+        ) {
             return remembered
         }
         if let preferredTiled = preferredFocusToken(in: workspaceId) {
             return preferredTiled
         }
-        if let rememberedFloating = sessionState.focus.lastFloatingFocusedByWorkspace[workspaceId],
-           entry(for: rememberedFloating)?.workspaceId == workspaceId
-        {
+        if let rememberedFloating = eligibleFocusCandidate(
+            sessionState.focus.lastFloatingFocusedByWorkspace[workspaceId],
+            in: workspaceId,
+            mode: .floating
+        ) {
             return rememberedFloating
         }
-        if let confirmed = sessionState.focus.focusedToken,
-           windowMode(for: confirmed) == .floating,
-           entry(for: confirmed)?.workspaceId == workspaceId
-        {
+        if let confirmed = eligibleFocusCandidate(
+            sessionState.focus.focusedToken,
+            in: workspaceId,
+            mode: .floating
+        ) {
             return confirmed
         }
-        return floatingEntries(in: workspaceId).first?.token
+        return floatingEntries(in: workspaceId).first { !isHiddenInCorner($0.token) }?.token
     }
 
     @discardableResult
@@ -747,7 +776,7 @@ final class WorkspaceManager {
     }
 
     func handleWindowRemoved(_ token: WindowToken, in workspaceId: WorkspaceDescriptor.ID?) {
-        _ = updateFocusSession(notify: true) { focus in
+        let focusChanged = updateFocusSession(notify: false) { focus in
             var focusChanged = false
 
             if focus.focusedToken == token {
@@ -769,6 +798,10 @@ final class WorkspaceManager {
             ) || focusChanged
 
             return focusChanged
+        }
+        let scratchpadChanged = clearScratchpadToken(matching: token, notify: false)
+        if focusChanged || scratchpadChanged {
+            notifySessionStateChanged()
         }
     }
 
@@ -861,6 +894,22 @@ final class WorkspaceManager {
         return true
     }
 
+    private func eligibleFocusCandidate(
+        _ token: WindowToken?,
+        in workspaceId: WorkspaceDescriptor.ID,
+        mode: TrackedWindowMode
+    ) -> WindowToken? {
+        guard let token,
+              let entry = entry(for: token),
+              entry.workspaceId == workspaceId,
+              entry.mode == mode,
+              !isHiddenInCorner(token)
+        else {
+            return nil
+        }
+        return token
+    }
+
     private func setRememberedFocus(
         _ token: WindowToken,
         in workspaceId: WorkspaceDescriptor.ID,
@@ -927,6 +976,22 @@ final class WorkspaceManager {
         }
 
         return changed
+    }
+
+    @discardableResult
+    private func updateScratchpadToken(_ token: WindowToken?, notify: Bool) -> Bool {
+        guard sessionState.scratchpadToken != token else { return false }
+        sessionState.scratchpadToken = token
+        if notify {
+            notifySessionStateChanged()
+        }
+        return true
+    }
+
+    @discardableResult
+    private func clearScratchpadToken(matching token: WindowToken, notify: Bool) -> Bool {
+        guard sessionState.scratchpadToken == token else { return false }
+        return updateScratchpadToken(nil, notify: notify)
     }
 
     private func reconcileRememberedFocusAfterModeChange(
@@ -1231,7 +1296,15 @@ final class WorkspaceManager {
             return changed
         }
 
-        if focusChanged {
+        let scratchpadChanged: Bool
+        if sessionState.scratchpadToken == oldToken {
+            sessionState.scratchpadToken = newToken
+            scratchpadChanged = true
+        } else {
+            scratchpadChanged = false
+        }
+
+        if focusChanged || scratchpadChanged {
             notifySessionStateChanged()
         }
 

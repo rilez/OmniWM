@@ -82,6 +82,7 @@ import QuartzCore
     enum HideReason {
         case workspaceInactive
         case layoutTransient
+        case scratchpad
     }
 
     struct LayoutState {
@@ -1658,8 +1659,7 @@ import QuartzCore
             return WindowModel.HiddenState(
                 proportionalPosition: .zero,
                 referenceMonitorId: nil,
-                workspaceInactive: reason == .workspaceInactive,
-                offscreenSide: reason == .layoutTransient ? side : nil
+                reason: hiddenWindowReason(for: reason, side: side, existingState: nil)
             )
         }
 
@@ -1680,9 +1680,27 @@ import QuartzCore
         return WindowModel.HiddenState(
             proportionalPosition: proportionalPosition,
             referenceMonitorId: referenceMonitorId,
-            workspaceInactive: reason == .workspaceInactive,
-            offscreenSide: reason == .layoutTransient ? side : nil
+            reason: hiddenWindowReason(for: reason, side: side, existingState: existingState)
         )
+    }
+
+    private func hiddenWindowReason(
+        for reason: HideReason,
+        side: HideSide,
+        existingState: WindowModel.HiddenState?
+    ) -> WindowModel.HiddenReason {
+        if existingState?.isScratchpad == true, reason != .scratchpad {
+            return .scratchpad
+        }
+
+        switch reason {
+        case .workspaceInactive:
+            return .workspaceInactive
+        case .layoutTransient:
+            return .layoutTransient(side)
+        case .scratchpad:
+            return .scratchpad
+        }
     }
 
     func hideWindow(_ entry: WindowModel.Entry, monitor: Monitor, side: HideSide, reason: HideReason) {
@@ -1730,10 +1748,26 @@ import QuartzCore
 
     func unhideWindow(_ entry: WindowModel.Entry, monitor: Monitor) {
         guard let controller else { return }
-        if let hiddenState = controller.workspaceManager.hiddenState(for: entry.token),
-           hiddenState.workspaceInactive {
-            restoreWindowFromHiddenState(entry, monitor: monitor, hiddenState: hiddenState)
+        guard let hiddenState = controller.workspaceManager.hiddenState(for: entry.token) else {
+            controller.axManager.unsuppressFrameWrites([(entry.handle.pid, entry.windowId)])
+            return
         }
+        guard hiddenState.workspaceInactive else { return }
+
+        restoreWindowFromHiddenState(entry, monitor: monitor, hiddenState: hiddenState)
+        controller.workspaceManager.setHiddenState(nil, for: entry.token)
+        controller.axManager.unsuppressFrameWrites([(entry.handle.pid, entry.windowId)])
+    }
+
+    func restoreScratchpadWindow(_ entry: WindowModel.Entry, monitor: Monitor) {
+        guard let controller,
+              let hiddenState = controller.workspaceManager.hiddenState(for: entry.token),
+              hiddenState.isScratchpad
+        else {
+            return
+        }
+
+        restoreWindowFromHiddenState(entry, monitor: monitor, hiddenState: hiddenState)
         controller.workspaceManager.setHiddenState(nil, for: entry.token)
         controller.axManager.unsuppressFrameWrites([(entry.handle.pid, entry.windowId)])
     }
@@ -1787,13 +1821,18 @@ import QuartzCore
         return preferredSides
     }
 
+    func preferredHideSide(for monitor: Monitor) -> HideSide {
+        guard let controller else { return .right }
+        return preferredHideSides(for: controller.workspaceManager.monitors)[monitor.id] ?? .right
+    }
+
     private func restoreWindowFromHiddenState(
         _ entry: WindowModel.Entry,
         monitor: Monitor,
         hiddenState: WindowModel.HiddenState
     ) {
         if entry.mode == .floating,
-           hiddenState.workspaceInactive,
+           hiddenState.restoresViaFloatingState,
            let controller,
            let frame = controller.workspaceManager.resolvedFloatingFrame(
                for: entry.token,

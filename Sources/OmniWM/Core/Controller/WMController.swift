@@ -746,6 +746,177 @@ final class WMController {
         )
     }
 
+    private func focusedManagedTokenForCommand() -> WindowToken? {
+        let focusedToken = workspaceManager.focusedToken
+        let frontmostPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let token = focusedToken ?? frontmostPid.flatMap { axEventHandler.focusedWindowToken(for: $0) }
+        guard let token, workspaceManager.entry(for: token) != nil else {
+            return nil
+        }
+        return token
+    }
+
+    @discardableResult
+    private func captureVisibleFloatingGeometry(
+        for token: WindowToken,
+        preferredMonitor: Monitor? = nil
+    ) -> CGRect? {
+        guard !workspaceManager.isHiddenInCorner(token),
+              let entry = workspaceManager.entry(for: token),
+              let frame = liveFrame(for: entry)
+        else {
+            return nil
+        }
+
+        let referenceMonitor = floatingPlacementMonitor(
+            for: entry,
+            preferredMonitor: preferredMonitor,
+            frame: frame
+        )
+        workspaceManager.updateFloatingGeometry(
+            frame: frame,
+            for: token,
+            referenceMonitor: referenceMonitor,
+            restoreToFloating: true
+        )
+        return frame
+    }
+
+    @discardableResult
+    private func prepareWindowForScratchpadAssignment(
+        _ token: WindowToken,
+        preferredMonitor: Monitor? = nil
+    ) -> Bool {
+        guard let entry = workspaceManager.entry(for: token) else { return false }
+        if workspaceManager.manualLayoutOverride(for: token) != .forceFloat {
+            workspaceManager.setManualLayoutOverride(.forceFloat, for: token)
+        }
+
+        if entry.mode == .floating {
+            return captureVisibleFloatingGeometry(for: token, preferredMonitor: preferredMonitor) != nil
+                || workspaceManager.floatingState(for: token) != nil
+        }
+
+        guard let frame = liveFrame(for: entry) else { return false }
+        let referenceMonitor = floatingPlacementMonitor(
+            for: entry,
+            preferredMonitor: preferredMonitor,
+            frame: frame
+        )
+        _ = workspaceManager.setWindowMode(.floating, for: token)
+        workspaceManager.updateFloatingGeometry(
+            frame: frame,
+            for: token,
+            referenceMonitor: referenceMonitor,
+            restoreToFloating: true
+        )
+        return true
+    }
+
+    private func currentScratchpadTarget() -> (workspaceId: WorkspaceDescriptor.ID, monitor: Monitor)? {
+        guard let monitor = monitorForInteraction(),
+              let workspaceId = workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id
+        else {
+            return nil
+        }
+        return (workspaceId, monitor)
+    }
+
+    private func visibleFocusRecoveryToken(
+        in workspaceId: WorkspaceDescriptor.ID,
+        excluding excludedToken: WindowToken
+    ) -> WindowToken? {
+        let explicitCandidates = [
+            workspaceManager.lastFocusedToken(in: workspaceId),
+            workspaceManager.preferredFocusToken(in: workspaceId),
+            workspaceManager.lastFloatingFocusedToken(in: workspaceId),
+            workspaceManager.focusedToken
+        ]
+
+        for candidate in explicitCandidates {
+            guard let candidate,
+                  candidate != excludedToken,
+                  let entry = workspaceManager.entry(for: candidate),
+                  entry.workspaceId == workspaceId,
+                  isManagedWindowDisplayable(entry.handle)
+            else {
+                continue
+            }
+            return candidate
+        }
+
+        if let tiledEntry = workspaceManager.tiledEntries(in: workspaceId).first(where: {
+            $0.token != excludedToken && isManagedWindowDisplayable($0.handle)
+        }) {
+            return tiledEntry.token
+        }
+
+        return workspaceManager.floatingEntries(in: workspaceId).first(where: {
+            $0.token != excludedToken && isManagedWindowDisplayable($0.handle)
+        })?.token
+    }
+
+    private func recoverFocusAfterScratchpadHide(
+        in workspaceId: WorkspaceDescriptor.ID,
+        excluding token: WindowToken,
+        on monitorId: Monitor.ID?
+    ) {
+        if let nextFocusToken = visibleFocusRecoveryToken(in: workspaceId, excluding: token) {
+            focusWindow(nextFocusToken)
+            return
+        }
+
+        _ = workspaceManager.resolveAndSetWorkspaceFocusToken(in: workspaceId, onMonitor: monitorId)
+        if workspaceManager.focusedToken == nil {
+            borderManager.hideBorder()
+        }
+    }
+
+    private func hideScratchpadWindow(
+        _ entry: WindowModel.Entry,
+        monitor: Monitor
+    ) {
+        let preferredSide = layoutRefreshController.preferredHideSide(for: monitor)
+        layoutRefreshController.hideWindow(
+            entry,
+            monitor: monitor,
+            side: preferredSide,
+            reason: .scratchpad
+        )
+        recoverFocusAfterScratchpadHide(
+            in: entry.workspaceId,
+            excluding: entry.token,
+            on: monitor.id
+        )
+    }
+
+    private func showScratchpadWindow(
+        _ entry: WindowModel.Entry,
+        on workspaceId: WorkspaceDescriptor.ID,
+        monitor: Monitor
+    ) {
+        if entry.workspaceId != workspaceId {
+            workspaceManager.setWorkspace(for: entry.token, to: workspaceId)
+        }
+        axManager.markWindowActive(entry.windowId)
+
+        if let hiddenState = workspaceManager.hiddenState(for: entry.token) {
+            if hiddenState.isScratchpad {
+                layoutRefreshController.restoreScratchpadWindow(entry, monitor: monitor)
+            } else {
+                layoutRefreshController.unhideWindow(entry, monitor: monitor)
+            }
+        } else if let frame = workspaceManager.resolvedFloatingFrame(
+            for: entry.token,
+            preferredMonitor: monitor
+        ) {
+            axManager.forceApplyNextFrame(for: entry.windowId)
+            axManager.applyFramesParallel([(entry.pid, entry.windowId, frame)])
+        }
+
+        focusWindow(entry.token)
+    }
+
     @discardableResult
     func transitionWindowMode(
         for token: WindowToken,
@@ -1064,9 +1235,7 @@ final class WMController {
     }
 
     func toggleFocusedWindowFloating() {
-        let focusedToken = workspaceManager.focusedToken
-        let frontmostPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        let token = focusedToken ?? frontmostPid.flatMap { axEventHandler.focusedWindowToken(for: $0) }
+        let token = focusedManagedTokenForCommand()
         guard let token,
               let entry = workspaceManager.entry(for: token)
         else {
@@ -1101,6 +1270,82 @@ final class WMController {
             applyFloatingFrame: true
         )
         layoutRefreshController.requestRelayout(reason: .windowRuleReevaluation)
+    }
+
+    func assignFocusedWindowToScratchpad() {
+        guard let token = focusedManagedTokenForCommand(),
+              let entry = workspaceManager.entry(for: token),
+              !isManagedWindowSuspendedForNativeFullscreen(token)
+        else {
+            return
+        }
+
+        if workspaceManager.isScratchpadToken(token) {
+            guard !workspaceManager.isHiddenInCorner(token) else { return }
+            _ = workspaceManager.clearScratchpadIfMatches(token)
+            return
+        }
+
+        if let existingScratchpadToken = workspaceManager.scratchpadToken() {
+            if workspaceManager.entry(for: existingScratchpadToken) == nil {
+                _ = workspaceManager.clearScratchpadIfMatches(existingScratchpadToken)
+            } else {
+                return
+            }
+        }
+
+        let preferredMonitor = monitorForInteraction() ?? workspaceManager.monitor(for: entry.workspaceId)
+        let transitionedFromTiling = entry.mode == .tiling
+        guard prepareWindowForScratchpadAssignment(token, preferredMonitor: preferredMonitor) else {
+            return
+        }
+
+        _ = workspaceManager.setScratchpadToken(token)
+
+        guard let updatedEntry = workspaceManager.entry(for: token),
+              let hideMonitor = workspaceManager.monitor(for: updatedEntry.workspaceId) ?? preferredMonitor
+        else {
+            return
+        }
+
+        hideScratchpadWindow(updatedEntry, monitor: hideMonitor)
+
+        if transitionedFromTiling {
+            layoutRefreshController.requestImmediateRelayout(reason: .layoutCommand)
+        }
+    }
+
+    func toggleScratchpadWindow() {
+        guard let scratchpadToken = workspaceManager.scratchpadToken() else { return }
+        guard let entry = workspaceManager.entry(for: scratchpadToken) else {
+            _ = workspaceManager.clearScratchpadIfMatches(scratchpadToken)
+            return
+        }
+        guard !isManagedWindowSuspendedForNativeFullscreen(scratchpadToken) else { return }
+        guard let target = currentScratchpadTarget() else { return }
+
+        if let hiddenState = workspaceManager.hiddenState(for: scratchpadToken) {
+            let updatedEntry = workspaceManager.entry(for: scratchpadToken) ?? entry
+            if hiddenState.isScratchpad || hiddenState.workspaceInactive {
+                showScratchpadWindow(updatedEntry, on: target.workspaceId, monitor: target.monitor)
+            }
+            return
+        }
+
+        let hasCapturedGeometry = captureVisibleFloatingGeometry(
+            for: scratchpadToken,
+            preferredMonitor: target.monitor
+        ) != nil || workspaceManager.floatingState(for: scratchpadToken) != nil
+        guard hasCapturedGeometry else { return }
+
+        if entry.workspaceId == target.workspaceId,
+           isManagedWindowDisplayable(entry.handle)
+        {
+            hideScratchpadWindow(entry, monitor: target.monitor)
+            return
+        }
+
+        showScratchpadWindow(entry, on: target.workspaceId, monitor: target.monitor)
     }
 
     func workspaceAssignment(pid: pid_t, windowId: Int) -> WorkspaceDescriptor.ID? {

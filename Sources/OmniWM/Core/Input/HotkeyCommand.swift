@@ -54,6 +54,8 @@ enum HotkeyCommand: Codable, Equatable, Hashable {
 
     case raiseAllFloatingWindows
     case toggleFocusedWindowFloating
+    case assignFocusedWindowToScratchpad
+    case toggleScratchpadWindow
 
     case openMenuAnywhere
 
@@ -105,6 +107,8 @@ enum HotkeyCommand: Codable, Equatable, Hashable {
         case .openCommandPalette: "Open Command Palette"
         case .raiseAllFloatingWindows: "Raise All Floating Windows"
         case .toggleFocusedWindowFloating: "Toggle Focused Window Floating"
+        case .assignFocusedWindowToScratchpad: "Assign Focused Window to Scratchpad"
+        case .toggleScratchpadWindow: "Toggle Scratchpad Window"
         case .openMenuAnywhere: "Open Menu Anywhere"
         case .toggleHiddenBar: "Toggle Hidden Bar"
         case .toggleQuakeTerminal: "Toggle Quake Terminal"
@@ -135,6 +139,7 @@ enum HotkeyCommand: Codable, Equatable, Hashable {
              .workspaceBackAndForth, .focusWorkspaceAnywhere,
              .moveWindowToWorkspaceOnMonitor,
              .openCommandPalette, .raiseAllFloatingWindows, .toggleFocusedWindowFloating,
+             .assignFocusedWindowToScratchpad, .toggleScratchpadWindow,
              .openMenuAnywhere,
              .toggleHiddenBar, .toggleQuakeTerminal, .toggleWorkspaceLayout, .toggleOverview:
             .shared

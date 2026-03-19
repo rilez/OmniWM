@@ -9,11 +9,56 @@ enum TrackedWindowMode: Equatable, Sendable {
 final class WindowModel {
     typealias WindowKey = WindowToken
 
+    enum HiddenReason: Equatable {
+        case workspaceInactive
+        case layoutTransient(HideSide)
+        case scratchpad
+    }
+
     struct HiddenState: Equatable {
         let proportionalPosition: CGPoint
         let referenceMonitorId: Monitor.ID?
-        let workspaceInactive: Bool
-        let offscreenSide: HideSide?
+        let reason: HiddenReason
+
+        var workspaceInactive: Bool {
+            if case .workspaceInactive = reason {
+                return true
+            }
+            return false
+        }
+
+        var offscreenSide: HideSide? {
+            if case let .layoutTransient(side) = reason {
+                return side
+            }
+            return nil
+        }
+
+        var isScratchpad: Bool {
+            if case .scratchpad = reason {
+                return true
+            }
+            return false
+        }
+
+        var restoresViaFloatingState: Bool {
+            switch reason {
+            case .workspaceInactive, .scratchpad:
+                true
+            case .layoutTransient:
+                false
+            }
+        }
+
+        init(
+            proportionalPosition: CGPoint,
+            referenceMonitorId: Monitor.ID?,
+            reason: HiddenReason
+        ) {
+            self.proportionalPosition = proportionalPosition
+            self.referenceMonitorId = referenceMonitorId
+            self.reason = reason
+        }
 
         init(
             proportionalPosition: CGPoint,
@@ -23,8 +68,13 @@ final class WindowModel {
         ) {
             self.proportionalPosition = proportionalPosition
             self.referenceMonitorId = referenceMonitorId
-            self.workspaceInactive = workspaceInactive
-            self.offscreenSide = offscreenSide
+            if workspaceInactive {
+                reason = .workspaceInactive
+            } else if let offscreenSide {
+                reason = .layoutTransient(offscreenSide)
+            } else {
+                reason = .scratchpad
+            }
         }
     }
 
@@ -57,8 +107,7 @@ final class WindowModel {
         var ruleEffects: ManagedWindowRuleEffects = .none
         var hiddenProportionalPosition: CGPoint?
         var hiddenReferenceMonitorId: Monitor.ID?
-        var hiddenByWorkspaceInactivity: Bool = false
-        var hiddenOffscreenSide: HideSide?
+        var hiddenReason: HiddenReason?
 
         var layoutReason: LayoutReason = .standard
         var parentKind: ParentKind = .tilingContainer
@@ -296,24 +345,23 @@ final class WindowModel {
         if let state {
             entry.hiddenProportionalPosition = state.proportionalPosition
             entry.hiddenReferenceMonitorId = state.referenceMonitorId
-            entry.hiddenByWorkspaceInactivity = state.workspaceInactive
-            entry.hiddenOffscreenSide = state.offscreenSide
+            entry.hiddenReason = state.reason
         } else {
             entry.hiddenProportionalPosition = nil
             entry.hiddenReferenceMonitorId = nil
-            entry.hiddenByWorkspaceInactivity = false
-            entry.hiddenOffscreenSide = nil
+            entry.hiddenReason = nil
         }
     }
 
     func hiddenState(for token: WindowToken) -> HiddenState? {
         guard let entry = entries[token],
-              let proportionalPosition = entry.hiddenProportionalPosition else { return nil }
+              let proportionalPosition = entry.hiddenProportionalPosition,
+              let hiddenReason = entry.hiddenReason
+        else { return nil }
         return HiddenState(
             proportionalPosition: proportionalPosition,
             referenceMonitorId: entry.hiddenReferenceMonitorId,
-            workspaceInactive: entry.hiddenByWorkspaceInactivity,
-            offscreenSide: entry.hiddenOffscreenSide
+            reason: hiddenReason
         )
     }
 

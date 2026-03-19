@@ -112,6 +112,10 @@ final class CommandHandler {
             controller.raiseAllFloatingWindows()
         case .toggleFocusedWindowFloating:
             controller.toggleFocusedWindowFloating()
+        case .assignFocusedWindowToScratchpad:
+            controller.assignFocusedWindowToScratchpad()
+        case .toggleScratchpadWindow:
+            controller.toggleScratchpadWindow()
         case .openMenuAnywhere:
             controller.openMenuAnywhere()
         case .toggleHiddenBar:
