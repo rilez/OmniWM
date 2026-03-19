@@ -3,7 +3,13 @@ import Foundation
 
 @MainActor
 final class WindowActionHandler {
+    struct FloatingWindowRaisePlan {
+        let orderedEntries: [WindowModel.Entry]
+        let batches: [[WindowModel.Entry]]
+    }
+
     weak var controller: WMController?
+    private let orderWindow: (UInt32) -> Void
 
     @ObservationIgnored
     private lazy var overviewController: OverviewController = {
@@ -18,8 +24,14 @@ final class WindowActionHandler {
         return oc
     }()
 
-    init(controller: WMController) {
+    init(
+        controller: WMController,
+        orderWindow: @escaping (UInt32) -> Void = {
+            SkyLight.shared.orderWindow($0, relativeTo: 0, order: .above)
+        }
+    ) {
         self.controller = controller
+        self.orderWindow = orderWindow
     }
 
     func openMenuAnywhere() {
@@ -60,17 +72,59 @@ final class WindowActionHandler {
 
     func raiseAllFloatingWindows() {
         guard let controller else { return }
-        guard let monitor = controller.monitorForInteraction() else { return }
-        guard let workspaceId = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id else { return }
-
-        let floatingEntries = controller.workspaceManager.floatingEntries(in: workspaceId).filter { entry in
-            entry.layoutReason == .standard && !controller.workspaceManager.isHiddenInCorner(entry.token)
+        guard !controller.isLockScreenActive else { return }
+        if controller.hasStartedServices {
+            guard !controller.isFrontmostAppLockScreen() else { return }
         }
-        guard !floatingEntries.isEmpty else { return }
 
-        let lastFloatingFocusedToken = controller.workspaceManager.lastFloatingFocusedToken(in: workspaceId)
+        guard let plan = makeRaiseAllFloatingPlan() else { return }
+
+        for batch in plan.batches {
+            for entry in batch {
+                orderWindow(UInt32(entry.windowId))
+            }
+            guard let anchor = batch.last else { continue }
+            controller.performWindowFronting(
+                pid: anchor.pid,
+                windowId: anchor.windowId,
+                axRef: anchor.axRef
+            )
+        }
+    }
+
+    func makeRaiseAllFloatingPlan() -> FloatingWindowRaisePlan? {
+        guard let controller else { return nil }
+
+        let floatingEntries = controller.workspaceManager.visibleWorkspaceIds()
+            .flatMap { workspaceId in
+                controller.workspaceManager.floatingEntries(in: workspaceId)
+            }
+            .filter { entry in
+                entry.layoutReason == .standard && !controller.workspaceManager.isHiddenInCorner(entry.token)
+            }
+        guard !floatingEntries.isEmpty else { return nil }
+
+        let candidateTokens = Set(floatingEntries.map(\.token))
+        let interactionWorkspaceId = controller.activeWorkspace()?.id
+        let preferredFocusToken: WindowToken? = {
+            if let focusedToken = controller.workspaceManager.focusedToken,
+               candidateTokens.contains(focusedToken)
+            {
+                return focusedToken
+            }
+
+            guard let interactionWorkspaceId else { return nil }
+            let lastFloatingFocusedToken = controller.workspaceManager.lastFloatingFocusedToken(
+                in: interactionWorkspaceId
+            )
+            guard let lastFloatingFocusedToken, candidateTokens.contains(lastFloatingFocusedToken) else {
+                return nil
+            }
+            return lastFloatingFocusedToken
+        }()
+
         let orderedEntries = floatingEntries.sorted { lhs, rhs in
-            switch (lhs.token == lastFloatingFocusedToken, rhs.token == lastFloatingFocusedToken) {
+            switch (lhs.token == preferredFocusToken, rhs.token == preferredFocusToken) {
             case (true, false):
                 return false
             case (false, true):
@@ -83,31 +137,26 @@ final class WindowActionHandler {
             }
         }
 
+        var entriesByPid: [pid_t: [WindowModel.Entry]] = [:]
+        var pidOrder: [pid_t] = []
+
         for entry in orderedEntries {
-            SkyLight.shared.orderWindow(UInt32(entry.windowId), relativeTo: 0, order: .above)
+            if entriesByPid[entry.pid] == nil {
+                pidOrder.append(entry.pid)
+                entriesByPid[entry.pid] = []
+            }
+            entriesByPid[entry.pid, default: []].append(entry)
         }
 
-        guard let focusEntry = orderedEntries.last else { return }
-        let ownPid = ProcessInfo.processInfo.processIdentifier
-
-        if focusEntry.pid == ownPid {
-            NSApp.activate(ignoringOtherApps: true)
-            return
+        if let focusPid = orderedEntries.last?.pid,
+           let focusIndex = pidOrder.firstIndex(of: focusPid)
+        {
+            let focusPid = pidOrder.remove(at: focusIndex)
+            pidOrder.append(focusPid)
         }
 
-        guard let appInfo = controller.appInfoCache.info(for: focusEntry.pid),
-              appInfo.activationPolicy != .prohibited,
-              let app = NSRunningApplication(processIdentifier: focusEntry.pid)
-        else {
-            return
-        }
-
-        app.activate()
-        var psn = ProcessSerialNumber()
-        if GetProcessForPID(app.processIdentifier, &psn) == noErr {
-            _ = _SLPSSetFrontProcessWithOptions(&psn, UInt32(focusEntry.windowId), kCPSUserGenerated)
-            makeKeyWindow(psn: &psn, windowId: UInt32(focusEntry.windowId))
-        }
+        let batches = pidOrder.compactMap { entriesByPid[$0] }
+        return FloatingWindowRaisePlan(orderedEntries: orderedEntries, batches: batches)
     }
 
     func navigateToWindow(handle: WindowHandle) {

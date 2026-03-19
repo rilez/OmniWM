@@ -1512,6 +1512,16 @@ extension WMController {
         workspaceManager.isNonManagedFocusActive && hasFrontmostOwnedWindow
     }
 
+    func performWindowFronting(
+        pid: pid_t,
+        windowId: Int,
+        axRef: AXWindowRef
+    ) {
+        windowFocusOperations.activateApp(pid)
+        windowFocusOperations.focusSpecificWindow(pid, UInt32(windowId), axRef.element)
+        windowFocusOperations.raiseWindow(axRef.element)
+    }
+
     func focusWindow(_ token: WindowToken) {
         guard let entry = workspaceManager.entry(for: token) else { return }
         guard !isLockScreenActive else { return }
@@ -1535,13 +1545,7 @@ extension WMController {
             token,
             performFocus: {
                 // 1. Activate app first (brings process to front, may pick wrong key window)
-                self.windowFocusOperations.activateApp(pid)
-
-                // 2. Private API sets the SPECIFIC window as key (overrides activate's choice)
-                self.windowFocusOperations.focusSpecificWindow(pid, UInt32(windowId), axRef.element)
-
-                // 3. AX raise ensures the window is visually on top and receives keyboard focus
-                self.windowFocusOperations.raiseWindow(axRef.element)
+                self.performWindowFronting(pid: pid, windowId: windowId, axRef: axRef)
 
                 if moveMouseEnabled {
                     self.moveMouseToWindow(token)
