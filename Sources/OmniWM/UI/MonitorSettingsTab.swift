@@ -6,20 +6,25 @@ struct MonitorSettingsTab: View {
     @Bindable var controller: WMController
 
     @State private var selectedMonitor: Monitor.ID?
-    @State private var connectedMonitors: [Monitor] = MonitorSettingsTabModel.sortedMonitors(Monitor.current())
+    @State private var connectedMonitors: [Monitor] = Monitor.current()
+
+    private var warpAxis: MouseWarpAxis {
+        settings.mouseWarpAxis
+    }
 
     private var sortedMonitors: [Monitor] {
-        MonitorSettingsTabModel.sortedMonitors(connectedMonitors)
+        MonitorSettingsTabModel.sortedMonitors(connectedMonitors, axis: warpAxis)
     }
 
     private var displayLabels: [Monitor.ID: MonitorDisplayLabel] {
-        MonitorSettingsTabModel.displayLabels(for: sortedMonitors)
+        MonitorSettingsTabModel.displayLabels(for: sortedMonitors, axis: warpAxis)
     }
 
     private var warpOrderEntries: [MonitorOrderEntry] {
         MonitorSettingsTabModel.orderEntries(
             for: sortedMonitors,
-            orderedNames: settings.effectiveMouseWarpMonitorOrder(for: sortedMonitors)
+            orderedNames: settings.effectiveMouseWarpMonitorOrder(for: sortedMonitors, axis: warpAxis),
+            axis: warpAxis
         )
     }
 
@@ -34,15 +39,29 @@ struct MonitorSettingsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionHeader("Monitor Order")
+            SectionHeader("Mouse Warp")
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("Click a monitor, then use the arrows beside it to move it left or right. This strip is the left-to-right order OmniWM uses for mouse warp.")
+                Picker("Warp Axis", selection: Binding(
+                    get: { settings.mouseWarpAxis },
+                    set: { settings.mouseWarpAxis = $0 }
+                )) {
+                    ForEach(MouseWarpAxis.allCases, id: \.self) { axis in
+                        Text(axis.displayName).tag(axis)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Text(
+                    "Choose whether OmniWM warps across left/right or top/bottom monitor boundaries. " +
+                        "The strip below is the \(warpAxis.orderDescription) order OmniWM uses for mouse warp."
+                )
                     .font(.caption)
                     .foregroundColor(.secondary)
 
                 MonitorOrderStrip(
                     entries: warpOrderEntries,
+                    axis: warpAxis,
                     selectedMonitor: effectiveSelectedMonitorID,
                     onSelect: { selectedMonitor = $0 },
                     onMove: moveSelectedMonitor
@@ -66,7 +85,10 @@ struct MonitorSettingsTab: View {
                     }
                 }
 
-                Text("Mouse warp keeps pointer travel consistent across OmniWM's multi-monitor workspace model.")
+                Text(
+                    "Horizontal mode uses left/right edges. Vertical mode uses top/bottom edges. " +
+                        "Changing the axis keeps your saved monitor order as-is."
+                )
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -99,13 +121,14 @@ struct MonitorSettingsTab: View {
     }
 
     private func refreshConnectedMonitors() {
-        let monitors = MonitorSettingsTabModel.sortedMonitors(Monitor.current())
+        let monitors = Monitor.current()
         connectedMonitors = monitors
         selectedMonitor = MonitorSettingsTabModel.normalizedSelection(
             selectedMonitor,
             entries: MonitorSettingsTabModel.orderEntries(
-                for: monitors,
-                orderedNames: settings.effectiveMouseWarpMonitorOrder(for: monitors)
+                for: MonitorSettingsTabModel.sortedMonitors(monitors, axis: warpAxis),
+                orderedNames: settings.effectiveMouseWarpMonitorOrder(for: monitors, axis: warpAxis),
+                axis: warpAxis
             )
         )
     }
@@ -124,6 +147,7 @@ struct MonitorSettingsTab: View {
 
 private struct MonitorOrderStrip: View {
     let entries: [MonitorOrderEntry]
+    let axis: MouseWarpAxis
     let selectedMonitor: Monitor.ID?
     let onSelect: (Monitor.ID) -> Void
     let onMove: (MonitorOrderMoveDirection) -> Void
@@ -144,6 +168,7 @@ private struct MonitorOrderStrip: View {
                     ForEach(entries) { entry in
                         MonitorOrderSlot(
                             entry: entry,
+                            axis: axis,
                             isSelected: selectedMonitor == entry.id,
                             showsMoveControls: entries.count > 1 && selectedMonitor == entry.id,
                             canMoveLeft: MonitorSettingsTabModel.canMove(
@@ -170,6 +195,7 @@ private struct MonitorOrderStrip: View {
 
 private struct MonitorOrderSlot: View {
     let entry: MonitorOrderEntry
+    let axis: MouseWarpAxis
     let isSelected: Bool
     let showsMoveControls: Bool
     let canMoveLeft: Bool
@@ -182,7 +208,7 @@ private struct MonitorOrderSlot: View {
         HStack(spacing: 8) {
             if showsMoveControls {
                 MonitorMoveButton(
-                    symbolName: "chevron.left",
+                    symbolName: axis.leadingSymbolName,
                     isEnabled: canMoveLeft,
                     action: onMoveLeft
                 )
@@ -198,7 +224,7 @@ private struct MonitorOrderSlot: View {
 
             if showsMoveControls {
                 MonitorMoveButton(
-                    symbolName: "chevron.right",
+                    symbolName: axis.trailingSymbolName,
                     isEnabled: canMoveRight,
                     action: onMoveRight
                 )
@@ -402,8 +428,8 @@ enum MonitorOrderMoveDirection {
 }
 
 enum MonitorSettingsTabModel {
-    static func sortedMonitors(_ monitors: [Monitor]) -> [Monitor] {
-        Monitor.sortedByPosition(monitors)
+    static func sortedMonitors(_ monitors: [Monitor], axis: MouseWarpAxis = .horizontal) -> [Monitor] {
+        axis.sortedMonitors(monitors)
     }
 
     static func normalizedSelection(_ selectedMonitor: Monitor.ID?, entries: [MonitorOrderEntry]) -> Monitor.ID? {
@@ -418,8 +444,8 @@ enum MonitorSettingsTabModel {
         return entries.first?.id
     }
 
-    static func displayLabels(for monitors: [Monitor]) -> [Monitor.ID: MonitorDisplayLabel] {
-        let sorted = sortedMonitors(monitors)
+    static func displayLabels(for monitors: [Monitor], axis: MouseWarpAxis = .horizontal) -> [Monitor.ID: MonitorDisplayLabel] {
+        let sorted = sortedMonitors(monitors, axis: axis)
         let totals = sorted.reduce(into: [String: Int]()) { counts, monitor in
             counts[monitor.name, default: 0] += 1
         }
@@ -436,9 +462,13 @@ enum MonitorSettingsTabModel {
         return labels
     }
 
-    static func orderEntries(for monitors: [Monitor], orderedNames: [String]) -> [MonitorOrderEntry] {
-        let sorted = sortedMonitors(monitors)
-        let labels = displayLabels(for: sorted)
+    static func orderEntries(
+        for monitors: [Monitor],
+        orderedNames: [String],
+        axis: MouseWarpAxis = .horizontal
+    ) -> [MonitorOrderEntry] {
+        let sorted = sortedMonitors(monitors, axis: axis)
+        let labels = displayLabels(for: sorted, axis: axis)
         let monitorsByName = Dictionary(grouping: sorted, by: \.name)
         var usedCounts: [String: Int] = [:]
         var entries: [MonitorOrderEntry] = []

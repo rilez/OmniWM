@@ -36,6 +36,7 @@ struct SettingsExport: Codable {
     var moveMouseToFocusedWindow: Bool
     var focusFollowsWindowToMonitor: Bool
     var mouseWarpMonitorOrder: [String]
+    var mouseWarpAxis: String?
     var mouseWarpMargin: Int
     var gapSize: Double
     var outerGapLeft: Double
@@ -123,6 +124,7 @@ extension SettingsExport {
             moveMouseToFocusedWindow: false,
             focusFollowsWindowToMonitor: false,
             mouseWarpMonitorOrder: [],
+            mouseWarpAxis: MouseWarpAxis.horizontal.rawValue,
             mouseWarpMargin: 1,
             gapSize: 8,
             outerGapLeft: 8,
@@ -300,6 +302,7 @@ extension SettingsStore {
             moveMouseToFocusedWindow: moveMouseToFocusedWindow,
             focusFollowsWindowToMonitor: focusFollowsWindowToMonitor,
             mouseWarpMonitorOrder: mouseWarpMonitorOrder,
+            mouseWarpAxis: mouseWarpAxis.rawValue,
             mouseWarpMargin: mouseWarpMargin,
             gapSize: gapSize,
             outerGapLeft: outerGapLeft,
@@ -392,6 +395,7 @@ extension SettingsStore {
         moveMouseToFocusedWindow = export.moveMouseToFocusedWindow
         focusFollowsWindowToMonitor = export.focusFollowsWindowToMonitor
         mouseWarpMonitorOrder = export.mouseWarpMonitorOrder
+        mouseWarpAxis = MouseWarpAxis(rawValue: export.mouseWarpAxis ?? "") ?? .horizontal
         mouseWarpMargin = export.mouseWarpMargin
         gapSize = export.gapSize
         outerGapLeft = export.outerGapLeft

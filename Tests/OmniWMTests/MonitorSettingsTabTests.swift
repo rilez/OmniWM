@@ -56,6 +56,15 @@ private func makeMonitorTabTestMonitor(
         #expect(labels[second.id] == MonitorDisplayLabel(name: "Studio Display", duplicateIndex: 2))
     }
 
+    @Test func displayLabelsDisambiguateDuplicateMonitorNamesByVerticalOrder() {
+        let bottom = makeMonitorTabTestMonitor(displayId: 1, name: "Studio Display", x: 0, y: 0)
+        let top = makeMonitorTabTestMonitor(displayId: 2, name: "Studio Display", x: 320, y: 1080)
+        let labels = MonitorSettingsTabModel.displayLabels(for: [bottom, top], axis: .vertical)
+
+        #expect(labels[top.id] == MonitorDisplayLabel(name: "Studio Display", duplicateIndex: 1))
+        #expect(labels[bottom.id] == MonitorDisplayLabel(name: "Studio Display", duplicateIndex: 2))
+    }
+
     @Test func canMoveDisablesLeftAndRightAtSequenceEdges() {
         let left = makeMonitorTabTestMonitor(displayId: 1, name: "Left", x: 0, y: 0)
         let center = makeMonitorTabTestMonitor(displayId: 2, name: "Center", x: 1920, y: 0)
@@ -113,5 +122,20 @@ private func makeMonitorTabTestMonitor(
         )
 
         #expect(reordered == ["Studio Display", "Studio Display", "Center"])
+    }
+
+    @Test func orderEntriesUseVerticalAxisForDuplicateNameResolution() {
+        let bottom = makeMonitorTabTestMonitor(displayId: 1, name: "Studio Display", x: 0, y: 0)
+        let center = makeMonitorTabTestMonitor(displayId: 2, name: "Center", x: 0, y: 1080)
+        let top = makeMonitorTabTestMonitor(displayId: 3, name: "Studio Display", x: 320, y: 2160)
+        let entries = MonitorSettingsTabModel.orderEntries(
+            for: [bottom, center, top],
+            orderedNames: ["Studio Display", "Center", "Studio Display"],
+            axis: .vertical
+        )
+
+        #expect(entries.map(\.id) == [top.id, center.id, bottom.id])
+        #expect(entries.first?.displayLabel.duplicateIndex == 1)
+        #expect(entries.last?.displayLabel.duplicateIndex == 2)
     }
 }

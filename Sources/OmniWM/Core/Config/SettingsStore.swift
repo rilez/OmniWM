@@ -25,6 +25,10 @@ final class SettingsStore {
         didSet { saveMouseWarpMonitorOrder() }
     }
 
+    var mouseWarpAxis: MouseWarpAxis {
+        didSet { defaults.set(mouseWarpAxis.rawValue, forKey: Keys.mouseWarpAxis) }
+    }
+
     var niriColumnWidthPresets: [Double] {
         didSet { saveNiriColumnWidthPresets() }
     }
@@ -337,6 +341,7 @@ final class SettingsStore {
         moveMouseToFocusedWindow = defaults.object(forKey: Keys.moveMouseToFocusedWindow) as? Bool ?? false
         focusFollowsWindowToMonitor = defaults.object(forKey: Keys.focusFollowsWindowToMonitor) as? Bool ?? false
         mouseWarpMonitorOrder = Self.loadMouseWarpMonitorOrder(from: defaults)
+        mouseWarpAxis = MouseWarpAxis(rawValue: defaults.string(forKey: Keys.mouseWarpAxis) ?? "") ?? .horizontal
         niriColumnWidthPresets = Self.loadNiriColumnWidthPresets(from: defaults)
         niriDefaultColumnWidth = Self.loadNiriDefaultColumnWidth(from: defaults)
         mouseWarpMargin = defaults.object(forKey: Keys.mouseWarpMargin) as? Int ?? 1
@@ -510,8 +515,8 @@ final class SettingsStore {
         defaults.set(data, forKey: Keys.workspaceConfigurations)
     }
 
-    func effectiveMouseWarpMonitorOrder(for monitors: [Monitor]) -> [String] {
-        let sortedNames = Monitor.sortedByPosition(monitors).map(\.name)
+    func effectiveMouseWarpMonitorOrder(for monitors: [Monitor], axis: MouseWarpAxis? = nil) -> [String] {
+        let sortedNames = (axis ?? mouseWarpAxis).sortedMonitors(monitors).map(\.name)
         guard !sortedNames.isEmpty else { return [] }
 
         var remainingCounts = sortedNames.reduce(into: [String: Int]()) { counts, name in
@@ -535,8 +540,9 @@ final class SettingsStore {
     }
 
     @discardableResult
-    func persistEffectiveMouseWarpMonitorOrder(for monitors: [Monitor]) -> [String] {
-        let sortedNames = Monitor.sortedByPosition(monitors).map(\.name)
+    func persistEffectiveMouseWarpMonitorOrder(for monitors: [Monitor], axis: MouseWarpAxis? = nil) -> [String] {
+        let warpAxis = axis ?? mouseWarpAxis
+        let sortedNames = warpAxis.sortedMonitors(monitors).map(\.name)
         guard !sortedNames.isEmpty else { return [] }
 
         var persisted = mouseWarpMonitorOrder
@@ -561,7 +567,7 @@ final class SettingsStore {
             mouseWarpMonitorOrder = persisted
         }
 
-        return effectiveMouseWarpMonitorOrder(for: monitors)
+        return effectiveMouseWarpMonitorOrder(for: monitors, axis: warpAxis)
     }
 
     private static func normalizedWorkspaceConfigurations(_ configs: [WorkspaceConfiguration]) -> [WorkspaceConfiguration] {
@@ -817,6 +823,7 @@ private enum Keys {
     static let moveMouseToFocusedWindow = "settings.moveMouseToFocusedWindow"
     static let focusFollowsWindowToMonitor = "settings.focusFollowsWindowToMonitor"
     static let mouseWarpMonitorOrder = "settings.mouseWarp.monitorOrder"
+    static let mouseWarpAxis = "settings.mouseWarp.axis"
     static let niriColumnWidthPresets = "settings.niriColumnWidthPresets"
     static let niriDefaultColumnWidth = "settings.niriDefaultColumnWidth"
     static let mouseWarpMargin = "settings.mouseWarp.margin"
