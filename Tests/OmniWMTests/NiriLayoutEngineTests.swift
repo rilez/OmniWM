@@ -208,6 +208,15 @@ private func hasAnyVisibilityChange(
         }
     }
 
+    private func viewportStart(
+        for state: ViewportState,
+        columns: [NiriContainer],
+        gap: CGFloat
+    ) -> CGFloat {
+        state.columnX(at: state.activeColumnIndex, columns: columns, gap: gap)
+            + state.viewOffsetPixels.target()
+    }
+
     private func resolvedSettings(
         for engine: NiriLayoutEngine,
         maxVisibleColumns: Int? = nil,
@@ -849,6 +858,237 @@ private func hasAnyVisibilityChange(
         )
 
         #expect(state.activeColumnIndex == 2)
+    }
+
+    @Test func ensureSelectionVisibleDoesNotShiftFullyVisibleViewportInNeverMode() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 1)
+        engine.centerFocusedColumn = .never
+        engine.alwaysCenterSingleColumn = false
+        let wsId = UUID()
+
+        let first = engine.addWindow(handle: makeTestHandle(pid: 301), to: wsId, afterSelection: nil)
+        let second = engine.addWindow(handle: makeTestHandle(pid: 302), to: wsId, afterSelection: first.id)
+        _ = engine.addWindow(handle: makeTestHandle(pid: 303), to: wsId, afterSelection: second.id)
+
+        let workingFrame = CGRect(x: 0, y: 0, width: 1600, height: 900)
+        let gap: CGFloat = 8
+        let leftWidth = (workingFrame.width - gap) * (2.0 / 3.0)
+        let rightWidth = (workingFrame.width - gap) / 3.0
+        assignWidths(
+            engine.columns(in: wsId),
+            widths: [leftWidth, rightWidth, rightWidth]
+        )
+
+        var state = ViewportState()
+        state.selectedNodeId = first.id
+        state.activeColumnIndex = 0
+        state.viewOffsetPixels = .static(0)
+
+        engine.ensureSelectionVisible(
+            node: second,
+            in: wsId,
+            state: &state,
+            workingFrame: workingFrame,
+            gaps: gap
+        )
+
+        let columns = engine.columns(in: wsId)
+        let viewStart = state.columnX(at: state.activeColumnIndex, columns: columns, gap: gap)
+            + state.viewOffsetPixels.target()
+
+        #expect(state.activeColumnIndex == 1)
+        #expect(abs(viewStart) < 0.1)
+        #expect(abs(state.viewOffsetPixels.target() + leftWidth + gap) < 0.1)
+    }
+
+    @Test func ensureSelectionVisibleDoesNotShiftFullyVisibleViewportInOnOverflowMode() {
+        struct Scenario {
+            let label: String
+            let visibleCount: Int
+            let extraColumns: Int
+            let initialActiveIndex: Int
+            let targetIndex: Int
+            let expectedViewStartIndex: Int
+        }
+
+        let scenarios = [
+            Scenario(
+                label: "visibleCount=2 first pair",
+                visibleCount: 2,
+                extraColumns: 2,
+                initialActiveIndex: 0,
+                targetIndex: 1,
+                expectedViewStartIndex: 0
+            ),
+            Scenario(
+                label: "visibleCount=2 middle pair forward",
+                visibleCount: 2,
+                extraColumns: 2,
+                initialActiveIndex: 1,
+                targetIndex: 2,
+                expectedViewStartIndex: 1
+            ),
+            Scenario(
+                label: "visibleCount=2 middle pair backward",
+                visibleCount: 2,
+                extraColumns: 2,
+                initialActiveIndex: 2,
+                targetIndex: 1,
+                expectedViewStartIndex: 1
+            ),
+            Scenario(
+                label: "visibleCount=2 last pair",
+                visibleCount: 2,
+                extraColumns: 2,
+                initialActiveIndex: 2,
+                targetIndex: 3,
+                expectedViewStartIndex: 2
+            ),
+            Scenario(
+                label: "visibleCount=3 shifted visible span",
+                visibleCount: 3,
+                extraColumns: 2,
+                initialActiveIndex: 1,
+                targetIndex: 3,
+                expectedViewStartIndex: 1
+            )
+        ]
+
+        for scenario in scenarios {
+            let fixture = makeVisibleColumnFixture(
+                visibleCount: scenario.visibleCount,
+                extraColumns: scenario.extraColumns
+            )
+            fixture.engine.centerFocusedColumn = .onOverflow
+            fixture.engine.alwaysCenterSingleColumn = false
+
+            let columns = fixture.engine.columns(in: fixture.workspaceId)
+            guard let columnWidth = columns.first?.cachedWidth else {
+                Issue.record("Expected equal-width columns for \(scenario.label)")
+                continue
+            }
+
+            let columnStride = columnWidth + fixture.gap
+            let expectedViewStart = columnStride * CGFloat(scenario.expectedViewStartIndex)
+
+            var state = ViewportState()
+            state.selectedNodeId = fixture.windows[scenario.initialActiveIndex].id
+            state.activeColumnIndex = scenario.initialActiveIndex
+            state.viewOffsetPixels = .static(
+                expectedViewStart
+                    - state.columnX(
+                        at: scenario.initialActiveIndex,
+                        columns: columns,
+                        gap: fixture.gap
+                    )
+            )
+
+            fixture.engine.ensureSelectionVisible(
+                node: fixture.windows[scenario.targetIndex],
+                in: fixture.workspaceId,
+                state: &state,
+                workingFrame: fixture.monitor.visibleFrame,
+                gaps: fixture.gap
+            )
+
+            #expect(state.activeColumnIndex == scenario.targetIndex, Comment(rawValue: scenario.label))
+            #expect(
+                abs(viewportStart(for: state, columns: columns, gap: fixture.gap) - expectedViewStart) < 0.1,
+                Comment(rawValue: scenario.label)
+            )
+        }
+    }
+
+    @Test func ensureSelectionVisibleAlignsOffscreenViewportToExactVisibleSet() {
+        struct Scenario {
+            let label: String
+            let centerMode: CenterFocusedColumn
+            let initialActiveIndex: Int
+            let initialViewStartIndex: Int
+            let targetIndex: Int
+            let expectedViewStartIndex: Int
+        }
+
+        let scenarios: [Scenario] = [
+            .init(
+                label: "never right",
+                centerMode: .never,
+                initialActiveIndex: 1,
+                initialViewStartIndex: 0,
+                targetIndex: 2,
+                expectedViewStartIndex: 1
+            ),
+            .init(
+                label: "never left",
+                centerMode: .never,
+                initialActiveIndex: 3,
+                initialViewStartIndex: 3,
+                targetIndex: 2,
+                expectedViewStartIndex: 2
+            ),
+            .init(
+                label: "onOverflow right",
+                centerMode: .onOverflow,
+                initialActiveIndex: 1,
+                initialViewStartIndex: 0,
+                targetIndex: 2,
+                expectedViewStartIndex: 1
+            ),
+            .init(
+                label: "onOverflow left",
+                centerMode: .onOverflow,
+                initialActiveIndex: 3,
+                initialViewStartIndex: 3,
+                targetIndex: 2,
+                expectedViewStartIndex: 2
+            ),
+        ]
+
+        for scenario in scenarios {
+            let fixture = makeVisibleColumnFixture(visibleCount: 2, extraColumns: 2)
+            fixture.engine.centerFocusedColumn = scenario.centerMode
+            fixture.engine.alwaysCenterSingleColumn = false
+
+            let columns = fixture.engine.columns(in: fixture.workspaceId)
+            guard let columnWidth = columns.first?.cachedWidth else {
+                Issue.record("Expected equal-width columns for \(scenario.label) offscreen alignment test")
+                continue
+            }
+
+            let columnStride = columnWidth + fixture.gap
+            let initialViewStart = CGFloat(scenario.initialViewStartIndex) * columnStride
+
+            var state = ViewportState()
+            state.selectedNodeId = fixture.windows[scenario.initialActiveIndex].id
+            state.activeColumnIndex = scenario.initialActiveIndex
+            state.viewOffsetPixels = .static(
+                initialViewStart
+                    - state.columnX(at: scenario.initialActiveIndex, columns: columns, gap: fixture.gap)
+            )
+
+            fixture.engine.ensureSelectionVisible(
+                node: fixture.windows[scenario.targetIndex],
+                in: fixture.workspaceId,
+                state: &state,
+                workingFrame: fixture.monitor.visibleFrame,
+                gaps: fixture.gap
+            )
+
+            let expectedViewStart = CGFloat(scenario.expectedViewStartIndex) * columnStride
+            let expectedTargetOffset = expectedViewStart
+                - state.columnX(at: scenario.targetIndex, columns: columns, gap: fixture.gap)
+
+            #expect(state.activeColumnIndex == scenario.targetIndex, Comment(rawValue: scenario.label))
+            #expect(state.viewOffsetPixels.isAnimating, Comment(rawValue: scenario.label))
+            #expect(
+                abs(state.viewOffsetPixels.target() - expectedTargetOffset) < 0.1,
+                Comment(rawValue: scenario.label)
+            )
+            #expect(
+                abs(viewportStart(for: state, columns: columns, gap: fixture.gap) - expectedViewStart) < 0.1,
+                Comment(rawValue: scenario.label)
+            )
+        }
     }
 
     @Test func moveWindowHorizontalRightExpelsFocusedWindowIntoNewColumn() {
@@ -3167,6 +3407,106 @@ private func hasAnyVisibilityChange(
         #expect(controller.workspaceManager.niriViewportState(for: workspaceId).selectedNodeId == ghosttyWindow.node.id)
         #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == ghosttyWindow.token.windowId)
         #expect(lastAppliedBorderFrameForLayoutPlanTests(on: controller) == observedFrame)
+    }
+
+    @Test @MainActor func focusNeighborRoundTripDoesNotStartSecondSpringAfterSettledOffscreenMove() async throws {
+        let controller = makeLayoutPlanTestController()
+        guard let monitor = controller.workspaceManager.monitors.first,
+              let workspaceId = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id
+        else {
+            Issue.record("Missing monitor or active workspace for focus-neighbor round-trip regression test")
+            return
+        }
+
+        controller.enableNiriLayout(
+            maxWindowsPerColumn: 1,
+            centerFocusedColumn: .never,
+            alwaysCenterSingleColumn: false
+        )
+        controller.updateNiriConfig(
+            maxVisibleColumns: 2,
+            centerFocusedColumn: .never,
+            alwaysCenterSingleColumn: false
+        )
+        await waitForLayoutPlanRefreshWork(on: controller)
+        controller.syncMonitorsToNiriEngine()
+
+        guard let engine = controller.niriEngine else {
+            Issue.record("Expected Niri engine for focus-neighbor round-trip regression test")
+            return
+        }
+
+        for windowId in 641 ... 645 {
+            _ = addLayoutPlanTestWindow(on: controller, workspaceId: workspaceId, windowId: windowId)
+        }
+
+        let initialPlans = try await controller.niriLayoutHandler.layoutWithNiriEngine(
+            activeWorkspaces: [workspaceId]
+        )
+        controller.layoutRefreshController.executeLayoutPlans(initialPlans)
+
+        let gap = CGFloat(controller.workspaceManager.gaps)
+        let workingFrame = controller.insetWorkingFrame(for: monitor)
+        let fixedWidth = (workingFrame.width - gap) / 2
+        for column in engine.columns(in: workspaceId) {
+            column.width = .fixed(fixedWidth)
+            column.cachedWidth = fixedWidth
+        }
+
+        let columns = engine.columns(in: workspaceId)
+        let windows = columns.compactMap(\.windowNodes.first)
+        guard windows.count >= 5 else {
+            Issue.record("Expected five columns for focus-neighbor round-trip regression test")
+            return
+        }
+
+        let columnStride = fixedWidth + gap
+
+        func setSelection(activeIndex: Int, visibleStartIndex: Int) {
+            let node = windows[activeIndex]
+            let expectedViewStart = CGFloat(visibleStartIndex) * columnStride
+            controller.workspaceManager.withNiriViewportState(for: workspaceId) { state in
+                state.selectedNodeId = node.id
+                state.activeColumnIndex = activeIndex
+                state.viewOffsetPixels = .static(
+                    expectedViewStart
+                        - state.columnX(at: activeIndex, columns: columns, gap: gap)
+                )
+            }
+            _ = controller.workspaceManager.setManagedFocus(node.token, in: workspaceId, onMonitor: monitor.id)
+            _ = controller.workspaceManager.commitWorkspaceSelection(
+                nodeId: node.id,
+                focusedToken: node.token,
+                in: workspaceId,
+                onMonitor: monitor.id
+            )
+            controller.layoutRefreshController.stopAllScrollAnimations()
+        }
+
+        func settleViewport() {
+            controller.workspaceManager.withNiriViewportState(for: workspaceId) { state in
+                state.viewOffsetPixels = .static(state.viewOffsetPixels.target())
+            }
+            controller.layoutRefreshController.stopAllScrollAnimations()
+        }
+
+        setSelection(activeIndex: 1, visibleStartIndex: 0)
+        controller.niriLayoutHandler.focusNeighbor(direction: .right)
+        await waitForLayoutPlanRefreshWork(on: controller)
+
+        let firstMoveState = controller.workspaceManager.niriViewportState(for: workspaceId)
+        #expect(controller.workspaceManager.preferredFocusToken(in: workspaceId) == windows[2].token)
+        #expect(firstMoveState.viewOffsetPixels.isAnimating)
+        #expect(abs(viewportStart(for: firstMoveState, columns: columns, gap: gap) - columnStride) < 0.1)
+
+        settleViewport()
+        controller.niriLayoutHandler.focusNeighbor(direction: .left)
+        await waitForLayoutPlanRefreshWork(on: controller)
+
+        let firstReverseState = controller.workspaceManager.niriViewportState(for: workspaceId)
+        #expect(controller.workspaceManager.preferredFocusToken(in: workspaceId) == windows[1].token)
+        #expect(!firstReverseState.viewOffsetPixels.isAnimating)
+        #expect(abs(viewportStart(for: firstReverseState, columns: columns, gap: gap) - columnStride) < 0.1)
     }
 
     @Test @MainActor func visibleSecondaryWorkspacePlanRestoresInactiveHiddenWindows() async throws {

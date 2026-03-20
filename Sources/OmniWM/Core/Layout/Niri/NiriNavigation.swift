@@ -193,6 +193,7 @@ extension NiriLayoutEngine {
             viewportSpan = workingFrame.height
         }
 
+        let scale = displayScale(in: workspaceId)
         let oldActivePos = previousActiveContainerPosition
             ?? state.containerPosition(
                 at: state.activeColumnIndex,
@@ -201,7 +202,8 @@ extension NiriLayoutEngine {
                 sizeKeyPath: sizeKeyPath
             )
         let newActivePos = state.containerPosition(at: targetIdx, containers: containers, gap: gaps, sizeKeyPath: sizeKeyPath)
-        state.viewOffsetPixels.offset(delta: Double(oldActivePos - newActivePos))
+        let offsetDelta = oldActivePos - newActivePos
+        state.viewOffsetPixels.offset(delta: Double(offsetDelta))
 
         state.activeColumnIndex = targetIdx
         state.activatePrevColumnOnRemoval = nil
@@ -218,7 +220,8 @@ extension NiriLayoutEngine {
             centerMode: settings.centerFocusedColumn,
             alwaysCenterSingleColumn: settings.alwaysCenterSingleColumn,
             animationConfig: animationConfig,
-            fromContainerIndex: prevIdx
+            fromContainerIndex: prevIdx,
+            scale: scale
         )
 
         state.selectionProgress = 0.0

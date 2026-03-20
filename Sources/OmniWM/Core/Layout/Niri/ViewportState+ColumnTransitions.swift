@@ -68,10 +68,11 @@ extension ViewportState {
             currentOffset: viewOffsetPixels.target(),
             centerMode: centerMode,
             alwaysCenterSingleColumn: alwaysCenterSingleColumn,
-            fromColumnIndex: fromColumnIndex ?? prevActiveColumn
+            fromColumnIndex: fromColumnIndex ?? prevActiveColumn,
+            scale: scale
         )
 
-        let pixel: CGFloat = 1.0 / scale
+        let pixel: CGFloat = 1.0 / max(scale, 1.0)
         let toDiff = targetOffset - viewOffsetPixels.target()
         if abs(toDiff) < pixel {
             viewOffsetPixels.offset(delta: Double(toDiff))
@@ -100,12 +101,16 @@ extension ViewportState {
         centerMode: CenterFocusedColumn = .never,
         alwaysCenterSingleColumn: Bool = false,
         animationConfig: SpringConfig? = nil,
-        fromContainerIndex: Int? = nil
+        fromContainerIndex: Int? = nil,
+        scale: CGFloat = 2.0
     ) {
         guard !containers.isEmpty, containerIndex >= 0, containerIndex < containers.count else { return }
 
         let currentOffset = viewOffsetPixels.current()
+        let stationaryOffset = stationary()
         let activePos = containerPosition(at: activeColumnIndex, containers: containers, gap: gap, sizeKeyPath: sizeKeyPath)
+        let stationaryViewStart = activePos + stationaryOffset
+        let pixelEpsilon: CGFloat = 1.0 / max(scale, 1.0)
 
         let targetOffset = computeVisibleOffset(
             containerIndex: containerIndex,
@@ -113,13 +118,14 @@ extension ViewportState {
             gap: gap,
             viewportSpan: viewportSpan,
             sizeKeyPath: sizeKeyPath,
-            currentViewStart: activePos + currentOffset,
+            currentViewStart: stationaryViewStart,
             centerMode: centerMode,
             alwaysCenterSingleColumn: alwaysCenterSingleColumn,
-            fromContainerIndex: fromContainerIndex
+            fromContainerIndex: fromContainerIndex,
+            scale: scale
         )
 
-        if abs(targetOffset - currentOffset) < 0.001 {
+        if abs(targetOffset - stationaryOffset) <= pixelEpsilon {
             return
         }
 

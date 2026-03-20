@@ -1,6 +1,18 @@
 import Foundation
 
 extension ViewportState {
+    private func allowedOffsetRange(
+        targetPos: CGFloat,
+        totalSpan: CGFloat,
+        viewportSpan: CGFloat
+    ) -> ClosedRange<CGFloat>? {
+        guard totalSpan > viewportSpan else { return nil }
+
+        let minOffset = -targetPos
+        let maxOffset = totalSpan - viewportSpan - targetPos
+        return minOffset ... maxOffset
+    }
+
     func columnX(at index: Int, columns: [NiriContainer], gap: CGFloat) -> CGFloat {
         containerPosition(at: index, containers: columns, gap: gap, sizeKeyPath: \.cachedWidth)
     }
@@ -29,41 +41,59 @@ extension ViewportState {
         guard !containers.isEmpty, containerIndex < containers.count else { return 0 }
 
         let total = totalSpan(containers: containers, gap: gap, sizeKeyPath: sizeKeyPath)
+        let pos = containerPosition(at: containerIndex, containers: containers, gap: gap, sizeKeyPath: sizeKeyPath)
 
         if total <= viewportSpan {
-            let pos = containerPosition(at: containerIndex, containers: containers, gap: gap, sizeKeyPath: sizeKeyPath)
             return -pos - (viewportSpan - total) / 2
         }
 
         let containerSize = containers[containerIndex][keyPath: sizeKeyPath]
         let centeredOffset = -(viewportSpan - containerSize) / 2
 
-        let maxOffset: CGFloat = 0
-        let minOffset = viewportSpan - total
+        guard let allowedOffsetRange = allowedOffsetRange(
+            targetPos: pos,
+            totalSpan: total,
+            viewportSpan: viewportSpan
+        ) else {
+            return centeredOffset
+        }
 
-        return centeredOffset.clamped(to: minOffset ... maxOffset)
+        return centeredOffset.clamped(to: allowedOffsetRange)
     }
 
-    private func computeFitOffset(currentViewPos: CGFloat, viewSpan: CGFloat, targetPos: CGFloat, targetSpan: CGFloat, gaps: CGFloat) -> CGFloat {
-        if viewSpan <= targetSpan {
+    private func computeFitOffset(
+        currentViewPos: CGFloat,
+        viewSpan: CGFloat,
+        targetPos: CGFloat,
+        targetSpan: CGFloat,
+        scale: CGFloat = 2.0
+    ) -> CGFloat {
+        let pixelEpsilon: CGFloat = 1.0 / max(scale, 1.0)
+
+        if viewSpan <= targetSpan + pixelEpsilon {
             return 0
         }
 
-        let padding = ((viewSpan - targetSpan) / 2).clamped(to: 0 ... gaps)
-        let newPos = targetPos - padding
-        let newEndPos = targetPos + targetSpan + padding
+        let targetEnd = targetPos + targetSpan
 
-        if currentViewPos <= newPos && newEndPos <= currentViewPos + viewSpan {
-            return -(targetPos - currentViewPos)
+        // Padding is a preference for clipped targets, not a reason to move a
+        // viewport when the focused container is already fully visible.
+        if currentViewPos - pixelEpsilon <= targetPos
+            && targetEnd <= currentViewPos + viewSpan + pixelEpsilon
+        {
+            return currentViewPos - targetPos
         }
 
-        let distToStart = abs(currentViewPos - newPos)
-        let distToEnd = abs((currentViewPos + viewSpan) - newEndPos)
+        let exactStart = targetPos
+        let exactEnd = targetEnd - viewSpan
+
+        let distToStart = abs(currentViewPos - exactStart)
+        let distToEnd = abs(currentViewPos - exactEnd)
 
         if distToStart <= distToEnd {
-            return -padding
+            return exactStart - targetPos
         } else {
-            return -(viewSpan - padding - targetSpan)
+            return exactEnd - targetPos
         }
     }
 
@@ -76,14 +106,22 @@ extension ViewportState {
         currentViewStart: CGFloat,
         centerMode: CenterFocusedColumn,
         alwaysCenterSingleColumn: Bool = false,
-        fromContainerIndex: Int? = nil
+        fromContainerIndex: Int? = nil,
+        scale: CGFloat = 2.0
     ) -> CGFloat {
         guard !containers.isEmpty, containerIndex >= 0, containerIndex < containers.count else { return 0 }
 
         let effectiveCenterMode = (containers.count == 1 && alwaysCenterSingleColumn) ? .always : centerMode
+        let currentViewEnd = currentViewStart + viewportSpan
+        let pixelEpsilon: CGFloat = 1.0 / max(scale, 1.0)
 
         let targetPos = containerPosition(at: containerIndex, containers: containers, gap: gap, sizeKeyPath: sizeKeyPath)
         let targetSize = containers[containerIndex][keyPath: sizeKeyPath]
+        let targetEnd = targetPos + targetSize
+
+        func isFullyVisible(pos: CGFloat, end: CGFloat) -> Bool {
+            currentViewStart - pixelEpsilon <= pos && end <= currentViewEnd + pixelEpsilon
+        }
 
         var targetOffset: CGFloat
 
@@ -106,38 +144,26 @@ extension ViewportState {
                     viewportSpan: viewportSpan,
                     sizeKeyPath: sizeKeyPath
                 )
-            } else if let fromIdx = fromContainerIndex, fromIdx != containerIndex {
-                let sourceIdx = fromIdx > containerIndex
-                    ? min(containerIndex + 1, containers.count - 1)
-                    : max(containerIndex - 1, 0)
+            } else if let fromIdx = fromContainerIndex,
+                      fromIdx != containerIndex,
+                      containers.indices.contains(fromIdx)
+            {
+                let sourcePos = containerPosition(at: fromIdx, containers: containers, gap: gap, sizeKeyPath: sizeKeyPath)
+                let sourceSize = containers[fromIdx][keyPath: sizeKeyPath]
+                let sourceEnd = sourcePos + sourceSize
+                let pairStart = min(sourcePos, targetPos)
+                let pairEnd = max(sourceEnd, targetEnd)
+                let pairSpan = pairEnd - pairStart
 
-                guard sourceIdx >= 0, sourceIdx < containers.count else {
+                if (isFullyVisible(pos: sourcePos, end: sourceEnd) && isFullyVisible(pos: targetPos, end: targetEnd))
+                    || pairSpan <= viewportSpan
+                {
                     targetOffset = computeFitOffset(
                         currentViewPos: currentViewStart,
                         viewSpan: viewportSpan,
                         targetPos: targetPos,
                         targetSpan: targetSize,
-                        gaps: gap
-                    )
-                    break
-                }
-
-                let sourcePos = containerPosition(at: sourceIdx, containers: containers, gap: gap, sizeKeyPath: sizeKeyPath)
-                let sourceSize = containers[sourceIdx][keyPath: sizeKeyPath]
-
-                let totalSpanNeeded: CGFloat = if sourcePos < targetPos {
-                    targetPos - sourcePos + targetSize + gap * 2
-                } else {
-                    sourcePos - targetPos + sourceSize + gap * 2
-                }
-
-                if totalSpanNeeded <= viewportSpan {
-                    targetOffset = computeFitOffset(
-                        currentViewPos: currentViewStart,
-                        viewSpan: viewportSpan,
-                        targetPos: targetPos,
-                        targetSpan: targetSize,
-                        gaps: gap
+                        scale: scale
                     )
                 } else {
                     targetOffset = computeCenteredOffset(
@@ -154,7 +180,7 @@ extension ViewportState {
                     viewSpan: viewportSpan,
                     targetPos: targetPos,
                     targetSpan: targetSize,
-                    gaps: gap
+                    scale: scale
                 )
             }
 
@@ -164,15 +190,17 @@ extension ViewportState {
                 viewSpan: viewportSpan,
                 targetPos: targetPos,
                 targetSpan: targetSize,
-                gaps: gap
+                scale: scale
             )
         }
 
         let total = totalSpan(containers: containers, gap: gap, sizeKeyPath: sizeKeyPath)
-        let maxOffset: CGFloat = 0
-        let minOffset = viewportSpan - total
-        if minOffset < maxOffset {
-            targetOffset = targetOffset.clamped(to: minOffset ... maxOffset)
+        if let allowedOffsetRange = allowedOffsetRange(
+            targetPos: targetPos,
+            totalSpan: total,
+            viewportSpan: viewportSpan
+        ) {
+            targetOffset = targetOffset.clamped(to: allowedOffsetRange)
         }
 
         return targetOffset
@@ -195,7 +223,8 @@ extension ViewportState {
         currentOffset: CGFloat,
         centerMode: CenterFocusedColumn,
         alwaysCenterSingleColumn: Bool = false,
-        fromColumnIndex: Int? = nil
+        fromColumnIndex: Int? = nil,
+        scale: CGFloat = 2.0
     ) -> CGFloat {
         let colX = columnX(at: columnIndex, columns: columns, gap: gap)
         return computeVisibleOffset(
@@ -207,7 +236,8 @@ extension ViewportState {
             currentViewStart: colX + currentOffset,
             centerMode: centerMode,
             alwaysCenterSingleColumn: alwaysCenterSingleColumn,
-            fromContainerIndex: fromColumnIndex
+            fromContainerIndex: fromColumnIndex,
+            scale: scale
         )
     }
 }

@@ -70,6 +70,10 @@ extension NiriLayoutEngine {
         return effectiveSettings(for: monitorId)
     }
 
+    func displayScale(in workspaceId: WorkspaceDescriptor.ID) -> CGFloat {
+        monitorForWorkspace(workspaceId)?.scale ?? 2.0
+    }
+
     func effectiveMaxVisibleColumns(for monitorId: Monitor.ID) -> Int {
         effectiveSettings(for: monitorId).maxVisibleColumns
     }
