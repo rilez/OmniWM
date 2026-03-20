@@ -224,14 +224,14 @@ extension NiriLayoutEngine {
         let cols = columns(in: workspaceId)
         guard !cols.isEmpty else { return }
 
-        let balancedWidth = 1.0 / CGFloat(effectiveMaxVisibleColumns(in: workspaceId))
-        let targetPixels = (workingAreaWidth - gaps) * balancedWidth
+        let resolvedWidth = resolvedColumnResetWidth(in: workspaceId)
+        let targetPixels = (workingAreaWidth - gaps) * resolvedWidth.proportion
 
         for column in cols {
-            column.width = .proportion(balancedWidth)
+            column.width = .proportion(resolvedWidth.proportion)
             column.isFullWidth = false
             column.savedWidth = nil
-            column.presetWidthIdx = nil
+            column.presetWidthIdx = resolvedWidth.presetWidthIdx
             column.hasManualSingleWindowWidthOverride = false
 
             column.animateWidthTo(

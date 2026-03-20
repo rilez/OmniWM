@@ -2883,6 +2883,51 @@ private func hasAnyVisibilityChange(
         #expect(column.presetWidthIdx == 3)
     }
 
+    @Test func balanceSizesUsesExplicitDefaultWidthAndResetsManualState() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 1, maxVisibleColumns: 3)
+        engine.presetColumnWidths = [
+            .proportion(0.85),
+            .proportion(1.0),
+            .proportion(0.5)
+        ]
+        engine.defaultColumnWidth = 0.85
+        let wsId = UUID()
+
+        let firstWindow = engine.addWindow(handle: makeTestHandle(pid: 411), to: wsId, afterSelection: nil)
+        let secondWindow = engine.addWindow(handle: makeTestHandle(pid: 412), to: wsId, afterSelection: firstWindow.id)
+        let _ = engine.addWindow(handle: makeTestHandle(pid: 413), to: wsId, afterSelection: secondWindow.id)
+
+        let columns = engine.columns(in: wsId)
+        guard columns.count == 3 else {
+            Issue.record("Expected three columns for explicit default balance test")
+            return
+        }
+
+        for (index, column) in columns.enumerated() {
+            column.width = index == 0 ? .fixed(900) : .proportion(0.4 + CGFloat(index) * 0.1)
+            column.presetWidthIdx = index
+            column.isFullWidth = true
+            column.savedWidth = .fixed(700 + CGFloat(index) * 25)
+            column.hasManualSingleWindowWidthOverride = true
+            for window in column.windowNodes {
+                window.size = CGFloat(index + 2)
+            }
+        }
+
+        engine.balanceSizes(in: wsId, workingAreaWidth: 1600, gaps: 8)
+
+        for column in columns {
+            #expect(column.width == .proportion(0.85))
+            #expect(column.presetWidthIdx == 0)
+            #expect(!column.isFullWidth)
+            #expect(column.savedWidth == nil)
+            #expect(!column.hasManualSingleWindowWidthOverride)
+            for window in column.windowNodes {
+                #expect(window.size == 1.0)
+            }
+        }
+    }
+
     @Test func explicitDefaultOutsidePresetListReanchorsOnFirstResize() {
         let engine = NiriLayoutEngine(maxWindowsPerColumn: 3, maxVisibleColumns: 3)
         engine.presetColumnWidths = [
@@ -2914,6 +2959,63 @@ private func hasAnyVisibilityChange(
 
         #expect(column.width == .proportion(0.85))
         #expect(column.presetWidthIdx == 1)
+    }
+
+    @Test func balanceSizesFallsBackToAutoWidthWhenDefaultWidthIsAuto() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 1, maxVisibleColumns: 4)
+        engine.defaultColumnWidth = nil
+        let wsId = UUID()
+
+        let firstWindow = engine.addWindow(handle: makeTestHandle(pid: 421), to: wsId, afterSelection: nil)
+        let secondWindow = engine.addWindow(handle: makeTestHandle(pid: 422), to: wsId, afterSelection: firstWindow.id)
+        let _ = engine.addWindow(handle: makeTestHandle(pid: 423), to: wsId, afterSelection: secondWindow.id)
+
+        let columns = engine.columns(in: wsId)
+        guard columns.count == 3 else {
+            Issue.record("Expected three columns for auto-width balance test")
+            return
+        }
+
+        for column in columns {
+            column.width = .fixed(777)
+            column.presetWidthIdx = 2
+        }
+
+        engine.balanceSizes(in: wsId, workingAreaWidth: 1600, gaps: 8)
+
+        let expectedWidth = 1.0 / CGFloat(engine.effectiveMaxVisibleColumns(in: wsId))
+        for column in columns {
+            #expect(column.width == .proportion(expectedWidth))
+            #expect(column.presetWidthIdx == nil)
+        }
+    }
+
+    @Test func balanceSizesUsesExplicitDefaultWidthWithoutPresetMatch() {
+        let engine = NiriLayoutEngine(maxWindowsPerColumn: 1, maxVisibleColumns: 3)
+        engine.presetColumnWidths = [
+            .proportion(0.5),
+            .proportion(0.85),
+            .proportion(1.0)
+        ]
+        engine.defaultColumnWidth = 0.6
+        let wsId = UUID()
+
+        let firstWindow = engine.addWindow(handle: makeTestHandle(pid: 431), to: wsId, afterSelection: nil)
+        let secondWindow = engine.addWindow(handle: makeTestHandle(pid: 432), to: wsId, afterSelection: firstWindow.id)
+        let _ = engine.addWindow(handle: makeTestHandle(pid: 433), to: wsId, afterSelection: secondWindow.id)
+
+        let columns = engine.columns(in: wsId)
+        guard columns.count == 3 else {
+            Issue.record("Expected three columns for custom non-preset balance test")
+            return
+        }
+
+        engine.balanceSizes(in: wsId, workingAreaWidth: 1600, gaps: 8)
+
+        for column in columns {
+            #expect(column.width == .proportion(0.6))
+            #expect(column.presetWidthIdx == nil)
+        }
     }
 
     @Test func renderOffsetVisibilityUsesRenderedContainerFrame() {

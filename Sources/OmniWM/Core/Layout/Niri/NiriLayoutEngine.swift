@@ -182,14 +182,18 @@ final class NiriLayoutEngine {
         }
     }
 
-    func initializeNewColumnWidth(_ column: NiriContainer, in workspaceId: WorkspaceDescriptor.ID) {
+    func resolvedColumnResetWidth(in workspaceId: WorkspaceDescriptor.ID) -> (proportion: CGFloat, presetWidthIdx: Int?) {
         if let defaultColumnWidth {
-            column.width = .proportion(defaultColumnWidth)
-            column.presetWidthIdx = matchingPresetIndex(for: defaultColumnWidth)
-        } else {
-            column.width = .proportion(1.0 / CGFloat(effectiveMaxVisibleColumns(in: workspaceId)))
-            column.presetWidthIdx = nil
+            return (defaultColumnWidth, matchingPresetIndex(for: defaultColumnWidth))
         }
+
+        return (1.0 / CGFloat(effectiveMaxVisibleColumns(in: workspaceId)), nil)
+    }
+
+    func initializeNewColumnWidth(_ column: NiriContainer, in workspaceId: WorkspaceDescriptor.ID) {
+        let resolvedWidth = resolvedColumnResetWidth(in: workspaceId)
+        column.width = .proportion(resolvedWidth.proportion)
+        column.presetWidthIdx = resolvedWidth.presetWidthIdx
 
         column.cachedWidth = 0
         column.isFullWidth = false
