@@ -1739,9 +1739,10 @@ import QuartzCore
         case .horizontal: frame.origin.y
         case .vertical: frame.origin.x
         }
+        let requestedEdge = AxisHideEdge(encodedHideSide: side)
         let placement = HiddenWindowPlacementResolver.placement(
             for: frame.size,
-            requestedSide: side,
+            requestedEdge: requestedEdge,
             orthogonalOrigin: orthogonalOrigin,
             baseReveal: Self.hiddenEdgeReveal(isZoomApp: isZoomApp(pid)),
             scale: scale,

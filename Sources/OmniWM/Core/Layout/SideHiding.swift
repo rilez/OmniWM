@@ -6,6 +6,38 @@ enum HideSide {
     case right
 }
 
+enum AxisHideEdge {
+    case minimum
+    case maximum
+
+    init(encodedHideSide: HideSide) {
+        switch encodedHideSide {
+        case .left:
+            self = .minimum
+        case .right:
+            self = .maximum
+        }
+    }
+
+    var encodedHideSide: HideSide {
+        switch self {
+        case .minimum:
+            .left
+        case .maximum:
+            .right
+        }
+    }
+
+    var opposite: AxisHideEdge {
+        switch self {
+        case .minimum:
+            .maximum
+        case .maximum:
+            .minimum
+        }
+    }
+}
+
 struct HiddenPlacementMonitorContext {
     let id: Monitor.ID
     let frame: CGRect
@@ -27,8 +59,8 @@ struct HiddenPlacementMonitorContext {
 }
 
 struct HiddenWindowPlacement {
-    let requestedSide: HideSide
-    let resolvedSide: HideSide
+    let requestedEdge: AxisHideEdge
+    let resolvedEdge: AxisHideEdge
     let origin: CGPoint
 
     func frame(for size: CGSize) -> CGRect {
@@ -39,7 +71,7 @@ struct HiddenWindowPlacement {
 enum HiddenWindowPlacementResolver {
     static func placement(
         for size: CGSize,
-        requestedSide: HideSide,
+        requestedEdge: AxisHideEdge,
         orthogonalOrigin: CGFloat,
         baseReveal: CGFloat,
         scale: CGFloat,
@@ -49,29 +81,29 @@ enum HiddenWindowPlacementResolver {
     ) -> HiddenWindowPlacement {
         let reveal = baseReveal / max(1.0, scale)
 
-        func origin(for side: HideSide) -> CGPoint {
+        func origin(for edge: AxisHideEdge) -> CGPoint {
             switch orientation {
             case .horizontal:
-                switch side {
-                case .left:
+                switch edge {
+                case .minimum:
                     return CGPoint(
                         x: monitor.visibleFrame.minX - size.width + reveal,
                         y: orthogonalOrigin
                     )
-                case .right:
+                case .maximum:
                     return CGPoint(
                         x: monitor.visibleFrame.maxX - reveal,
                         y: orthogonalOrigin
                     )
                 }
             case .vertical:
-                switch side {
-                case .left:
+                switch edge {
+                case .minimum:
                     return CGPoint(
                         x: orthogonalOrigin,
                         y: monitor.visibleFrame.minY - size.height + reveal
                     )
-                case .right:
+                case .maximum:
                     return CGPoint(
                         x: orthogonalOrigin,
                         y: monitor.visibleFrame.maxY - reveal
@@ -91,30 +123,30 @@ enum HiddenWindowPlacementResolver {
             return area
         }
 
-        let primaryOrigin = origin(for: requestedSide)
+        let primaryOrigin = origin(for: requestedEdge)
         let primaryOverlap = overlapArea(for: primaryOrigin)
         if primaryOverlap == 0 {
             return HiddenWindowPlacement(
-                requestedSide: requestedSide,
-                resolvedSide: requestedSide,
+                requestedEdge: requestedEdge,
+                resolvedEdge: requestedEdge,
                 origin: primaryOrigin
             )
         }
 
-        let alternateSide: HideSide = requestedSide == .left ? .right : .left
-        let alternateOrigin = origin(for: alternateSide)
+        let alternateEdge = requestedEdge.opposite
+        let alternateOrigin = origin(for: alternateEdge)
         let alternateOverlap = overlapArea(for: alternateOrigin)
         if alternateOverlap < primaryOverlap {
             return HiddenWindowPlacement(
-                requestedSide: requestedSide,
-                resolvedSide: alternateSide,
+                requestedEdge: requestedEdge,
+                resolvedEdge: alternateEdge,
                 origin: alternateOrigin
             )
         }
 
         return HiddenWindowPlacement(
-            requestedSide: requestedSide,
-            resolvedSide: requestedSide,
+            requestedEdge: requestedEdge,
+            resolvedEdge: requestedEdge,
             origin: primaryOrigin
         )
     }

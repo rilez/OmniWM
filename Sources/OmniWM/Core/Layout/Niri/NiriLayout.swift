@@ -41,11 +41,11 @@ struct LayoutResult {
 
 private enum ContainerVisibilityState {
     case visible
-    case hidden(HideSide)
+    case hidden(AxisHideEdge)
 }
 
 private struct ContainerOverflowRegion {
-    let side: HideSide
+    let edge: AxisHideEdge
     let rect: CGRect
 }
 
@@ -244,22 +244,22 @@ extension NiriLayoutEngine {
             switch containerVisibilityState(
                 for: visibilityRect,
                 viewportFrame: workingFrame,
-                fallback: idx == 0 ? .left : .right,
+                fallback: idx == 0 ? .minimum : .maximum,
                 orientation: orientation,
                 hiddenPlacementMonitor: hiddenPlacementMonitor,
                 hiddenPlacementMonitors: hiddenPlacementMonitors
             ) {
             case .visible:
                 renderedContainerRect = visibilityRect
-            case let .hidden(hideSide):
+            case let .hidden(hiddenEdge):
                 for window in containerWindowNodes[idx] {
                     if window.sizingMode != .fullscreen {
-                        hiddenHandles[window.token] = hideSide
+                        hiddenHandles[window.token] = hiddenEdge.encodedHideSide
                     }
                 }
                 renderedContainerRect = hiddenRenderedContainerRect(
                     canonicalRect: canonicalContainerRect,
-                    side: hideSide,
+                    edge: hiddenEdge,
                     viewFrame: viewFrame,
                     scale: effectiveScale,
                     orientation: orientation,
@@ -337,12 +337,12 @@ extension NiriLayoutEngine {
     private func containerVisibilityState(
         for renderedRect: CGRect,
         viewportFrame: CGRect,
-        fallback: HideSide,
+        fallback: AxisHideEdge,
         orientation: Monitor.Orientation,
         hiddenPlacementMonitor: HiddenPlacementMonitorContext?,
         hiddenPlacementMonitors: [HiddenPlacementMonitorContext]
     ) -> ContainerVisibilityState {
-        let defaultHideSide = hiddenSide(
+        let defaultHideEdge = hiddenEdge(
             for: renderedRect,
             viewportFrame: viewportFrame,
             fallback: fallback,
@@ -353,16 +353,16 @@ extension NiriLayoutEngine {
             viewportFrame: viewportFrame,
             orientation: orientation
         ) else {
-            return .hidden(defaultHideSide)
+            return .hidden(defaultHideEdge)
         }
-        if let overflowSide = overflowSideIntersectingNeighboringMonitor(
+        if let overflowEdge = overflowEdgeIntersectingNeighboringMonitor(
             renderedRect,
             viewportFrame: viewportFrame,
             orientation: orientation,
             hiddenPlacementMonitor: hiddenPlacementMonitor,
             hiddenPlacementMonitors: hiddenPlacementMonitors
         ) {
-            return .hidden(overflowSide)
+            return .hidden(overflowEdge)
         }
         return .visible
     }
@@ -380,13 +380,13 @@ extension NiriLayoutEngine {
         }
     }
 
-    private func overflowSideIntersectingNeighboringMonitor(
+    private func overflowEdgeIntersectingNeighboringMonitor(
         _ renderedRect: CGRect,
         viewportFrame: CGRect,
         orientation: Monitor.Orientation,
         hiddenPlacementMonitor: HiddenPlacementMonitorContext?,
         hiddenPlacementMonitors: [HiddenPlacementMonitorContext]
-    ) -> HideSide? {
+    ) -> AxisHideEdge? {
         let overflowRegions = containerOverflowRegions(
             for: renderedRect,
             viewportFrame: viewportFrame,
@@ -401,7 +401,7 @@ extension NiriLayoutEngine {
                 viewportFrame: viewportFrame
             ) {
                 if overflowRegion.rect.intersects(otherMonitor.frame) {
-                    return overflowRegion.side
+                    return overflowRegion.edge
                 }
             }
         }
@@ -424,7 +424,7 @@ extension NiriLayoutEngine {
                 if overflowMaxX > renderedRect.minX {
                     overflowRegions.append(
                         ContainerOverflowRegion(
-                            side: .left,
+                            edge: .minimum,
                             rect: CGRect(
                                 x: renderedRect.minX,
                                 y: renderedRect.minY,
@@ -440,7 +440,7 @@ extension NiriLayoutEngine {
                 if renderedRect.maxX > overflowMinX {
                     overflowRegions.append(
                         ContainerOverflowRegion(
-                            side: .right,
+                            edge: .maximum,
                             rect: CGRect(
                                 x: overflowMinX,
                                 y: renderedRect.minY,
@@ -457,7 +457,7 @@ extension NiriLayoutEngine {
                 if overflowMaxY > renderedRect.minY {
                     overflowRegions.append(
                         ContainerOverflowRegion(
-                            side: .left,
+                            edge: .minimum,
                             rect: CGRect(
                                 x: renderedRect.minX,
                                 y: renderedRect.minY,
@@ -473,7 +473,7 @@ extension NiriLayoutEngine {
                 if renderedRect.maxY > overflowMinY {
                     overflowRegions.append(
                         ContainerOverflowRegion(
-                            side: .right,
+                            edge: .maximum,
                             rect: CGRect(
                                 x: renderedRect.minX,
                                 y: overflowMinY,
@@ -502,30 +502,30 @@ extension NiriLayoutEngine {
             || candidateMonitor.visibleFrame.intersects(viewportFrame)
     }
 
-    private func hiddenSide(
+    private func hiddenEdge(
         for renderedRect: CGRect,
         viewportFrame: CGRect,
-        fallback: HideSide,
+        fallback: AxisHideEdge,
         orientation: Monitor.Orientation
-    ) -> HideSide {
+    ) -> AxisHideEdge {
         switch orientation {
         case .horizontal:
             let leftOverflow = viewportFrame.minX - renderedRect.minX
             let rightOverflow = renderedRect.maxX - viewportFrame.maxX
             if leftOverflow > rightOverflow, leftOverflow > 0 {
-                return .left
+                return .minimum
             }
             if rightOverflow > leftOverflow, rightOverflow > 0 {
-                return .right
+                return .maximum
             }
         case .vertical:
             let topOverflow = viewportFrame.minY - renderedRect.minY
             let bottomOverflow = renderedRect.maxY - viewportFrame.maxY
             if topOverflow > bottomOverflow, topOverflow > 0 {
-                return .left
+                return .minimum
             }
             if bottomOverflow > topOverflow, bottomOverflow > 0 {
-                return .right
+                return .maximum
             }
         }
         return fallback
@@ -533,7 +533,7 @@ extension NiriLayoutEngine {
 
     private func hiddenRenderedContainerRect(
         canonicalRect: CGRect,
-        side: HideSide,
+        edge: AxisHideEdge,
         viewFrame: CGRect,
         scale: CGFloat,
         orientation: Monitor.Orientation,
@@ -545,7 +545,7 @@ extension NiriLayoutEngine {
             if let hiddenPlacementMonitor {
                 return HiddenWindowPlacementResolver.placement(
                     for: canonicalRect.size,
-                    requestedSide: side,
+                    requestedEdge: edge,
                     orthogonalOrigin: canonicalRect.minY,
                     baseReveal: 1.0,
                     scale: scale,
@@ -558,7 +558,7 @@ extension NiriLayoutEngine {
             }
 
             return hiddenColumnRect(
-                side: side,
+                edge: edge,
                 width: canonicalRect.width,
                 height: canonicalRect.height,
                 screenY: canonicalRect.minY,
@@ -569,7 +569,7 @@ extension NiriLayoutEngine {
             if let hiddenPlacementMonitor {
                 return HiddenWindowPlacementResolver.placement(
                     for: canonicalRect.size,
-                    requestedSide: side,
+                    requestedEdge: edge,
                     orthogonalOrigin: canonicalRect.minX,
                     baseReveal: 1.0,
                     scale: scale,
@@ -582,7 +582,7 @@ extension NiriLayoutEngine {
             }
 
             return hiddenRowRect(
-                side: side,
+                edge: edge,
                 width: canonicalRect.width,
                 height: canonicalRect.height,
                 screenX: canonicalRect.minX,
@@ -901,7 +901,7 @@ extension NiriLayoutEngine {
     }
 
     private func hiddenRowRect(
-        side: HideSide,
+        edge: AxisHideEdge,
         width: CGFloat,
         height: CGFloat,
         screenX: CGFloat,
@@ -910,10 +910,10 @@ extension NiriLayoutEngine {
     ) -> CGRect {
         let edgeReveal = 1.0 / max(1.0, scale)
         let y: CGFloat
-        switch side {
-        case .left:
+        switch edge {
+        case .minimum:
             y = edgeFrame.minY - height + edgeReveal
-        case .right:
+        case .maximum:
             y = edgeFrame.maxY - edgeReveal
         }
         let origin = CGPoint(x: screenX, y: y)
@@ -921,7 +921,7 @@ extension NiriLayoutEngine {
     }
 
     private func hiddenColumnRect(
-        side: HideSide,
+        edge: AxisHideEdge,
         width: CGFloat,
         height: CGFloat,
         screenY: CGFloat,
@@ -930,10 +930,10 @@ extension NiriLayoutEngine {
     ) -> CGRect {
         let edgeReveal = 1.0 / max(1.0, scale)
         let x: CGFloat
-        switch side {
-        case .left:
+        switch edge {
+        case .minimum:
             x = edgeFrame.minX - width + edgeReveal
-        case .right:
+        case .maximum:
             x = edgeFrame.maxX - edgeReveal
         }
         let origin = CGPoint(x: x, y: screenY)

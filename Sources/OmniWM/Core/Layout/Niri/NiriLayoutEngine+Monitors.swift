@@ -122,20 +122,20 @@ extension NiriLayoutEngine {
         effectiveSettings(in: workspaceId).infiniteLoop
     }
 
+    /// Reassign a single workspace without pruning unrelated workspaces
+    /// that are omitted from the request.
     func moveWorkspace(
         _ workspaceId: WorkspaceDescriptor.ID,
         to monitorId: Monitor.ID,
         monitor: Monitor
     ) {
         let targetMonitor = ensureMonitor(for: monitorId, monitor: monitor)
-        detachWorkspaceFromAllMonitors(workspaceId, exceptMonitorId: targetMonitor.id)
-        let root = ensureRoot(for: workspaceId)
-        if let existing = targetMonitor.workspaceRoots[workspaceId], existing === root {
-            return
-        }
-        targetMonitor.workspaceRoots[workspaceId] = root
+        removeWorkspaceRootCopies(workspaceId, keepingMonitorId: targetMonitor.id)
+        attachWorkspaceRootIfNeeded(workspaceId, to: targetMonitor)
     }
 
+    /// Reconcile the authoritative full workspace-to-monitor assignment set
+    /// during monitor sync and prune stale duplicate roots.
     func syncWorkspaceAssignments(
         _ assignments: [(workspaceId: WorkspaceDescriptor.ID, monitor: Monitor)]
     ) {
@@ -150,27 +150,14 @@ extension NiriLayoutEngine {
             desiredOwners[assignment.workspaceId] = assignment.monitor.id
         }
 
-        for niriMonitor in monitors.values {
-            let staleWorkspaceIds = Array(
-                niriMonitor.workspaceRoots.keys.filter { workspaceId in
-                    desiredOwners[workspaceId] != niriMonitor.id
-                }
-            )
-            for workspaceId in staleWorkspaceIds {
-                niriMonitor.workspaceRoots.removeValue(forKey: workspaceId)
-            }
-        }
+        pruneStaleWorkspaceRootCopies(desiredOwners: desiredOwners)
 
         for assignment in assignments where desiredOwners[assignment.workspaceId] == assignment.monitor.id {
             let targetMonitor = monitors[assignment.monitor.id] ?? ensureMonitor(
                 for: assignment.monitor.id,
                 monitor: assignment.monitor
             )
-            let root = ensureRoot(for: assignment.workspaceId)
-            if let existing = targetMonitor.workspaceRoots[assignment.workspaceId], existing === root {
-                continue
-            }
-            targetMonitor.workspaceRoots[assignment.workspaceId] = root
+            attachWorkspaceRootIfNeeded(assignment.workspaceId, to: targetMonitor)
         }
     }
 
@@ -192,11 +179,37 @@ extension NiriLayoutEngine {
         return nil
     }
 
-    private func detachWorkspaceFromAllMonitors(
+    private func attachWorkspaceRootIfNeeded(
         _ workspaceId: WorkspaceDescriptor.ID,
-        exceptMonitorId: Monitor.ID? = nil
+        to targetMonitor: NiriMonitor
     ) {
-        for niriMonitor in monitors.values where niriMonitor.id != exceptMonitorId {
+        let root = ensureRoot(for: workspaceId)
+        if let existing = targetMonitor.workspaceRoots[workspaceId], existing === root {
+            return
+        }
+        targetMonitor.workspaceRoots[workspaceId] = root
+    }
+
+    private func pruneStaleWorkspaceRootCopies(
+        desiredOwners: [WorkspaceDescriptor.ID: Monitor.ID]
+    ) {
+        for niriMonitor in monitors.values {
+            let staleWorkspaceIds = Array(
+                niriMonitor.workspaceRoots.keys.filter { workspaceId in
+                    desiredOwners[workspaceId] != niriMonitor.id
+                }
+            )
+            for workspaceId in staleWorkspaceIds {
+                niriMonitor.workspaceRoots.removeValue(forKey: workspaceId)
+            }
+        }
+    }
+
+    private func removeWorkspaceRootCopies(
+        _ workspaceId: WorkspaceDescriptor.ID,
+        keepingMonitorId: Monitor.ID? = nil
+    ) {
+        for niriMonitor in monitors.values where niriMonitor.id != keepingMonitorId {
             niriMonitor.workspaceRoots.removeValue(forKey: workspaceId)
         }
     }
