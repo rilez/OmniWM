@@ -32,3 +32,24 @@ Frameworks/
 .tmp/
 .cache/
 .codex-cache/
+
+# ── GSD baseline (auto-generated) ──
+Thumbs.db
+.idea/
+.vscode/
+*.code-workspace
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+target/
+vendor/
+*.log
+coverage/
+tmp/
