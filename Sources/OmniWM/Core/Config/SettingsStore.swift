@@ -188,6 +188,10 @@ final class SettingsStore {
         didSet { MonitorSettingsStore.save(monitorOrientationSettings, to: defaults, key: Keys.monitorOrientationSettings) }
     }
 
+    var spatialMonitorLayout: [SpatialMonitorEntry] {
+        didSet { saveSpatialMonitorLayout() }
+    }
+
     var monitorNiriSettings: [MonitorNiriSettings] {
         didSet { MonitorSettingsStore.save(monitorNiriSettings, to: defaults, key: Keys.monitorNiriSettings) }
     }
@@ -399,6 +403,7 @@ final class SettingsStore {
         monitorBarSettings = MonitorSettingsStore.load(from: defaults, key: Keys.monitorBarSettings)
         appRules = Self.loadAppRules(from: defaults)
         monitorOrientationSettings = MonitorSettingsStore.load(from: defaults, key: Keys.monitorOrientationSettings)
+        spatialMonitorLayout = Self.loadSpatialMonitorLayout(from: defaults)
         monitorNiriSettings = MonitorSettingsStore.load(from: defaults, key: Keys.monitorNiriSettings)
 
         dwindleSmartSplit = defaults.object(forKey: Keys.dwindleSmartSplit) as? Bool ?? false
@@ -779,6 +784,20 @@ final class SettingsStore {
         defaults.set(data, forKey: Keys.mouseWarpMonitorOrder)
     }
 
+    private static func loadSpatialMonitorLayout(from defaults: UserDefaults) -> [SpatialMonitorEntry] {
+        guard let data = defaults.data(forKey: Keys.spatialMonitorLayout),
+              let entries = try? JSONDecoder().decode([SpatialMonitorEntry].self, from: data)
+        else {
+            return []
+        }
+        return entries
+    }
+
+    private func saveSpatialMonitorLayout() {
+        guard let data = try? JSONEncoder().encode(spatialMonitorLayout) else { return }
+        defaults.set(data, forKey: Keys.spatialMonitorLayout)
+    }
+
     nonisolated static let defaultColumnWidthPresets: [Double] = BuiltInSettingsDefaults.niriColumnWidthPresets
 
     static func validatedPresets(_ presets: [Double]) -> [Double] {
@@ -885,6 +904,7 @@ private enum Keys {
 
     static let appRules = "settings.appRules"
     static let monitorOrientationSettings = "settings.monitorOrientationSettings"
+    static let spatialMonitorLayout = "settings.spatialMonitorLayout"
     static let preventSleepEnabled = "settings.preventSleepEnabled"
     static let scrollGestureEnabled = "settings.scrollGestureEnabled"
     static let scrollSensitivity = "settings.scrollSensitivity"
