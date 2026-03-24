@@ -35,9 +35,10 @@ struct SettingsExport: Codable {
     var focusFollowsMouse: Bool
     var moveMouseToFocusedWindow: Bool
     var focusFollowsWindowToMonitor: Bool
-    var mouseWarpMonitorOrder: [String]
+    var mouseWarpMonitorOrder: [String]?
     var mouseWarpAxis: String?
     var mouseWarpMargin: Int
+    var spatialMonitorLayout: [SpatialMonitorEntry]?
     var gapSize: Double
     var outerGapLeft: Double
     var outerGapRight: Double
@@ -124,9 +125,10 @@ extension SettingsExport {
             focusFollowsMouse: false,
             moveMouseToFocusedWindow: false,
             focusFollowsWindowToMonitor: false,
-            mouseWarpMonitorOrder: [],
-            mouseWarpAxis: MouseWarpAxis.horizontal.rawValue,
+            mouseWarpMonitorOrder: nil,
+            mouseWarpAxis: nil,
             mouseWarpMargin: 1,
+            spatialMonitorLayout: nil,
             gapSize: 8,
             outerGapLeft: 8,
             outerGapRight: 8,
@@ -303,9 +305,10 @@ extension SettingsStore {
             focusFollowsMouse: focusFollowsMouse,
             moveMouseToFocusedWindow: moveMouseToFocusedWindow,
             focusFollowsWindowToMonitor: focusFollowsWindowToMonitor,
-            mouseWarpMonitorOrder: mouseWarpMonitorOrder,
-            mouseWarpAxis: mouseWarpAxis.rawValue,
+            mouseWarpMonitorOrder: nil,
+            mouseWarpAxis: nil,
             mouseWarpMargin: mouseWarpMargin,
+            spatialMonitorLayout: spatialMonitorLayout.isEmpty ? nil : spatialMonitorLayout,
             gapSize: gapSize,
             outerGapLeft: outerGapLeft,
             outerGapRight: outerGapRight,
@@ -397,9 +400,10 @@ extension SettingsStore {
         focusFollowsMouse = export.focusFollowsMouse
         moveMouseToFocusedWindow = export.moveMouseToFocusedWindow
         focusFollowsWindowToMonitor = export.focusFollowsWindowToMonitor
-        mouseWarpMonitorOrder = export.mouseWarpMonitorOrder
-        mouseWarpAxis = MouseWarpAxis(rawValue: export.mouseWarpAxis ?? "") ?? .horizontal
         mouseWarpMargin = export.mouseWarpMargin
+        if let layout = export.spatialMonitorLayout, !layout.isEmpty {
+            spatialMonitorLayout = layout
+        }
         gapSize = export.gapSize
         outerGapLeft = export.outerGapLeft
         outerGapRight = export.outerGapRight

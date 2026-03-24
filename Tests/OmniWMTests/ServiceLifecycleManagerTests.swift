@@ -269,7 +269,6 @@ private func makeLifecycleWindow(windowId: Int = 101) -> AXWindowRef {
         )
 
         #expect(controller.isMouseWarpPolicyEnabled)
-        #expect(settings.mouseWarpMonitorOrder == ["Left", "Right"])
 
         lifecycleManager.applyMonitorConfigurationChanged(
             currentMonitors: [left],
@@ -277,7 +276,6 @@ private func makeLifecycleWindow(windowId: Int = 101) -> AXWindowRef {
         )
 
         #expect(!controller.isMouseWarpPolicyEnabled)
-        #expect(settings.mouseWarpMonitorOrder == ["Left", "Right"])
 
         lifecycleManager.applyMonitorConfigurationChanged(
             currentMonitors: [left, right],
@@ -285,6 +283,5 @@ private func makeLifecycleWindow(windowId: Int = 101) -> AXWindowRef {
         )
 
         #expect(controller.isMouseWarpPolicyEnabled)
-        #expect(settings.mouseWarpMonitorOrder == ["Left", "Right"])
     }
 }
