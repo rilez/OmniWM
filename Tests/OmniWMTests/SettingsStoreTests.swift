@@ -303,7 +303,8 @@ private func makeSettingsTestMonitor(
     @Test func defaultsReflectPromotedBuiltInValues() {
         let defaults = SettingsExport.defaults()
 
-        #expect(defaults.mouseWarpAxis == MouseWarpAxis.horizontal.rawValue)
+        #expect(defaults.mouseWarpAxis == nil)
+        #expect(defaults.mouseWarpMonitorOrder == nil)
         #expect(defaults.mouseWarpMargin == 1)
         #expect(defaults.niriColumnWidthPresets == BuiltInSettingsDefaults.niriColumnWidthPresets)
         #expect(defaults.outerGapLeft == 8)
@@ -427,8 +428,9 @@ private func makeSettingsTestMonitor(
             moveMouseToFocusedWindow: true,
             focusFollowsWindowToMonitor: true,
             mouseWarpMonitorOrder: ["Monitor1", "Monitor2"],
-            mouseWarpAxis: MouseWarpAxis.vertical.rawValue,
+            mouseWarpAxis: "vertical",
             mouseWarpMargin: 5,
+            spatialMonitorLayout: nil,
             gapSize: 12.0,
             outerGapLeft: 2.0,
             outerGapRight: 3.0,
@@ -743,7 +745,8 @@ private func makeSettingsTestMonitor(
         let decoded = try JSONDecoder().decode(SettingsExport.self, from: mergedData)
 
         #expect(decoded.hiddenBarIsCollapsed == true)
-        #expect(decoded.mouseWarpAxis == MouseWarpAxis.horizontal.rawValue)
+        #expect(decoded.mouseWarpAxis == nil)
+        #expect(decoded.mouseWarpMonitorOrder == nil)
         #expect(decoded.focusFollowsWindowToMonitor == false)
         #expect(decoded.commandPaletteLastMode == CommandPaletteMode.windows.rawValue)
         #expect(decoded.workspaceBarEnabled == true)
@@ -1184,7 +1187,6 @@ private func makeSettingsTestMonitor(
 
         let settings = SettingsStore(defaults: makeTestDefaults())
         settings.focusFollowsWindowToMonitor = true
-        settings.mouseWarpAxis = .vertical
         settings.commandPaletteLastMode = .menu
         settings.quakeTerminalEnabled = true
         settings.quakeTerminalPosition = .bottom
@@ -1203,7 +1205,6 @@ private func makeSettingsTestMonitor(
         try imported.importSettings(from: exportURL)
 
         #expect(imported.focusFollowsWindowToMonitor == true)
-        #expect(imported.mouseWarpAxis == .vertical)
         #expect(imported.commandPaletteLastMode == .menu)
         #expect(imported.quakeTerminalEnabled == true)
         #expect(imported.quakeTerminalPosition == .bottom)
@@ -1215,6 +1216,32 @@ private func makeSettingsTestMonitor(
         #expect(imported.quakeTerminalMonitorMode == .focusedWindow)
         #expect(imported.quakeTerminalUseCustomFrame == true)
         #expect(imported.quakeTerminalCustomFrame == CGRect(x: 10, y: 20, width: 1200, height: 700))
+    }
+
+    @Test func spatialMonitorLayoutRoundTripsThroughExportImport() throws {
+        let exportURL = makeTestSettingsURL()
+        defer { try? FileManager.default.removeItem(at: exportURL) }
+
+        let settings = SettingsStore(defaults: makeTestDefaults())
+        settings.spatialMonitorLayout = [
+            SpatialMonitorEntry(monitorName: "Left", displayId: 1, origin: CGPoint(x: 0, y: 0), size: CGSize(width: 1920, height: 1080)),
+            SpatialMonitorEntry(monitorName: "Right", displayId: 2, origin: CGPoint(x: 1920, y: 0), size: CGSize(width: 2560, height: 1440)),
+        ]
+
+        try settings.exportSettings(to: exportURL, incrementalOnly: false)
+
+        let imported = SettingsStore(defaults: makeTestDefaults())
+        try imported.importSettings(from: exportURL)
+
+        #expect(imported.spatialMonitorLayout.count == 2)
+        #expect(imported.spatialMonitorLayout[0].monitorName == "Left")
+        #expect(imported.spatialMonitorLayout[0].displayId == 1)
+        #expect(imported.spatialMonitorLayout[0].origin == CGPoint(x: 0, y: 0))
+        #expect(imported.spatialMonitorLayout[0].size == CGSize(width: 1920, height: 1080))
+        #expect(imported.spatialMonitorLayout[1].monitorName == "Right")
+        #expect(imported.spatialMonitorLayout[1].displayId == 2)
+        #expect(imported.spatialMonitorLayout[1].origin == CGPoint(x: 1920, y: 0))
+        #expect(imported.spatialMonitorLayout[1].size == CGSize(width: 2560, height: 1440))
     }
 }
 
@@ -1248,7 +1275,6 @@ private func makeSettingsTestMonitor(
     @Test func settingsStoreBootsWithPromotedDefaultsAndExcludedLocalStateStaysOut() {
         let settings = SettingsStore(defaults: makeTestDefaults())
 
-        #expect(settings.mouseWarpAxis == .horizontal)
         #expect(settings.mouseWarpMargin == 1)
         #expect(settings.niriColumnWidthPresets == BuiltInSettingsDefaults.niriColumnWidthPresets)
         #expect(settings.outerGapLeft == 8)
@@ -1266,7 +1292,6 @@ private func makeSettingsTestMonitor(
         #expect(settings.workspaceBarNotchAware == true)
         #expect(settings.workspaceBarReserveLayoutSpace == false)
         #expect(settings.appRules == BuiltInSettingsDefaults.appRules)
-        #expect(settings.mouseWarpMonitorOrder.isEmpty)
         #expect(settings.preventSleepEnabled == false)
         #expect(settings.scrollSensitivity == 5.0)
         #expect(settings.hiddenBarIsCollapsed == true)
@@ -1363,55 +1388,6 @@ private func makeSettingsTestMonitor(
         #expect(settings.workspaceConfigurations.first?.monitorAssignment == .main)
     }
 
-    @Test func persistEffectiveMouseWarpMonitorOrderSeedsConnectedDisplaysWithoutDroppingStoredEntries() {
-        let defaults = makeTestDefaults()
-        let settings = SettingsStore(defaults: defaults)
-        let disconnected = makeSettingsTestMonitor(displayId: 99, name: "Disconnected")
-        let right = makeSettingsTestMonitor(displayId: 2, name: "Right", x: 1920)
-        let left = makeSettingsTestMonitor(displayId: 1, name: "Left", x: 0)
-
-        settings.mouseWarpMonitorOrder = ["Disconnected", "Left"]
-
-        let resolved = settings.persistEffectiveMouseWarpMonitorOrder(for: [right, left])
-
-        #expect(settings.mouseWarpMonitorOrder == ["Disconnected", "Left", "Right"])
-        #expect(resolved == ["Left", "Right"])
-        #expect(settings.effectiveMouseWarpMonitorOrder(for: [left]) == ["Left"])
-        _ = disconnected
-    }
-
-    @Test func persistEffectiveMouseWarpMonitorOrderUsesVerticalAxisForTopToBottomSeeding() {
-        let defaults = makeTestDefaults()
-        let settings = SettingsStore(defaults: defaults)
-        let bottom = makeSettingsTestMonitor(displayId: 1, name: "Bottom", x: 0, y: 0)
-        let top = makeSettingsTestMonitor(displayId: 2, name: "Top", x: 320, y: 1080)
-        settings.mouseWarpAxis = .vertical
-
-        let resolved = settings.persistEffectiveMouseWarpMonitorOrder(for: [bottom, top])
-
-        #expect(settings.mouseWarpMonitorOrder == ["Top", "Bottom"])
-        #expect(resolved == ["Top", "Bottom"])
-    }
-
-    @Test func switchingMouseWarpAxisDoesNotRewriteStoredMonitorOrder() {
-        let defaults = makeTestDefaults()
-        let settings = SettingsStore(defaults: defaults)
-        settings.mouseWarpMonitorOrder = ["Left", "Right"]
-
-        settings.mouseWarpAxis = .vertical
-
-        #expect(settings.mouseWarpMonitorOrder == ["Left", "Right"])
-    }
-
-    @Test func mouseWarpAxisRoundTripsThroughUserDefaults() {
-        let defaults = makeTestDefaults()
-        let settings = SettingsStore(defaults: defaults)
-
-        settings.mouseWarpAxis = .vertical
-
-        let reloaded = SettingsStore(defaults: defaults)
-        #expect(reloaded.mouseWarpAxis == .vertical)
-    }
 }
 
 @Suite struct SettingsMigrationTests {

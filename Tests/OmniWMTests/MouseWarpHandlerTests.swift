@@ -42,8 +42,6 @@ private func makeMouseWarpTestFixture() -> (
     recorder: WarpEffectRecorder
 ) {
     let settings = SettingsStore(defaults: makeMouseWarpTestDefaults())
-    settings.mouseWarpMonitorOrder = ["Left", "Right"]
-    settings.mouseWarpAxis = .horizontal
     settings.mouseWarpMargin = 2
 
     let leftMonitor = makeMouseWarpTestMonitor(displayId: 1, name: "Left", x: 0)
@@ -83,8 +81,6 @@ private func makeVerticalMouseWarpTestFixture() -> (
     recorder: WarpEffectRecorder
 ) {
     let settings = SettingsStore(defaults: makeMouseWarpTestDefaults())
-    settings.mouseWarpMonitorOrder = ["Top", "Bottom"]
-    settings.mouseWarpAxis = .vertical
     settings.mouseWarpMargin = 2
 
     let bottomMonitor = makeMouseWarpTestMonitor(displayId: 1, name: "Bottom", x: 0, y: 0, width: 1728)
@@ -218,31 +214,6 @@ private func waitUntilMouseWarpDrain(
         ))
 
         #expect(fixture.handler.state.lastMonitorId == fixture.rightMonitor.id)
-        #expect(fixture.recorder.postedPoints == [expectedPoint])
-    }
-
-    @Test @MainActor func policySeedsDefaultOrderBeforeWarpingFreshMultiMonitorSetup() {
-        let fixture = makeMouseWarpTestFixture()
-        defer { fixture.handler.cleanup() }
-
-        fixture.controller.settings.mouseWarpMonitorOrder = []
-        _ = fixture.controller.syncMouseWarpPolicy(for: [fixture.leftMonitor, fixture.rightMonitor])
-
-        let location = CGPoint(
-            x: fixture.leftMonitor.frame.maxX - CGFloat(fixture.controller.settings.mouseWarpMargin) + 1,
-            y: fixture.leftMonitor.frame.midY
-        )
-
-        fixture.handler.resetDebugStateForTests()
-        fixture.handler.receiveTapMouseWarpMoved(at: location)
-        fixture.handler.flushPendingWarpEventsForTests()
-
-        let expectedPoint = ScreenCoordinateSpace.toWindowServer(point: CGPoint(
-            x: fixture.rightMonitor.frame.minX + CGFloat(fixture.controller.settings.mouseWarpMargin) + 1,
-            y: fixture.rightMonitor.frame.midY
-        ))
-
-        #expect(fixture.controller.settings.mouseWarpMonitorOrder == ["Left", "Right"])
         #expect(fixture.recorder.postedPoints == [expectedPoint])
     }
 
