@@ -6,7 +6,7 @@ enum StartupDecision: Equatable {
 }
 
 enum SettingsMigration {
-    static let currentSettingsEpoch = 4
+    static let currentSettingsEpoch = 5
 
     private static let epochKey = "settings.settingsEpoch"
     private static let ownedSettingsPrefix = "settings."
@@ -34,7 +34,12 @@ enum SettingsMigration {
     static func startupDecision(defaults: UserDefaults = .standard) -> StartupDecision {
         let storedEpoch = storedEpoch(defaults: defaults)
         if let storedEpoch {
-            return storedEpoch == currentSettingsEpoch ? .boot : .requireReset(storedEpoch: storedEpoch)
+            if storedEpoch == currentSettingsEpoch { return .boot }
+            if storedEpoch == 4 {
+                migrateFromEpoch4(defaults: defaults)
+                return .boot
+            }
+            return .requireReset(storedEpoch: storedEpoch)
         }
 
         return hasOwnedSettings(defaults: defaults) ? .requireReset(storedEpoch: nil) : .boot
@@ -99,6 +104,28 @@ enum SettingsMigration {
 
     private static func hasOwnedSettings(defaults: UserDefaults) -> Bool {
         !ownedSettingsSnapshot(defaults: defaults).isEmpty
+    }
+
+    /// Silently migrate epoch 4 → 5: write a spatial monitor layout from
+    /// the currently connected displays, remove the obsolete 1D warp keys,
+    /// and bump the stored epoch.
+    private static func migrateFromEpoch4(defaults: UserDefaults) {
+        let monitors = Monitor.current()
+        let entries = monitors.map { monitor in
+            SpatialMonitorEntry(
+                monitorName: monitor.name,
+                displayId: monitor.displayId,
+                origin: monitor.frame.origin,
+                size: monitor.frame.size
+            )
+        }
+        if let data = try? JSONEncoder().encode(entries) {
+            defaults.set(data, forKey: "settings.spatialMonitorLayout")
+        }
+
+        defaults.removeObject(forKey: "settings.mouseWarp.monitorOrder")
+        defaults.removeObject(forKey: "settings.mouseWarp.axis")
+        defaults.set(currentSettingsEpoch, forKey: epochKey)
     }
 
     private static func importEpoch(from rawData: Data) throws -> Int? {

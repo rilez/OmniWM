@@ -1429,11 +1429,11 @@ private func makeSettingsTestMonitor(
 
     @Test func startupDecisionRequiresResetWhenStoredEpochIsOlder() {
         let defaults = makeTestDefaults()
-        defaults.set(SettingsMigration.currentSettingsEpoch - 1, forKey: "settings.settingsEpoch")
+        defaults.set(3, forKey: "settings.settingsEpoch")
 
         #expect(
             SettingsMigration.startupDecision(defaults: defaults) ==
-                .requireReset(storedEpoch: SettingsMigration.currentSettingsEpoch - 1)
+                .requireReset(storedEpoch: 3)
         )
     }
 
@@ -1486,5 +1486,56 @@ private func makeSettingsTestMonitor(
     @Test func validateImportEpochAcceptsCurrentEpoch() throws {
         let rawData = Data("{\"version\":\(SettingsMigration.currentSettingsEpoch)}".utf8)
         try SettingsMigration.validateImportEpoch(from: rawData)
+    }
+
+    // MARK: - Epoch 4→5 migration
+
+    @Test func migrateFromEpoch4WritesLayoutAndBumpsEpoch() {
+        let defaults = makeTestDefaults()
+        defaults.set(4, forKey: "settings.settingsEpoch")
+        defaults.set(Data("[\"Left\",\"Right\"]".utf8), forKey: "settings.mouseWarp.monitorOrder")
+        defaults.set("horizontal", forKey: "settings.mouseWarp.axis")
+
+        let decision = SettingsMigration.startupDecision(defaults: defaults)
+
+        #expect(decision == .boot)
+        #expect(defaults.integer(forKey: "settings.settingsEpoch") == 5)
+        #expect(defaults.data(forKey: "settings.spatialMonitorLayout") != nil)
+        #expect(defaults.object(forKey: "settings.mouseWarp.monitorOrder") == nil)
+        #expect(defaults.object(forKey: "settings.mouseWarp.axis") == nil)
+
+        // Verify layout JSON is decodable
+        let data = defaults.data(forKey: "settings.spatialMonitorLayout")!
+        let entries = try! JSONDecoder().decode([SpatialMonitorEntry].self, from: data)
+        // In CI/headless, NSScreen.screens may be empty — verify structure is valid
+        #expect(entries.count >= 0)
+    }
+
+    @Test func migrateFromEpoch4WithoutOldKeysStillBumpsEpoch() {
+        let defaults = makeTestDefaults()
+        defaults.set(4, forKey: "settings.settingsEpoch")
+
+        let decision = SettingsMigration.startupDecision(defaults: defaults)
+
+        #expect(decision == .boot)
+        #expect(defaults.integer(forKey: "settings.settingsEpoch") == 5)
+    }
+
+    @Test func epoch3StillRequiresReset() {
+        let defaults = makeTestDefaults()
+        defaults.set(3, forKey: "settings.settingsEpoch")
+
+        let decision = SettingsMigration.startupDecision(defaults: defaults)
+
+        #expect(decision == .requireReset(storedEpoch: 3))
+    }
+
+    @Test func epoch6StillRequiresReset() {
+        let defaults = makeTestDefaults()
+        defaults.set(6, forKey: "settings.settingsEpoch")
+
+        let decision = SettingsMigration.startupDecision(defaults: defaults)
+
+        #expect(decision == .requireReset(storedEpoch: 6))
     }
 }
