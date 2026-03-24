@@ -46,6 +46,15 @@ private func makeMouseWarpTestFixture() -> (
     settings.mouseWarpAxis = .horizontal
     settings.mouseWarpMargin = 2
 
+    let leftMonitor = makeMouseWarpTestMonitor(displayId: 1, name: "Left", x: 0)
+    let rightMonitor = makeMouseWarpTestMonitor(displayId: 2, name: "Right", x: 1920)
+
+    // Spatial layout entries matching the monitor geometry
+    settings.spatialMonitorLayout = [
+        SpatialMonitorEntry(monitorName: "Left", displayId: 1, origin: CGPoint(x: 0, y: 0), size: CGSize(width: 1920, height: 1080)),
+        SpatialMonitorEntry(monitorName: "Right", displayId: 2, origin: CGPoint(x: 1920, y: 0), size: CGSize(width: 1920, height: 1080)),
+    ]
+
     let operations = WindowFocusOperations(
         activateApp: { _ in },
         focusSpecificWindow: { _, _, _ in },
@@ -56,8 +65,6 @@ private func makeMouseWarpTestFixture() -> (
         settings: settings,
         windowFocusOperations: operations
     )
-    let leftMonitor = makeMouseWarpTestMonitor(displayId: 1, name: "Left", x: 0)
-    let rightMonitor = makeMouseWarpTestMonitor(displayId: 2, name: "Right", x: 1920)
     controller.workspaceManager.applyMonitorConfigurationChange([leftMonitor, rightMonitor])
 
     let recorder = WarpEffectRecorder()
@@ -80,6 +87,15 @@ private func makeVerticalMouseWarpTestFixture() -> (
     settings.mouseWarpAxis = .vertical
     settings.mouseWarpMargin = 2
 
+    let bottomMonitor = makeMouseWarpTestMonitor(displayId: 1, name: "Bottom", x: 0, y: 0, width: 1728)
+    let topMonitor = makeMouseWarpTestMonitor(displayId: 2, name: "Top", x: 320, y: 1080, width: 2560)
+
+    // Spatial layout entries matching the monitor geometry
+    settings.spatialMonitorLayout = [
+        SpatialMonitorEntry(monitorName: "Bottom", displayId: 1, origin: CGPoint(x: 0, y: 0), size: CGSize(width: 1728, height: 1080)),
+        SpatialMonitorEntry(monitorName: "Top", displayId: 2, origin: CGPoint(x: 320, y: 1080), size: CGSize(width: 2560, height: 1080)),
+    ]
+
     let operations = WindowFocusOperations(
         activateApp: { _ in },
         focusSpecificWindow: { _, _, _ in },
@@ -90,8 +106,6 @@ private func makeVerticalMouseWarpTestFixture() -> (
         settings: settings,
         windowFocusOperations: operations
     )
-    let bottomMonitor = makeMouseWarpTestMonitor(displayId: 1, name: "Bottom", x: 0, y: 0, width: 1728)
-    let topMonitor = makeMouseWarpTestMonitor(displayId: 2, name: "Top", x: 320, y: 1080, width: 2560)
     controller.workspaceManager.applyMonitorConfigurationChange([bottomMonitor, topMonitor])
 
     let recorder = WarpEffectRecorder()
@@ -269,9 +283,11 @@ private func waitUntilMouseWarpDrain(
         fixture.handler.receiveTapMouseWarpMoved(at: location)
         fixture.handler.flushPendingWarpEventsForTests()
 
-        let xRatio = (location.x - fixture.bottomMonitor.frame.minX) / fixture.bottomMonitor.frame.width
+        // Spatial engine: overlap range on .top edge is X = 320...1728 for both
+        // source and target. Cursor x=432 maps proportionally within the shared
+        // overlap, landing at x=432 on the target monitor.
         let expectedPoint = ScreenCoordinateSpace.toWindowServer(point: CGPoint(
-            x: fixture.topMonitor.frame.minX + (xRatio * fixture.topMonitor.frame.width),
+            x: location.x,
             y: fixture.topMonitor.frame.minY + CGFloat(fixture.controller.settings.mouseWarpMargin) + 1
         ))
 
@@ -292,9 +308,10 @@ private func waitUntilMouseWarpDrain(
         fixture.handler.receiveTapMouseWarpMoved(at: location)
         fixture.handler.flushPendingWarpEventsForTests()
 
-        let xRatio = (location.x - fixture.topMonitor.frame.minX) / fixture.topMonitor.frame.width
+        // Spatial engine: overlap range on .bottom edge is X = 320...1728 for both
+        // source and target. Cursor x=1600 maps proportionally, landing at x=1600.
         let expectedPoint = ScreenCoordinateSpace.toWindowServer(point: CGPoint(
-            x: fixture.bottomMonitor.frame.minX + (xRatio * fixture.bottomMonitor.frame.width),
+            x: location.x,
             y: fixture.bottomMonitor.frame.maxY - CGFloat(fixture.controller.settings.mouseWarpMargin) - 1
         ))
 
@@ -317,14 +334,15 @@ private func waitUntilMouseWarpDrain(
         fixture.handler.receiveTapMouseWarpMoved(at: location)
         fixture.handler.flushPendingWarpEventsForTests()
 
+        // Spatial engine: cursor is off-screen → clamp back to last monitor (bottom).
         let expectedPoint = ScreenCoordinateSpace.toWindowServer(point: CGPoint(
-            x: fixture.topMonitor.frame.minX,
-            y: fixture.topMonitor.frame.minY + CGFloat(fixture.controller.settings.mouseWarpMargin) + 1
+            x: fixture.bottomMonitor.frame.minX + CGFloat(fixture.controller.settings.mouseWarpMargin) + 1,
+            y: fixture.bottomMonitor.frame.maxY - CGFloat(fixture.controller.settings.mouseWarpMargin) - 1
         ))
 
-        #expect(fixture.handler.state.lastMonitorId == fixture.topMonitor.id)
-        #expect(fixture.recorder.warpedPoints.isEmpty)
-        #expect(fixture.recorder.postedPoints == [expectedPoint])
+        #expect(fixture.handler.state.lastMonitorId == fixture.bottomMonitor.id)
+        #expect(fixture.recorder.postedPoints.isEmpty)
+        #expect(fixture.recorder.warpedPoints == [expectedPoint])
     }
 
     @Test @MainActor func verticalModeUsesLastValidMonitorWhenLatestLocationAlreadyEnteredNextMonitor() {
@@ -342,15 +360,16 @@ private func waitUntilMouseWarpDrain(
         fixture.handler.receiveTapMouseWarpMoved(at: location)
         fixture.handler.flushPendingWarpEventsForTests()
 
-        let xRatio = (location.x - fixture.bottomMonitor.frame.minX) / fixture.bottomMonitor.frame.width
+        // Spatial engine: cursor jumped to a different monitor (top) than
+        // lastMonitorId (bottom) → clamp back to last monitor (bottom).
         let expectedPoint = ScreenCoordinateSpace.toWindowServer(point: CGPoint(
-            x: fixture.topMonitor.frame.minX + (min(max(xRatio, 0), 1) * fixture.topMonitor.frame.width),
-            y: fixture.topMonitor.frame.minY + CGFloat(fixture.controller.settings.mouseWarpMargin) + 1
+            x: location.x,
+            y: fixture.bottomMonitor.frame.maxY - CGFloat(fixture.controller.settings.mouseWarpMargin) - 1
         ))
 
-        #expect(fixture.handler.state.lastMonitorId == fixture.topMonitor.id)
-        #expect(fixture.recorder.warpedPoints.isEmpty)
-        #expect(fixture.recorder.postedPoints == [expectedPoint])
+        #expect(fixture.handler.state.lastMonitorId == fixture.bottomMonitor.id)
+        #expect(fixture.recorder.postedPoints.isEmpty)
+        #expect(fixture.recorder.warpedPoints == [expectedPoint])
     }
 
     @Test @MainActor func verticalModeFallsBackToSideClampWhenNoWarpTargetExists() {
