@@ -1390,6 +1390,52 @@ private func makeSettingsTestMonitor(
 
 }
 
+@Suite @MainActor struct SpatialLayoutPersistenceTests {
+    @Test func spatialLayoutEntriesSurviveDisconnectReconnectCycle() {
+        let defaults = makeTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+
+        // Simulate 3 connected monitors
+        let threeMonitors = [
+            SpatialMonitorEntry(monitorName: "Left", displayId: 1, origin: CGPoint(x: 0, y: 0), size: CGSize(width: 1920, height: 1080)),
+            SpatialMonitorEntry(monitorName: "Center", displayId: 2, origin: CGPoint(x: 1920, y: 0), size: CGSize(width: 2560, height: 1440)),
+            SpatialMonitorEntry(monitorName: "Right", displayId: 3, origin: CGPoint(x: 4480, y: 0), size: CGSize(width: 1920, height: 1080)),
+        ]
+        settings.spatialMonitorLayout = threeMonitors
+
+        // Simulate disconnect: "Center" monitor removed — only 2 entries remain
+        let afterDisconnect = [threeMonitors[0], threeMonitors[2]]
+        settings.spatialMonitorLayout = afterDisconnect
+
+        // Reload from same defaults — verify 2 entries persisted
+        let reloadedAfterDisconnect = SettingsStore(defaults: defaults)
+        #expect(reloadedAfterDisconnect.spatialMonitorLayout.count == 2)
+        #expect(reloadedAfterDisconnect.spatialMonitorLayout[0].monitorName == "Left")
+        #expect(reloadedAfterDisconnect.spatialMonitorLayout[0].displayId == 1)
+        #expect(reloadedAfterDisconnect.spatialMonitorLayout[1].monitorName == "Right")
+        #expect(reloadedAfterDisconnect.spatialMonitorLayout[1].displayId == 3)
+
+        // Simulate reconnect: restore all 3 monitors
+        reloadedAfterDisconnect.spatialMonitorLayout = threeMonitors
+
+        // Reload again — verify all 3 entries present with original values
+        let reloadedAfterReconnect = SettingsStore(defaults: defaults)
+        #expect(reloadedAfterReconnect.spatialMonitorLayout.count == 3)
+        #expect(reloadedAfterReconnect.spatialMonitorLayout[0].monitorName == "Left")
+        #expect(reloadedAfterReconnect.spatialMonitorLayout[0].displayId == 1)
+        #expect(reloadedAfterReconnect.spatialMonitorLayout[0].origin == CGPoint(x: 0, y: 0))
+        #expect(reloadedAfterReconnect.spatialMonitorLayout[0].size == CGSize(width: 1920, height: 1080))
+        #expect(reloadedAfterReconnect.spatialMonitorLayout[1].monitorName == "Center")
+        #expect(reloadedAfterReconnect.spatialMonitorLayout[1].displayId == 2)
+        #expect(reloadedAfterReconnect.spatialMonitorLayout[1].origin == CGPoint(x: 1920, y: 0))
+        #expect(reloadedAfterReconnect.spatialMonitorLayout[1].size == CGSize(width: 2560, height: 1440))
+        #expect(reloadedAfterReconnect.spatialMonitorLayout[2].monitorName == "Right")
+        #expect(reloadedAfterReconnect.spatialMonitorLayout[2].displayId == 3)
+        #expect(reloadedAfterReconnect.spatialMonitorLayout[2].origin == CGPoint(x: 4480, y: 0))
+        #expect(reloadedAfterReconnect.spatialMonitorLayout[2].size == CGSize(width: 1920, height: 1080))
+    }
+}
+
 @Suite struct SettingsMigrationTests {
     @Test func startupDecisionBootsFreshInstallWhenNoOwnedKeysExist() {
         let defaults = makeTestDefaults()

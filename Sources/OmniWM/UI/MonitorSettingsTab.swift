@@ -35,6 +35,18 @@ struct MonitorSettingsTab: View {
                     .foregroundColor(.secondary)
             }
 
+            HStack {
+                Text("Warp Trigger Margin")
+                    .font(.body)
+                Spacer()
+                Stepper(
+                    "\(settings.mouseWarpMargin) px",
+                    value: $settings.mouseWarpMargin,
+                    in: 1...10,
+                    step: 1
+                )
+            }
+
             Divider()
 
             SectionHeader("Selected Monitor")
