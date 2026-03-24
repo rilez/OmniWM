@@ -211,7 +211,8 @@ import Testing
             for: frame,
             monitor: monitor,
             side: .left,
-            pid: getpid()
+            pid: getpid(),
+            reason: .layoutTransient
         ) else {
             Issue.record("Expected a live-frame hide origin for transient hide test")
             return
@@ -219,6 +220,135 @@ import Testing
 
         #expect(origin.y == frame.origin.y)
         #expect(origin.x < monitor.visibleFrame.minX)
+    }
+
+    @Test @MainActor func liveFrameHideOriginPreservesWindowYForWorkspaceHideOnVerticalOverride() {
+        let fixture = makeTwoMonitorLayoutPlanTestController()
+        let controller = fixture.controller
+        controller.settings.updateOrientationSettings(
+            MonitorOrientationSettings(
+                monitorName: fixture.secondaryMonitor.name,
+                monitorDisplayId: fixture.secondaryMonitor.displayId,
+                orientation: .vertical
+            )
+        )
+
+        let frame = CGRect(x: 2160, y: 180, width: 800, height: 600)
+        guard let origin = controller.layoutRefreshController.liveFrameHideOrigin(
+            for: frame,
+            monitor: fixture.secondaryMonitor,
+            side: .left,
+            pid: getpid(),
+            reason: .workspaceInactive
+        ) else {
+            Issue.record("Expected a live-frame hide origin for workspace hide test")
+            return
+        }
+
+        #expect(origin.y == frame.origin.y)
+        #expect(
+            origin.x < fixture.secondaryMonitor.visibleFrame.minX
+                || origin.x > fixture.secondaryMonitor.visibleFrame.maxX - 1.0
+        )
+    }
+
+    @Test @MainActor func liveFrameHideOriginPreservesWindowYForScratchpadHideOnVerticalOverride() {
+        let fixture = makeTwoMonitorLayoutPlanTestController()
+        let controller = fixture.controller
+        controller.settings.updateOrientationSettings(
+            MonitorOrientationSettings(
+                monitorName: fixture.secondaryMonitor.name,
+                monitorDisplayId: fixture.secondaryMonitor.displayId,
+                orientation: .vertical
+            )
+        )
+
+        let frame = CGRect(x: 2160, y: 180, width: 800, height: 600)
+        guard let origin = controller.layoutRefreshController.liveFrameHideOrigin(
+            for: frame,
+            monitor: fixture.secondaryMonitor,
+            side: .right,
+            pid: getpid(),
+            reason: .scratchpad
+        ) else {
+            Issue.record("Expected a live-frame hide origin for scratchpad hide test")
+            return
+        }
+
+        #expect(origin.y == frame.origin.y)
+        #expect(origin.x > fixture.secondaryMonitor.visibleFrame.maxX - 1.0)
+    }
+
+    @Test @MainActor func liveFrameHideOriginUsesVerticalAxisForTransientHideOnVerticalOverride() {
+        let fixture = makeTwoMonitorLayoutPlanTestController()
+        let controller = fixture.controller
+        controller.settings.updateOrientationSettings(
+            MonitorOrientationSettings(
+                monitorName: fixture.secondaryMonitor.name,
+                monitorDisplayId: fixture.secondaryMonitor.displayId,
+                orientation: .vertical
+            )
+        )
+
+        let frame = CGRect(x: 2160, y: 180, width: 800, height: 600)
+        guard let origin = controller.layoutRefreshController.liveFrameHideOrigin(
+            for: frame,
+            monitor: fixture.secondaryMonitor,
+            side: .left,
+            pid: getpid(),
+            reason: .layoutTransient
+        ) else {
+            Issue.record("Expected a live-frame hide origin for vertical transient hide test")
+            return
+        }
+
+        #expect(origin.x == frame.origin.x)
+        #expect(origin.y < fixture.secondaryMonitor.visibleFrame.minY)
+    }
+
+    @Test @MainActor func hideInactiveWorkspacesMarksSecondaryWorkspaceWindowHiddenOnVerticalOverride() {
+        let primaryMonitor = makeLayoutPlanTestMonitor(
+            displayId: 100,
+            name: "Primary"
+        )
+        let secondaryMonitor = makeLayoutPlanTestMonitor(
+            displayId: 200,
+            name: "Secondary",
+            x: 1920
+        )
+        let controller = makeLayoutPlanTestController(
+            monitors: [primaryMonitor, secondaryMonitor],
+            workspaceConfigurations: [
+                WorkspaceConfiguration(name: "1", monitorAssignment: .main),
+                WorkspaceConfiguration(name: "2", monitorAssignment: .secondary),
+                WorkspaceConfiguration(name: "3", monitorAssignment: .secondary)
+            ]
+        )
+        controller.settings.updateOrientationSettings(
+            MonitorOrientationSettings(
+                monitorName: secondaryMonitor.name,
+                monitorDisplayId: secondaryMonitor.displayId,
+                orientation: .vertical
+            )
+        )
+
+        guard let visibleWorkspaceId = controller.workspaceManager.workspaceId(for: "2", createIfMissing: false),
+              let hiddenWorkspaceId = controller.workspaceManager.workspaceId(for: "3", createIfMissing: false)
+        else {
+            Issue.record("Missing secondary workspaces for inactive hide test")
+            return
+        }
+        #expect(controller.workspaceManager.setActiveWorkspace(visibleWorkspaceId, on: secondaryMonitor.id))
+
+        let token = addLayoutPlanTestWindow(on: controller, workspaceId: hiddenWorkspaceId, windowId: 608)
+        controller.axManager.applyFramesParallel(
+            [(pid: token.pid, windowId: token.windowId, frame: CGRect(x: 2160, y: 180, width: 800, height: 600))]
+        )
+
+        controller.layoutRefreshController.hideInactiveWorkspacesSync()
+
+        #expect(controller.axManager.inactiveWorkspaceWindowIds.contains(token.windowId))
+        #expect(controller.workspaceManager.hiddenState(for: token)?.workspaceInactive == true)
     }
 
     @Test @MainActor func executeLayoutPlanRestoresInactiveWindowFromFrameDiffWithoutShow() {

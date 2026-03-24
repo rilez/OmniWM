@@ -4625,7 +4625,8 @@ private func makeCenteredCrossMonitorFixture(
                   for: canonicalFrame,
                   monitor: monitors.primary,
                   side: .left,
-                  pid: token.pid
+                  pid: token.pid,
+                  reason: .layoutTransient
               )
         else {
             Issue.record("Expected a hidden-left column and live hide origin for parity test")
@@ -4703,7 +4704,8 @@ private func makeCenteredCrossMonitorFixture(
                   for: canonicalFrame,
                   monitor: monitors.lower,
                   side: .right,
-                  pid: upperWindow.pid
+                  pid: upperWindow.pid,
+                  reason: .layoutTransient
               )
         else {
             Issue.record("Expected a hidden upper row and live hide origin for vertical parity test")

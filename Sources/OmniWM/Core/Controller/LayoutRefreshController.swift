@@ -1626,7 +1626,8 @@ import QuartzCore
             for: frame,
             monitor: monitor,
             side: side,
-            pid: entry.handle.pid
+            pid: entry.handle.pid,
+            reason: reason
         ) else {
             return .unavailable
         }
@@ -1730,27 +1731,45 @@ import QuartzCore
         for frame: CGRect,
         monitor: Monitor,
         side: HideSide,
-        pid: pid_t
+        pid: pid_t,
+        reason: HideReason
     ) -> CGPoint? {
         guard let controller else { return nil }
         let scale = backingScale(for: monitor)
-        let orientation = controller.settings.effectiveOrientation(for: monitor)
-        let orthogonalOrigin: CGFloat = switch orientation {
-        case .horizontal: frame.origin.y
-        case .vertical: frame.origin.x
+        let baseReveal = Self.hiddenEdgeReveal(isZoomApp: isZoomApp(pid))
+        let hiddenPlacementMonitor = HiddenPlacementMonitorContext(monitor)
+        let hiddenPlacementMonitors = controller.workspaceManager.monitors.map(HiddenPlacementMonitorContext.init)
+
+        switch reason {
+        case .workspaceInactive, .scratchpad:
+            return HiddenWindowPlacementResolver.physicalScreenEdgeOrigin(
+                for: frame.size,
+                requestedSide: side,
+                targetY: frame.origin.y,
+                baseReveal: baseReveal,
+                scale: scale,
+                monitor: hiddenPlacementMonitor,
+                monitors: hiddenPlacementMonitors
+            )
+        case .layoutTransient:
+            let orientation = controller.settings.effectiveOrientation(for: monitor)
+            let orthogonalOrigin: CGFloat = switch orientation {
+            case .horizontal: frame.origin.y
+            case .vertical: frame.origin.x
+            }
+            let requestedEdge = AxisHideEdge(encodedHideSide: side)
+            let placement = HiddenWindowPlacementResolver.placement(
+                for: frame.size,
+                requestedEdge: requestedEdge,
+                orthogonalOrigin: orthogonalOrigin,
+                baseReveal: baseReveal,
+                scale: scale,
+                orientation: orientation,
+                monitor: hiddenPlacementMonitor,
+                monitors: hiddenPlacementMonitors
+            )
+            return placement.origin
         }
-        let requestedEdge = AxisHideEdge(encodedHideSide: side)
-        let placement = HiddenWindowPlacementResolver.placement(
-            for: frame.size,
-            requestedEdge: requestedEdge,
-            orthogonalOrigin: orthogonalOrigin,
-            baseReveal: Self.hiddenEdgeReveal(isZoomApp: isZoomApp(pid)),
-            scale: scale,
-            orientation: orientation,
-            monitor: HiddenPlacementMonitorContext(monitor),
-            monitors: controller.workspaceManager.monitors.map(HiddenPlacementMonitorContext.init)
-        )
-        return placement.origin
     }
 
     func unhideWindow(_ entry: WindowModel.Entry, monitor: Monitor) {

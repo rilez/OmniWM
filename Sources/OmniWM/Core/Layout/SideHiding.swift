@@ -69,6 +69,52 @@ struct HiddenWindowPlacement {
 }
 
 enum HiddenWindowPlacementResolver {
+    static func physicalScreenEdgeOrigin(
+        for size: CGSize,
+        requestedSide: HideSide,
+        targetY: CGFloat,
+        baseReveal: CGFloat,
+        scale: CGFloat,
+        monitor: HiddenPlacementMonitorContext,
+        monitors: [HiddenPlacementMonitorContext]
+    ) -> CGPoint {
+        let reveal = baseReveal / max(1.0, scale)
+
+        func origin(for side: HideSide) -> CGPoint {
+            switch side {
+            case .left:
+                CGPoint(
+                    x: monitor.visibleFrame.minX - size.width + reveal,
+                    y: targetY
+                )
+            case .right:
+                CGPoint(
+                    x: monitor.visibleFrame.maxX - reveal,
+                    y: targetY
+                )
+            }
+        }
+
+        let primaryOrigin = origin(for: requestedSide)
+        let primaryOverlap = overlapArea(
+            for: CGRect(origin: primaryOrigin, size: size),
+            monitor: monitor,
+            monitors: monitors
+        )
+        if primaryOverlap == 0 {
+            return primaryOrigin
+        }
+
+        let alternateSide: HideSide = requestedSide == .left ? .right : .left
+        let alternateOrigin = origin(for: alternateSide)
+        let alternateOverlap = overlapArea(
+            for: CGRect(origin: alternateOrigin, size: size),
+            monitor: monitor,
+            monitors: monitors
+        )
+        return alternateOverlap < primaryOverlap ? alternateOrigin : primaryOrigin
+    }
+
     static func placement(
         for size: CGSize,
         requestedEdge: AxisHideEdge,
@@ -112,19 +158,12 @@ enum HiddenWindowPlacementResolver {
             }
         }
 
-        func overlapArea(for origin: CGPoint) -> CGFloat {
-            let rect = CGRect(origin: origin, size: size)
-            var area: CGFloat = 0
-            for other in monitors where other.id != monitor.id {
-                let intersection = rect.intersection(other.frame)
-                if intersection.isNull { continue }
-                area += intersection.width * intersection.height
-            }
-            return area
-        }
-
         let primaryOrigin = origin(for: requestedEdge)
-        let primaryOverlap = overlapArea(for: primaryOrigin)
+        let primaryOverlap = overlapArea(
+            for: CGRect(origin: primaryOrigin, size: size),
+            monitor: monitor,
+            monitors: monitors
+        )
         if primaryOverlap == 0 {
             return HiddenWindowPlacement(
                 requestedEdge: requestedEdge,
@@ -135,7 +174,11 @@ enum HiddenWindowPlacementResolver {
 
         let alternateEdge = requestedEdge.opposite
         let alternateOrigin = origin(for: alternateEdge)
-        let alternateOverlap = overlapArea(for: alternateOrigin)
+        let alternateOverlap = overlapArea(
+            for: CGRect(origin: alternateOrigin, size: size),
+            monitor: monitor,
+            monitors: monitors
+        )
         if alternateOverlap < primaryOverlap {
             return HiddenWindowPlacement(
                 requestedEdge: requestedEdge,
@@ -149,5 +192,19 @@ enum HiddenWindowPlacementResolver {
             resolvedEdge: requestedEdge,
             origin: primaryOrigin
         )
+    }
+
+    private static func overlapArea(
+        for rect: CGRect,
+        monitor: HiddenPlacementMonitorContext,
+        monitors: [HiddenPlacementMonitorContext]
+    ) -> CGFloat {
+        var area: CGFloat = 0
+        for other in monitors where other.id != monitor.id {
+            let intersection = rect.intersection(other.frame)
+            if intersection.isNull { continue }
+            area += intersection.width * intersection.height
+        }
+        return area
     }
 }
