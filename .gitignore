@@ -34,6 +34,8 @@ Frameworks/
 .codex-cache/
 
 # ── GSD baseline (auto-generated) ──
+.gsd
+.bg-shell/
 Thumbs.db
 .idea/
 .vscode/
