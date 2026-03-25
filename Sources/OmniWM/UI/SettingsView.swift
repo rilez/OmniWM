@@ -1,6 +1,51 @@
 import AppKit
 import SwiftUI
 
+enum ConfigFileAction {
+    case create
+    case export(SettingsExportMode)
+    case `import`
+    case reveal
+    case open
+}
+
+@MainActor
+enum ConfigFileWorkflow {
+    static func perform(
+        _ action: ConfigFileAction,
+        settings: SettingsStore,
+        controller: WMController,
+        openFile: (URL) -> Bool = { NSWorkspace.shared.open($0) },
+        revealFile: ([URL]) -> Void = { NSWorkspace.shared.activateFileViewerSelecting($0) }
+    ) throws -> ExportStatus {
+        switch action {
+        case .create:
+            try settings.exportSettings(mode: .full)
+            return .created
+        case .export(let mode):
+            try settings.exportSettings(mode: mode)
+            return .exported(mode)
+        case .import:
+            try settings.importSettings(applyingTo: controller)
+            return .imported
+        case .reveal:
+            if !settings.settingsFileExists {
+                _ = try perform(.create, settings: settings, controller: controller, openFile: openFile, revealFile: revealFile)
+            }
+            revealFile([SettingsStore.exportURL])
+            return .revealed
+        case .open:
+            if !settings.settingsFileExists {
+                _ = try perform(.create, settings: settings, controller: controller, openFile: openFile, revealFile: revealFile)
+            }
+            guard openFile(SettingsStore.exportURL) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            return .opened
+        }
+    }
+}
+
 struct SettingsView: View {
     @Bindable var settings: SettingsStore
     @Bindable var controller: WMController
@@ -146,30 +191,15 @@ struct GeneralSettingsTab: View {
             Section("Config File") {
                 HStack {
                     Button("Export Editable Config") {
-                        do {
-                            try settings.exportSettings(mode: .full)
-                            exportStatus = .exported(.full)
-                        } catch {
-                            exportStatus = .error(error.localizedDescription)
-                        }
+                        performConfigFileAction(.export(.full))
                     }
 
                     Button("Export Compact Backup") {
-                        do {
-                            try settings.exportSettings(mode: .compact)
-                            exportStatus = .exported(.compact)
-                        } catch {
-                            exportStatus = .error(error.localizedDescription)
-                        }
+                        performConfigFileAction(.export(.compact))
                     }
 
                     Button("Import Settings") {
-                        do {
-                            try settings.importSettings(applyingTo: controller)
-                            exportStatus = .imported
-                        } catch {
-                            exportStatus = .error(error.localizedDescription)
-                        }
+                        performConfigFileAction(.import)
                     }
                     .disabled(!settings.settingsFileExists)
                 }
@@ -177,28 +207,16 @@ struct GeneralSettingsTab: View {
                 HStack {
                     if !settings.settingsFileExists {
                         Button("Create Config File") {
-                            do {
-                                try createSettingsFile()
-                            } catch {
-                                exportStatus = .error(error.localizedDescription)
-                            }
+                            performConfigFileAction(.create)
                         }
                     }
 
                     Button("Reveal Settings File") {
-                        do {
-                            try revealSettingsFile()
-                        } catch {
-                            exportStatus = .error(error.localizedDescription)
-                        }
+                        performConfigFileAction(.reveal)
                     }
 
                     Button("Open Settings File") {
-                        do {
-                            try openSettingsFile()
-                        } catch {
-                            exportStatus = .error(error.localizedDescription)
-                        }
+                        performConfigFileAction(.open)
                     }
                 }
 
@@ -229,28 +247,16 @@ struct GeneralSettingsTab: View {
         )
     }
 
-    private func createSettingsFile() throws {
-        try settings.exportSettings(mode: .full)
-        exportStatus = .created
-    }
-
-    private func ensureSettingsFileExists() throws {
-        guard !settings.settingsFileExists else { return }
-        try createSettingsFile()
-    }
-
-    private func revealSettingsFile() throws {
-        try ensureSettingsFileExists()
-        NSWorkspace.shared.activateFileViewerSelecting([SettingsStore.exportURL])
-        exportStatus = .revealed
-    }
-
-    private func openSettingsFile() throws {
-        try ensureSettingsFileExists()
-        guard NSWorkspace.shared.open(SettingsStore.exportURL) else {
-            throw CocoaError(.fileNoSuchFile)
+    private func performConfigFileAction(_ action: ConfigFileAction) {
+        do {
+            exportStatus = try ConfigFileWorkflow.perform(
+                action,
+                settings: settings,
+                controller: controller
+            )
+        } catch {
+            exportStatus = .error(error.localizedDescription)
         }
-        exportStatus = .opened
     }
 }
 
@@ -586,7 +592,7 @@ private struct MonitorNiriSettingsSection: View {
     }
 }
 
-private enum ExportStatus {
+enum ExportStatus: Equatable {
     case exported(SettingsExportMode)
     case imported
     case created
