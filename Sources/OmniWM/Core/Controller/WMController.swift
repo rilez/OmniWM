@@ -52,7 +52,7 @@ final class WMController {
     var isLockScreenActive: Bool = false
     let axManager = AXManager()
     let appInfoCache = AppInfoCache()
-    let focusCoordinator: FocusOperationCoordinator
+    let focusBridge: FocusBridgeCoordinator
     let windowRuleEngine = WindowRuleEngine()
 
     var niriEngine: NiriLayoutEngine?
@@ -100,7 +100,6 @@ final class WMController {
     @ObservationIgnored
     private(set) lazy var borderCoordinator = BorderCoordinator(controller: self)
     @ObservationIgnored
-    private(set) lazy var keyboardFocusLifecycle = KeyboardFocusLifecycleCoordinator()
     var hasStartedServices = false
     @ObservationIgnored
     private(set) var isMouseWarpPolicyEnabled = false
@@ -123,7 +122,7 @@ final class WMController {
         self.hiddenBarController = hiddenBarController ?? HiddenBarController(settings: settings)
         self.windowFocusOperations = windowFocusOperations
         workspaceManager = WorkspaceManager(settings: settings)
-        focusCoordinator = FocusOperationCoordinator()
+        focusBridge = FocusBridgeCoordinator()
         workspaceManager.updateAnimationClock(animationClock)
         hotkeys.onCommand = { [weak self] command in
             self?.commandHandler.handleCommand(command)
@@ -311,10 +310,10 @@ final class WMController {
         workspaceBarRefreshDebugState.scheduledCount += 1
         workspaceBarRefreshDebugState.isQueued = true
 
-        DispatchQueue.main.async { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.flushRequestedWorkspaceBarRefresh(expectedGeneration: generation)
-            }
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            await Task.yield()
+            self?.flushRequestedWorkspaceBarRefresh(expectedGeneration: generation)
         }
     }
 
@@ -1529,7 +1528,7 @@ final class WMController {
     ) {
         workspaceManager.setWorkspace(for: token, to: workspaceId)
         guard let entry = workspaceManager.entry(for: token) else { return }
-        keyboardFocusLifecycle.updateFocusedTargetWorkspace(
+        focusBridge.updateFocusedTargetWorkspace(
             matching: token,
             axRef: entry.axRef,
             workspaceId: entry.workspaceId
@@ -1708,7 +1707,7 @@ extension WMController {
             in: entry.workspaceId,
             onMonitor: workspaceManager.monitorId(for: entry.workspaceId)
         )
-        let request = keyboardFocusLifecycle.beginManagedRequest(
+        let request = focusBridge.beginManagedRequest(
             token: token,
             workspaceId: entry.workspaceId
         )
@@ -1724,7 +1723,7 @@ extension WMController {
         let pid = entry.pid
         let windowId = entry.windowId
 
-        focusCoordinator.focusWindow(
+        focusBridge.focusWindow(
             token,
             performFocus: {
                 self.performWindowFronting(pid: pid, windowId: windowId, axRef: axRef)
@@ -1773,7 +1772,7 @@ extension WMController {
     }
 
     func currentKeyboardFocusTargetForRendering() -> KeyboardFocusTarget? {
-        if let focusedTarget = keyboardFocusLifecycle.focusedTarget {
+        if let focusedTarget = focusBridge.focusedTarget {
             return focusedTarget
         }
 
@@ -1784,6 +1783,19 @@ extension WMController {
         }
 
         return managedKeyboardFocusTarget(for: focusedToken)
+    }
+
+    func preferredKeyboardFocusFrame(for token: WindowToken) -> CGRect? {
+        if let node = niriEngine?.findNode(for: token) {
+            return node.renderedFrame ?? node.frame
+        }
+        if let node = dwindleEngine?.findNode(for: token) {
+            return node.cachedFrame
+        }
+        if let floatingState = workspaceManager.floatingState(for: token) {
+            return floatingState.lastFrame
+        }
+        return nil
     }
 
     @discardableResult
@@ -1816,7 +1828,7 @@ extension WMController {
         pid: pid_t? = nil,
         restoreCurrentBorder: Bool = false
     ) {
-        keyboardFocusLifecycle.clearFocusedTarget(matching: token, pid: pid)
+        focusBridge.clearFocusedTarget(matching: token, pid: pid)
         guard restoreCurrentBorder else { return }
         _ = renderKeyboardFocusBorder(policy: .direct)
     }

@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import Foundation
 import Testing
@@ -18,6 +19,24 @@ private final class LockedArray<Element>: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return values
+    }
+}
+
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func increment() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        value += 1
+        return value
+    }
+
+    func snapshot() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
     }
 }
 
@@ -52,6 +71,46 @@ private func waitForSemaphore(
 }
 
 @Suite(.serialized) struct AppAXContextTests {
+    @Test @MainActor func getOrCreateSharesSingleInFlightCreationTaskPerPid() async throws {
+        guard let expectedContext = await AppAXContext.makeForTests(processIdentifier: getpid()) else {
+            Issue.record("Failed to create AppAXContext test fixture")
+            return
+        }
+        let app = expectedContext.nsApp
+
+        let factoryCalls = LockedCounter()
+        AppAXContext.contextFactoryForTests = { _ in
+            _ = factoryCalls.increment()
+            try await Task.sleep(for: .milliseconds(50))
+            return expectedContext
+        }
+
+        defer {
+            AppAXContext.contextFactoryForTests = nil
+            expectedContext.destroy()
+        }
+
+        let contexts = try await withThrowingTaskGroup(of: AppAXContext?.self) { group in
+            for _ in 0..<8 {
+                group.addTask {
+                    try await AppAXContext.getOrCreate(app)
+                }
+            }
+
+            var contexts: [AppAXContext] = []
+            for try await context in group {
+                if let context {
+                    contexts.append(context)
+                }
+            }
+            return contexts
+        }
+
+        #expect(factoryCalls.snapshot() == 1)
+        #expect(contexts.count == 8)
+        #expect(contexts.allSatisfy { $0 === expectedContext })
+    }
+
     @Test @MainActor func cancelingOneWindowDoesNotAbortSiblingWriteInSameBatch() async throws {
         guard let context = await AppAXContext.makeForTests() else {
             Issue.record("Failed to create AppAXContext test fixture")

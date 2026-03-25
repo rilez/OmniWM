@@ -141,9 +141,9 @@ final class WorkspaceNavigationHandler {
 
     private func clearManagedFocusAfterEmptyWorkspaceSwitch() {
         guard let controller else { return }
-        let canceledRequest = controller.keyboardFocusLifecycle.cancelManagedRequest()
+        let canceledRequest = controller.focusBridge.cancelManagedRequest()
         if let canceledRequest {
-            controller.focusCoordinator.discardPendingFocus(canceledRequest.token)
+            controller.focusBridge.discardPendingFocus(canceledRequest.token)
         }
         controller.clearKeyboardFocusTarget()
         _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: false)

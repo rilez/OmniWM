@@ -503,6 +503,27 @@ import QuartzCore
         )
     }
 
+    func buildRefreshInput(
+        workspaceId: WorkspaceDescriptor.ID,
+        monitor: Monitor,
+        resolveConstraints: Bool,
+        orientation: Monitor.Orientation? = nil,
+        isActiveWorkspace: Bool
+    ) -> WorkspaceRefreshInput? {
+        guard let controller else { return nil }
+
+        let entries = controller.workspaceManager.tiledEntries(in: workspaceId)
+        let windows = buildWindowSnapshots(for: entries, resolveConstraints: resolveConstraints)
+        let monitorSnapshot = buildMonitorSnapshot(for: monitor, orientation: orientation)
+
+        return WorkspaceRefreshInput(
+            workspaceId: workspaceId,
+            monitor: monitorSnapshot,
+            windows: windows,
+            isActiveWorkspace: isActiveWorkspace
+        )
+    }
+
     private func applySessionPatch(_ patch: WorkspaceSessionPatch) {
         controller?.workspaceManager.applySessionPatch(patch)
     }

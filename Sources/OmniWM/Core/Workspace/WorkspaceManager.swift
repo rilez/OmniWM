@@ -88,6 +88,10 @@ final class WorkspaceManager {
     private var nativeFullscreenOriginalTokenByCurrentToken: [WindowToken: WindowToken] = [:]
 
     private var _cachedSortedWorkspaces: [WorkspaceDescriptor]?
+    private var _cachedWorkspaceIdsByMonitor: [Monitor.ID: [WorkspaceDescriptor.ID]]?
+    private var _cachedVisibleWorkspaceIds: Set<WorkspaceDescriptor.ID>?
+    private var _cachedVisibleWorkspaceMap: [Monitor.ID: WorkspaceDescriptor.ID]?
+    private var _cachedMonitorIdByVisibleWorkspace: [WorkspaceDescriptor.ID: Monitor.ID]?
     var animationClock: AnimationClock?
     private var sessionState = SessionState()
 
@@ -1116,6 +1120,43 @@ final class WorkspaceManager {
             byName[key] = Monitor.sortedByPosition(byName[key] ?? [])
         }
         _monitorsByName = byName
+        invalidateWorkspaceProjectionCaches()
+    }
+
+    private func invalidateWorkspaceProjectionCaches() {
+        _cachedWorkspaceIdsByMonitor = nil
+        _cachedVisibleWorkspaceIds = nil
+        _cachedVisibleWorkspaceMap = nil
+        _cachedMonitorIdByVisibleWorkspace = nil
+    }
+
+    private func workspaceIdsByMonitor() -> [Monitor.ID: [WorkspaceDescriptor.ID]] {
+        if let cached = _cachedWorkspaceIdsByMonitor {
+            return cached
+        }
+
+        var workspaceIdsByMonitor: [Monitor.ID: [WorkspaceDescriptor.ID]] = [:]
+        for workspace in sortedWorkspaces() {
+            guard let monitorId = resolvedWorkspaceMonitorId(for: workspace.id) else { continue }
+            workspaceIdsByMonitor[monitorId, default: []].append(workspace.id)
+        }
+
+        _cachedWorkspaceIdsByMonitor = workspaceIdsByMonitor
+        return workspaceIdsByMonitor
+    }
+
+    private func visibleWorkspaceMap() -> [Monitor.ID: WorkspaceDescriptor.ID] {
+        if let cached = _cachedVisibleWorkspaceMap {
+            return cached
+        }
+
+        let visibleWorkspaceMap = activeVisibleWorkspaceMap(from: sessionState.monitorSessions)
+        _cachedVisibleWorkspaceMap = visibleWorkspaceMap
+        _cachedMonitorIdByVisibleWorkspace = Dictionary(
+            uniqueKeysWithValues: visibleWorkspaceMap.map { ($0.value, $0.key) }
+        )
+        _cachedVisibleWorkspaceIds = Set(visibleWorkspaceMap.values)
+        return visibleWorkspaceMap
     }
 
     var workspaces: [WorkspaceDescriptor] {
@@ -1140,9 +1181,7 @@ final class WorkspaceManager {
     }
 
     func workspaces(on monitorId: Monitor.ID) -> [WorkspaceDescriptor] {
-        sortedWorkspaces().filter { workspace in
-            workspaceMonitorId(for: workspace.id) == monitorId
-        }
+        workspaceIdsByMonitor()[monitorId]?.compactMap(descriptor(for:)) ?? []
     }
 
     func primaryWorkspace() -> WorkspaceDescriptor? {
@@ -1195,7 +1234,10 @@ final class WorkspaceManager {
     }
 
     func visibleWorkspaceIds() -> Set<WorkspaceDescriptor.ID> {
-        Set(activeVisibleWorkspaceMap().values)
+        if let cached = _cachedVisibleWorkspaceIds {
+            return cached
+        }
+        return Set(visibleWorkspaceMap().values)
     }
 
     private func adjacentWorkspaceInOrder(
@@ -1781,6 +1823,7 @@ final class WorkspaceManager {
         if !toRemove.isEmpty {
             _cachedSortedWorkspaces = nil
             workspaceIdByName = workspaceIdByName.filter { !toRemove.contains($0.value) }
+            invalidateWorkspaceProjectionCaches()
             for monitorId in sessionState.monitorSessions.keys {
                 updateMonitorSession(monitorId) { session in
                     if let visibleWorkspaceId = session.visibleWorkspaceId,
@@ -1983,6 +2026,7 @@ final class WorkspaceManager {
 
         _cachedSortedWorkspaces = nil
         workspaceIdByName = workspaceIdByName.filter { !toRemove.contains($0.value) }
+        invalidateWorkspaceProjectionCaches()
 
         for monitorId in sessionState.monitorSessions.keys {
             updateMonitorSession(monitorId) { session in
@@ -2180,6 +2224,7 @@ final class WorkspaceManager {
         let previousMonitorSessions = sessionState.monitorSessions
         let mappingMonitorIds = Set(previousMonitorSessions.keys)
         sessionState.monitorSessions = previousMonitorSessions.filter { currentMonitorIds.contains($0.key) }
+        invalidateWorkspaceProjectionCaches()
         if currentMonitorIds != mappingMonitorIds {
             rearrangeWorkspacesOnMonitors(
                 previousMonitors: previousMonitors,
@@ -2242,6 +2287,7 @@ final class WorkspaceManager {
             pruned.visibleWorkspaceId = nil
             return pruned
         }
+        invalidateWorkspaceProjectionCaches()
 
         for newMonitor in sortedNewMonitors {
             if let oldId = newToOld[newMonitor.id],
@@ -2294,12 +2340,16 @@ final class WorkspaceManager {
         }
     }
 
-    private func workspaceMonitorId(for workspaceId: WorkspaceDescriptor.ID) -> Monitor.ID? {
+    private func resolvedWorkspaceMonitorId(for workspaceId: WorkspaceDescriptor.ID) -> Monitor.ID? {
         guard let workspace = descriptor(for: workspaceId) else { return nil }
         if configuredWorkspaceNames().contains(workspace.name) {
             return effectiveMonitor(for: workspaceId)?.id
         }
         return monitorIdShowingWorkspace(workspaceId)
+    }
+
+    private func workspaceMonitorId(for workspaceId: WorkspaceDescriptor.ID) -> Monitor.ID? {
+        resolvedWorkspaceMonitorId(for: workspaceId)
     }
 
     private func configuredMonitorDescriptions(for workspaceName: String) -> [MonitorDescription]? {
@@ -2406,6 +2456,7 @@ final class WorkspaceManager {
             workspaceIdByName[workspace.name] = workspaceId
             _cachedSortedWorkspaces = nil
         }
+        invalidateWorkspaceProjectionCaches()
     }
 
     private func createWorkspace(named name: String) -> WorkspaceDescriptor.ID? {
@@ -2416,11 +2467,12 @@ final class WorkspaceManager {
         workspacesById[workspace.id] = workspace
         workspaceIdByName[workspace.name] = workspace.id
         _cachedSortedWorkspaces = nil
+        invalidateWorkspaceProjectionCaches()
         return workspace.id
     }
 
     private func visibleWorkspaceId(on monitorId: Monitor.ID) -> WorkspaceDescriptor.ID? {
-        sessionState.monitorSessions[monitorId]?.visibleWorkspaceId
+        visibleWorkspaceMap()[monitorId]
     }
 
     private func previousVisibleWorkspaceId(on monitorId: Monitor.ID) -> WorkspaceDescriptor.ID? {
@@ -2428,11 +2480,15 @@ final class WorkspaceManager {
     }
 
     private func monitorIdShowingWorkspace(_ workspaceId: WorkspaceDescriptor.ID) -> Monitor.ID? {
-        sessionState.monitorSessions.first { $0.value.visibleWorkspaceId == workspaceId }?.key
+        if let cached = _cachedMonitorIdByVisibleWorkspace {
+            return cached[workspaceId]
+        }
+        _ = visibleWorkspaceMap()
+        return _cachedMonitorIdByVisibleWorkspace?[workspaceId]
     }
 
     private func activeVisibleWorkspaceMap() -> [Monitor.ID: WorkspaceDescriptor.ID] {
-        activeVisibleWorkspaceMap(from: sessionState.monitorSessions)
+        visibleWorkspaceMap()
     }
 
     private func activeVisibleWorkspaceMap(
@@ -2455,6 +2511,7 @@ final class WorkspaceManager {
         } else {
             sessionState.monitorSessions[monitorId] = monitorSession
         }
+        invalidateWorkspaceProjectionCaches()
     }
 
     @discardableResult

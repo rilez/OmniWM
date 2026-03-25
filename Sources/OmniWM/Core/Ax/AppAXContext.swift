@@ -58,6 +58,26 @@ private struct AppAXFrameWriteRequest: Sendable {
     let generation: Int
 }
 
+private final class AppAXContextCreationState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<AppAXContext?, Error>?
+
+    init(_ continuation: CheckedContinuation<AppAXContext?, Error>) {
+        self.continuation = continuation
+    }
+
+    func resume(with result: Result<AppAXContext?, Error>) -> Bool {
+        lock.lock()
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+
+        guard let continuation else { return false }
+        continuation.resume(with: result)
+        return true
+    }
+}
+
 @MainActor
 final class AppAXContext {
     let pid: pid_t
@@ -76,22 +96,23 @@ final class AppAXContext {
     @MainActor static var onFocusedWindowChanged: ((pid_t) -> Void)?
 
     @MainActor static var contexts: [pid_t: AppAXContext] = [:]
-    @MainActor private static var wipPids: Set<pid_t> = []
-    @MainActor private static var pendingContinuations: [pid_t: [CheckedContinuation<AppAXContext?, Error>]] = [:]
-    @MainActor private static var timeoutTasks: [pid_t: Task<Void, Never>] = [:]
+    @MainActor private static var inFlightCreations: [pid_t: Task<AppAXContext?, Error>] = [:]
+    @MainActor static var contextFactoryForTests: ((NSRunningApplication) async throws -> AppAXContext?)?
 
     nonisolated private init(
         _ nsApp: NSRunningApplication,
         _ axApp: ThreadGuardedValue<AXUIElement>,
+        _ windows: ThreadGuardedValue<[Int: AXUIElement]>,
         _ observer: ThreadGuardedValue<AXObserver?>,
+        _ subscribedWindowIds: ThreadGuardedValue<Set<Int>>,
         _ thread: Thread
     ) {
         self.nsApp = nsApp
         pid = nsApp.processIdentifier
         self.axApp = axApp
-        windows = .init([:])
+        self.windows = windows
         axObserver = observer
-        subscribedWindowIds = .init([])
+        self.subscribedWindowIds = subscribedWindowIds
         self.thread = thread
     }
 
@@ -99,102 +120,102 @@ final class AppAXContext {
     static func getOrCreate(_ nsApp: NSRunningApplication) async throws -> AppAXContext? {
         let pid = nsApp.processIdentifier
 
-        if pid == ProcessInfo.processInfo.processIdentifier { return nil }
-
         if let existing = contexts[pid] { return existing }
+        if contextFactoryForTests == nil, pid == ProcessInfo.processInfo.processIdentifier { return nil }
 
         try Task.checkCancellation()
 
-        if wipPids.contains(pid) {
-            let result: AppAXContext? = try await withThrowingTaskGroup(of: AppAXContext?.self) { group in
-                group.addTask {
-                    try await withCheckedThrowingContinuation { continuation in
-                        Task { @MainActor in
-                            pendingContinuations[pid, default: []].append(continuation)
-                        }
-                    }
-                }
-                group.addTask {
-                    try await Task.sleep(for: .milliseconds(500))
-                    return nil
-                }
-                guard let r = try await group.next() else { return nil }
-                group.cancelAll()
-                return r
+        if let inFlight = inFlightCreations[pid] {
+            return try await inFlight.value
+        }
+
+        let task = Task<AppAXContext?, Error> { @MainActor in
+            defer { inFlightCreations.removeValue(forKey: pid) }
+
+            let context: AppAXContext?
+            if let contextFactoryForTests {
+                context = try await contextFactoryForTests(nsApp)
+            } else {
+                context = try await createContext(nsApp)
             }
-            return result
-        }
 
-        wipPids.insert(pid)
-
-        timeoutTasks[pid] = Task {
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            if Task.isCancelled { return }
-            await MainActor.run {
-                if contexts[pid] == nil, wipPids.contains(pid) {
-                    wipPids.remove(pid)
-                    timeoutTasks.removeValue(forKey: pid)
-                    for cont in pendingContinuations.removeValue(forKey: pid) ?? [] {
-                        cont.resume(returning: nil)
-                    }
-                }
+            if let context {
+                contexts[pid] = context
             }
+            return context
         }
+        inFlightCreations[pid] = task
 
-        let thread = Thread {
-            $appThreadToken.withValue(AppThreadToken(pid: pid)) {
-                let axApp = AXUIElementCreateApplication(pid)
-
-                var observer: AXObserver?
-                AXObserverCreate(pid, axWindowDestroyedCallback, &observer)
-
-                if let obs = observer {
-                    CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(obs), .defaultMode)
-                }
-
-                var focusObserver: AXObserver?
-                AXObserverCreate(pid, axFocusedWindowChangedCallback, &focusObserver)
-
-                if let focusObs = focusObserver {
-                    AXObserverAddNotification(
-                        focusObs,
-                        axApp,
-                        kAXFocusedWindowChangedNotification as CFString,
-                        nil
-                    )
-                    CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(focusObs), .defaultMode)
-                }
-
-                let guardedAxApp = ThreadGuardedValue(axApp)
-                let guardedObserver = ThreadGuardedValue(observer)
-                let currentThread = Thread.current
-
-                Task { @MainActor in
-                    let context = AppAXContext(nsApp, guardedAxApp, guardedObserver, currentThread)
-                    contextDidCreate(context, pid: pid)
-                }
-
-                let port = NSMachPort()
-                RunLoop.current.add(port, forMode: .default)
-
-                CFRunLoopRun()
-            }
-        }
-        thread.name = "OmniWM-AX-\(nsApp.bundleIdentifier ?? "pid:\(pid)")"
-        thread.start()
-
-        return try await withCheckedThrowingContinuation { continuation in
-            pendingContinuations[pid, default: []].append(continuation)
-        }
+        return try await task.value
     }
 
     @MainActor
-    private static func contextDidCreate(_ context: AppAXContext, pid: pid_t) {
-        contexts[pid] = context
-        wipPids.remove(pid)
-        timeoutTasks.removeValue(forKey: pid)?.cancel()
-        for continuation in pendingContinuations.removeValue(forKey: pid) ?? [] {
-            continuation.resume(returning: context)
+    private static func createContext(_ nsApp: NSRunningApplication) async throws -> AppAXContext? {
+        let pid = nsApp.processIdentifier
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let state = AppAXContextCreationState(continuation)
+            let timeoutTask = Task {
+                try? await Task.sleep(for: .seconds(2))
+                _ = state.resume(with: .success(nil))
+            }
+
+            let thread = Thread {
+                $appThreadToken.withValue(AppThreadToken(pid: pid)) {
+                    let axApp = AXUIElementCreateApplication(pid)
+
+                    var observer: AXObserver?
+                    AXObserverCreate(pid, axWindowDestroyedCallback, &observer)
+
+                    if let obs = observer {
+                        CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(obs), .defaultMode)
+                    }
+
+                    var focusObserver: AXObserver?
+                    AXObserverCreate(pid, axFocusedWindowChangedCallback, &focusObserver)
+
+                    if let focusObs = focusObserver {
+                        AXObserverAddNotification(
+                            focusObs,
+                            axApp,
+                            kAXFocusedWindowChangedNotification as CFString,
+                            nil
+                        )
+                        CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(focusObs), .defaultMode)
+                    }
+
+                    let guardedAxApp = ThreadGuardedValue(axApp)
+                    let guardedWindows = ThreadGuardedValue([Int: AXUIElement]())
+                    let guardedObserver = ThreadGuardedValue(observer)
+                    let guardedSubscribedWindowIds = ThreadGuardedValue(Set<Int>())
+                    let currentThread = Thread.current
+
+                    scheduleOnMainRunLoop {
+                        timeoutTask.cancel()
+
+                        let context = AppAXContext(
+                            nsApp,
+                            guardedAxApp,
+                            guardedWindows,
+                            guardedObserver,
+                            guardedSubscribedWindowIds,
+                            currentThread
+                        )
+                        if state.resume(with: .success(context)) {
+                            return
+                        }
+
+                        context.destroy()
+                    }
+
+                    let port = NSMachPort()
+                    RunLoop.current.add(port, forMode: .default)
+
+                    CFRunLoopRun()
+                }
+            }
+            thread.name = "OmniWM-AX-\(nsApp.bundleIdentifier ?? "pid:\(pid)")"
+            thread.start()
         }
     }
 
@@ -534,12 +555,21 @@ final class AppAXContext {
                 $appThreadToken.withValue(AppThreadToken(pid: resolvedPid)) {
                     let axApp = AXUIElementCreateApplication(resolvedPid)
                     let guardedAxApp = ThreadGuardedValue(axApp)
+                    let guardedWindows = ThreadGuardedValue([Int: AXUIElement]())
                     let guardedObserver = ThreadGuardedValue<AXObserver?>(nil)
+                    let guardedSubscribedWindowIds = ThreadGuardedValue(Set<Int>())
                     let currentThread = Thread.current
 
                     Task { @MainActor in
                         continuation.resume(
-                            returning: AppAXContext(nsApp, guardedAxApp, guardedObserver, currentThread)
+                            returning: AppAXContext(
+                                nsApp,
+                                guardedAxApp,
+                                guardedWindows,
+                                guardedObserver,
+                                guardedSubscribedWindowIds,
+                                currentThread
+                            )
                         )
                     }
 

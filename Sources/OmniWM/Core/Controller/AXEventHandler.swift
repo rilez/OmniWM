@@ -346,7 +346,7 @@ final class AXEventHandler: CGSEventDelegate {
         resetWindowStabilizationState()
         resetCreatedWindowRetryState()
         resetActivationRetryState()
-        controller?.keyboardFocusLifecycle.reset()
+        controller?.focusBridge.reset()
         createFocusTrace.removeAll(keepingCapacity: true)
         pendingWindowRuleReevaluationTask?.cancel()
         pendingWindowRuleReevaluationTask = nil
@@ -357,11 +357,11 @@ final class AXEventHandler: CGSEventDelegate {
         expectedToken: WindowToken,
         workspaceId _: WorkspaceDescriptor.ID
     ) {
-        let requestId = controller?.keyboardFocusLifecycle.activeManagedRequest(for: expectedToken)?.requestId
+        let requestId = controller?.focusBridge.activeManagedRequest(for: expectedToken)?.requestId
         Task { @MainActor [weak self] in
             guard let self else { return }
             if let requestId,
-               self.controller?.keyboardFocusLifecycle.activeManagedRequest(requestId: requestId) == nil
+               self.controller?.focusBridge.activeManagedRequest(requestId: requestId) == nil
             {
                 return
             }
@@ -573,10 +573,10 @@ final class AXEventHandler: CGSEventDelegate {
         let removedHandle = entry?.handle
 
         if let removed = removedHandle {
-            controller.focusCoordinator.discardPendingFocus(removed.id)
+            controller.focusBridge.discardPendingFocus(removed.id)
         }
 
-        let canceledRequest = controller.keyboardFocusLifecycle.cancelManagedRequest(
+        let canceledRequest = controller.focusBridge.cancelManagedRequest(
             matching: token,
             workspaceId: affectedWorkspaceId
         )
@@ -661,11 +661,11 @@ final class AXEventHandler: CGSEventDelegate {
         )
         guard controller.hasStartedServices else { return }
 
-        let activeRequest = controller.keyboardFocusLifecycle.activeManagedRequest
+        let activeRequest = controller.focusBridge.activeManagedRequest
 
         if pid == getpid(), (controller.hasFrontmostOwnedWindow || controller.hasVisibleOwnedWindow) {
             if let activeRequest, activeRequest.token.pid == pid {
-                _ = controller.keyboardFocusLifecycle.cancelManagedRequest(requestId: activeRequest.requestId)
+                _ = controller.focusBridge.cancelManagedRequest(requestId: activeRequest.requestId)
                 cancelActivationRetry(requestId: activeRequest.requestId)
             }
             controller.clearKeyboardFocusTarget(pid: pid)
@@ -789,7 +789,7 @@ final class AXEventHandler: CGSEventDelegate {
             return
         case .unrelatedNoRequest:
             let target = controller.keyboardFocusTarget(for: token, axRef: axRef)
-            controller.keyboardFocusLifecycle.setFocusedTarget(target)
+            controller.focusBridge.setFocusedTarget(target)
             _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: appFullscreen)
             _ = controller.renderKeyboardFocusBorder(for: target, policy: .direct)
         }
@@ -822,7 +822,7 @@ final class AXEventHandler: CGSEventDelegate {
         let wsId = entry.workspaceId
         let monitorId = controller.workspaceManager.monitorId(for: wsId)
         let shouldActivateWorkspace = !isWorkspaceActive && !controller.isTransferringWindow
-        let activeRequest = controller.keyboardFocusLifecycle.activeManagedRequest(for: entry.pid)
+        let activeRequest = controller.focusBridge.activeManagedRequest(for: entry.pid)
         let shouldConfirmRequest = confirmRequest ?? (activeRequest?.token == entry.token || activeRequest == nil)
         let preservePendingSelection = !shouldConfirmRequest && activeRequest != nil
 
@@ -834,7 +834,7 @@ final class AXEventHandler: CGSEventDelegate {
                 appFullscreen: appFullscreen,
                 activateWorkspaceOnMonitor: shouldActivateWorkspace
             )
-            if let confirmedRequest = controller.keyboardFocusLifecycle.confirmManagedRequest(
+            if let confirmedRequest = controller.focusBridge.confirmManagedRequest(
                 token: entry.token,
                 source: source
             ) {
@@ -858,7 +858,7 @@ final class AXEventHandler: CGSEventDelegate {
         }
 
         let target = controller.keyboardFocusTarget(for: entry.token, axRef: entry.axRef)
-        controller.keyboardFocusLifecycle.setFocusedTarget(target)
+        controller.focusBridge.setFocusedTarget(target)
 
         if let engine = controller.niriEngine,
            let node = engine.findNode(for: entry.handle),
@@ -998,9 +998,9 @@ final class AXEventHandler: CGSEventDelegate {
             _ = controller.dwindleEngine?.rekeyWindow(from: oldToken, to: newToken, in: workspaceId)
         }
 
-        controller.focusCoordinator.rekeyPendingFocus(from: oldToken, to: newToken)
-        controller.keyboardFocusLifecycle.rekeyManagedRequest(from: oldToken, to: newToken)
-        controller.keyboardFocusLifecycle.rekeyFocusedTarget(
+        controller.focusBridge.rekeyPendingFocus(from: oldToken, to: newToken)
+        controller.focusBridge.rekeyManagedRequest(from: oldToken, to: newToken)
+        controller.focusBridge.rekeyFocusedTarget(
             from: oldToken,
             to: newToken,
             axRef: axRef,
@@ -1052,12 +1052,12 @@ final class AXEventHandler: CGSEventDelegate {
         guard let controller else { return }
         controller.hiddenAppPIDs.insert(pid)
 
-        if let activeRequest = controller.keyboardFocusLifecycle.activeManagedRequest,
+        if let activeRequest = controller.focusBridge.activeManagedRequest,
            activeRequest.token.pid == pid
         {
-            _ = controller.keyboardFocusLifecycle.cancelManagedRequest(requestId: activeRequest.requestId)
+            _ = controller.focusBridge.cancelManagedRequest(requestId: activeRequest.requestId)
             cancelActivationRetry(requestId: activeRequest.requestId)
-            controller.focusCoordinator.discardPendingFocus(activeRequest.token)
+            controller.focusBridge.discardPendingFocus(activeRequest.token)
         }
         if controller.currentKeyboardFocusTargetForRendering()?.pid == pid {
             controller.clearKeyboardFocusTarget(pid: pid)
@@ -1739,7 +1739,7 @@ final class AXEventHandler: CGSEventDelegate {
         }
 
         cancelActivationRetry()
-        controller.keyboardFocusLifecycle.setFocusedTarget(nil)
+        controller.focusBridge.setFocusedTarget(nil)
         _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: false)
         recordNiriCreateFocusTrace(
             .init(
@@ -1783,6 +1783,9 @@ final class AXEventHandler: CGSEventDelegate {
         ) {
             return
         }
+        guard origin != .probe else {
+            return
+        }
         handleActivationRetryExhausted(
             request: request,
             source: source,
@@ -1797,7 +1800,7 @@ final class AXEventHandler: CGSEventDelegate {
         reason: ActivationRetryReason
     ) -> Bool {
         guard let controller,
-              let updatedRequest = controller.keyboardFocusLifecycle.recordRetry(
+              let updatedRequest = controller.focusBridge.recordRetry(
                   for: request.token,
                   source: source,
                   retryLimit: Self.activationRetryLimit
@@ -1819,6 +1822,7 @@ final class AXEventHandler: CGSEventDelegate {
                 )
             )
         )
+        let retryOrigin: ActivationCallOrigin = origin == .probe ? .probe : .retry
         pendingActivationRetryTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: Self.stabilizationRetryDelay)
             guard !Task.isCancelled, let self else { return }
@@ -1827,14 +1831,14 @@ final class AXEventHandler: CGSEventDelegate {
             self.pendingActivationRetryTask = nil
             self.pendingActivationRetryRequestId = nil
             guard let controller = self.controller,
-                  let liveRequest = controller.keyboardFocusLifecycle.activeManagedRequest(requestId: requestId)
+                  let liveRequest = controller.focusBridge.activeManagedRequest(requestId: requestId)
             else {
                 return
             }
             self.handleAppActivation(
                 pid: liveRequest.token.pid,
                 source: source,
-                origin: .retry
+                origin: retryOrigin
             )
         }
         return true
@@ -1848,14 +1852,18 @@ final class AXEventHandler: CGSEventDelegate {
         guard let controller else { return }
 
         cancelActivationRetry(requestId: request.requestId)
-        _ = controller.keyboardFocusLifecycle.cancelManagedRequest(requestId: request.requestId)
+        _ = controller.focusBridge.cancelManagedRequest(requestId: request.requestId)
         _ = controller.workspaceManager.cancelManagedFocusRequest(
             matching: request.token,
             workspaceId: request.workspaceId
         )
 
         if let target = controller.currentKeyboardFocusTargetForRendering(),
-           controller.renderKeyboardFocusBorder(for: target, policy: .direct)
+           controller.renderKeyboardFocusBorder(
+               for: target,
+               preferredFrame: controller.preferredKeyboardFocusFrame(for: target.token),
+               policy: .direct
+           )
         {
             recordNiriCreateFocusTrace(
                 .init(

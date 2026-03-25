@@ -1,10 +1,10 @@
 # OmniWM Core Codex Instructions
 
-## Local-only Notice
+## Local Notice
 
-- This file is intentionally local and expected to be gitignored.
-- Do not delete this file. It defines repo-specific Codex behavior for Core runtime work.
-- If the policy needs to change, edit this file in place instead of removing it.
+- This file defines repo-specific Codex behavior for Core runtime work.
+- It is currently tracked in this repository; keep it aligned with the codebase.
+- Do not delete this file. If the policy needs to change, edit it in place.
 
 This file tightens the root `AGENTS.md` rules for everything under `Sources/OmniWM/Core/**`.
 
@@ -41,7 +41,9 @@ Treat these as the critical files and ownership boundaries in Core:
 - Authoritative state:
   - `Workspace/WorkspaceManager.swift`
   - `Workspace/WindowModel.swift`
-  - `Controller/FocusManager.swift`
+- Focus coordination and notification:
+  - `Controller/KeyboardFocusLifecycleCoordinator.swift` (`FocusBridgeCoordinator`)
+  - `Controller/FocusNotifications.swift` (`FocusNotificationDispatcher`)
 - Layout and frame application:
   - `Controller/LayoutRefreshController.swift`
   - `Controller/NiriLayoutHandler.swift`
@@ -57,10 +59,11 @@ Treat these as the critical files and ownership boundaries in Core:
 
 Be extremely suspicious of the following patterns in this repo:
 
-- `UUID` churn and `WindowHandle` identity churn
-  - `Layout/DNode.swift` defines `WindowHandle` as a class identity token
-  - `Workspace/WindowModel.swift` creates UUID-backed handles in `upsert`
-  - Any new wrapper, conversion, or alternate identity path around `WindowHandle` is suspect
+- `WindowHandle` identity churn and synthetic handle creation
+  - `Layout/DNode.swift` defines `WindowHandle` as a class identity token around `WindowToken`
+  - `Workspace/WindowModel.swift` is the authoritative owner of persisted handles in `upsert`
+  - `Layout/Niri/NiriNode.swift` and similar `WindowHandle(id: token)` synthesis sites deserve scrutiny
+  - Any new wrapper, re-creation, or alternate identity path around `WindowHandle` is suspect
 - Snapshot materialization and rebuild loops
   - `Workspace/WindowModel.swift`: `allEntries()`, `windows(in:)`
   - `Workspace/WorkspaceManager.swift`: `entries(in:)`, `workspaces(on:)`, workspace sorting/filtering paths

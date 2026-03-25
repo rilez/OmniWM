@@ -22,6 +22,13 @@ struct LayoutMonitorSnapshot {
     let orientation: Monitor.Orientation
 }
 
+struct WorkspaceRefreshInput {
+    let workspaceId: WorkspaceDescriptor.ID
+    let monitor: LayoutMonitorSnapshot
+    let windows: [LayoutWindowSnapshot]
+    let isActiveWorkspace: Bool
+}
+
 struct NiriWindowRemovalSeed {
     let removedNodeIds: [NodeId]
     let oldFrames: [WindowToken: CGRect]

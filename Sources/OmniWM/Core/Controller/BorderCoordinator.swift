@@ -68,6 +68,9 @@ final class BorderCoordinator {
         }
 
         guard let frame = resolveFrame(for: target, preferredFrame: preferredFrame) else {
+            if target.isManaged, policy == .coordinated {
+                return false
+            }
             controller.borderManager.hideBorder()
             return false
         }

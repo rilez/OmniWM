@@ -210,25 +210,26 @@ import QuartzCore
     ) -> NiriWorkspaceSnapshot? {
         guard let controller else { return nil }
 
-        let entries = controller.workspaceManager.tiledEntries(in: wsId)
         let shouldResolveConstraints = viewportState == nil
-        let windows = controller.layoutRefreshController.buildWindowSnapshots(
-            for: entries,
-            resolveConstraints: shouldResolveConstraints
-        )
-        let effectiveViewportState = viewportState ?? controller.workspaceManager.niriViewportState(for: wsId)
         let orientation = controller.niriEngine?.monitor(for: monitor.id)?.orientation
             ?? controller.settings.effectiveOrientation(for: monitor)
-        let monitorSnapshot = controller.layoutRefreshController.buildMonitorSnapshot(
-            for: monitor,
-            orientation: orientation
-        )
+        guard let refreshInput = controller.layoutRefreshController.buildRefreshInput(
+            workspaceId: wsId,
+            monitor: monitor,
+            resolveConstraints: shouldResolveConstraints,
+            orientation: orientation,
+            isActiveWorkspace: isActiveWorkspace
+        ) else {
+            return nil
+        }
+
+        let effectiveViewportState = viewportState ?? controller.workspaceManager.niriViewportState(for: wsId)
         let interactionWorkspaceId = controller.activeWorkspace()?.id
 
         return NiriWorkspaceSnapshot(
             workspaceId: wsId,
-            monitor: monitorSnapshot,
-            windows: windows,
+            monitor: refreshInput.monitor,
+            windows: refreshInput.windows,
             viewportState: effectiveViewportState,
             preferredFocusToken: controller.workspaceManager.preferredFocusToken(in: wsId),
             confirmedFocusedToken: controller.workspaceManager.focusedToken,
@@ -241,7 +242,7 @@ import QuartzCore
             gap: CGFloat(controller.workspaceManager.gaps),
             outerGaps: controller.workspaceManager.outerGaps,
             displayRefreshRate: controller.layoutRefreshController.layoutState.refreshRateByDisplay[monitor.displayId] ?? 60.0,
-            isActiveWorkspace: isActiveWorkspace,
+            isActiveWorkspace: refreshInput.isActiveWorkspace,
             isInteractionWorkspace: interactionWorkspaceId == wsId
         )
     }

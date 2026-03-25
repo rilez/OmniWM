@@ -259,12 +259,14 @@ import QuartzCore
     ) -> DwindleWorkspaceSnapshot? {
         guard let controller else { return nil }
 
-        let entries = controller.workspaceManager.tiledEntries(in: wsId)
-        let windows = controller.layoutRefreshController.buildWindowSnapshots(
-            for: entries,
-            resolveConstraints: resolveConstraints
-        )
-        let monitorSnapshot = controller.layoutRefreshController.buildMonitorSnapshot(for: monitor)
+        guard let refreshInput = controller.layoutRefreshController.buildRefreshInput(
+            workspaceId: wsId,
+            monitor: monitor,
+            resolveConstraints: resolveConstraints,
+            isActiveWorkspace: isActiveWorkspace
+        ) else {
+            return nil
+        }
         let selectedToken: WindowToken?
         if let selected = controller.dwindleEngine?.selectedNode(in: wsId),
            case let .leaf(handle, _) = selected.kind
@@ -276,13 +278,13 @@ import QuartzCore
 
         return DwindleWorkspaceSnapshot(
             workspaceId: wsId,
-            monitor: monitorSnapshot,
-            windows: windows,
+            monitor: refreshInput.monitor,
+            windows: refreshInput.windows,
             preferredFocusToken: controller.workspaceManager.preferredFocusToken(in: wsId),
             confirmedFocusedToken: controller.workspaceManager.focusedToken,
             selectedToken: selectedToken,
             settings: controller.settings.resolvedDwindleSettings(for: monitor),
-            isActiveWorkspace: isActiveWorkspace
+            isActiveWorkspace: refreshInput.isActiveWorkspace
         )
     }
 

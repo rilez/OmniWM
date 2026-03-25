@@ -900,7 +900,7 @@ private func waitUntilAXEventTest(
         #expect(controller.activeWorkspace()?.id == workspaceTwo)
         #expect(controller.workspaceManager.pendingFocusedToken == targetToken)
         #expect(controller.workspaceManager.focusedToken == oldToken)
-        #expect(controller.keyboardFocusLifecycle.activeManagedRequest?.token == targetToken)
+        #expect(controller.focusBridge.activeManagedRequest?.token == targetToken)
 
         controller.axEventHandler.focusedWindowRefProvider = { pid in
             guard pid == targetPid else { return nil }

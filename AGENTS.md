@@ -1,10 +1,10 @@
 # OmniWM Codex Instructions
 
-## Local-only Notice
+## Local Notice
 
-- This file is intentionally local and expected to be gitignored.
-- Do not delete this file. It defines repo-specific Codex behavior for this workspace.
-- If the policy needs to change, edit this file in place instead of removing it.
+- This file defines repo-specific Codex behavior for this workspace.
+- It is currently tracked in this repository; keep it aligned with the codebase.
+- Do not delete this file. If the policy needs to change, edit it in place.
 
 This file defines the default Codex behavior for this repository.
 
@@ -49,8 +49,7 @@ Audit the real owners in this repo. Do not invent replacement abstractions while
 - Entrypoints:
   - `Sources/OmniWMApp/OmniWMApp.swift` -> `Sources/OmniWM/App/AppDelegate.swift` -> `Sources/OmniWM/Core/Controller/WMController.swift`
 - State ownership:
-  - `Sources/OmniWM/Core/Workspace/WorkspaceManager.swift` and `Sources/OmniWM/Core/Workspace/WindowModel.swift` own workspace and window state
-  - `Sources/OmniWM/Core/Controller/FocusManager.swift` owns focus memory and focus recovery state
+  - `Sources/OmniWM/Core/Workspace/WorkspaceManager.swift` and `Sources/OmniWM/Core/Workspace/WindowModel.swift` own workspace, window, scratchpad, and persisted focus session state
   - `Sources/OmniWM/Core/Workspace/WorkspaceManager.swift` owns Niri viewport state
   - `Sources/OmniWM/Core/Layout/Niri/NiriLayoutEngine.swift` and `Sources/OmniWM/Core/Layout/Dwindle/DwindleLayoutEngine.swift` own layout trees and layout-side identity
 - Event and platform integration:
@@ -69,6 +68,8 @@ Audit the real owners in this repo. Do not invent replacement abstractions while
   - `Sources/OmniWM/Core/Controller/BorderCoordinator.swift`
   - `Sources/OmniWM/Core/Border/BorderManager.swift`
 - Focus and navigation:
+  - `Sources/OmniWM/Core/Controller/KeyboardFocusLifecycleCoordinator.swift` (`FocusBridgeCoordinator`) owns live managed-focus request lifecycle and focus bridge coordination
+  - `Sources/OmniWM/Core/Controller/FocusNotifications.swift` owns focus notification fan-out
   - `Sources/OmniWM/Core/Controller/WorkspaceNavigationHandler.swift`
   - `Sources/OmniWM/Core/Controller/WindowActionHandler.swift`
   - `Sources/OmniWM/Core/Controller/CommandHandler.swift`
@@ -76,8 +77,9 @@ Audit the real owners in this repo. Do not invent replacement abstractions while
 Common operation reference path for reviews:
 
 - Window create path:
-  - `CGSEventObserver` event -> `AXEventHandler.handleCGSWindowCreated` / `handleCreated`
+  - `CGSEventObserver` event -> `AXEventHandler.handleCGSWindowCreated` -> `processCreatedWindow`
   - `SkyLight.queryWindowInfo` + `AXWindowService.axWindowRef`
+  - `prepareCreateCandidate` -> managed/fullscreen replacement gating -> `trackPreparedCreate`
   - `WorkspaceManager.addWindow`
   - `LayoutRefreshController.requestRelayout`
   - `NiriLayoutHandler` or `DwindleLayoutHandler`
@@ -133,8 +135,9 @@ Current repo baseline:
 - `Package.swift` declares `swift-tools-version: 6.2`
 - Targets use Swift language mode `.v6`
 - The `OmniWM` target uses `.interoperabilityMode(.C)`
+- `Package.swift` does not currently set an explicit default actor isolation, strict-concurrency override, or upcoming concurrency feature flag
 - Local toolchain observed in this repo: Apple Swift `6.2.4`
-- No Xcode project, workspace, `.swift-version`, or other toolchain pinning file is currently present
+- No dedicated Xcode project or `.swift-version` toolchain pinning file is present; SwiftPM also generates a workspace at `.swiftpm/xcode/package.xcworkspace`
 
 Use that baseline as the starting point, but if the task changes toolchain-related files, re-check them before answering. Treat Swift 6.3 recommendations as provisional unless the repo explicitly opts into snapshot or nightly toolchains.
 

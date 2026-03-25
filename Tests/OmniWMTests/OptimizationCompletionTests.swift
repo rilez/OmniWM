@@ -125,6 +125,38 @@ private func makeOverviewWindowItem(
         #expect(model.entry(for: token1)?.axRef.windowId == secondRef.windowId)
     }
 
+    @MainActor
+    @Test func focusBridgeRetryBudgetResetsWhenActivationSourceChanges() {
+        let coordinator = FocusBridgeCoordinator()
+        let workspaceId = WorkspaceDescriptor.ID()
+        let token = WindowToken(pid: 77, windowId: 402)
+
+        let request = coordinator.beginManagedRequest(token: token, workspaceId: workspaceId)
+        #expect(request.retryCount == 0)
+
+        let firstRetry = coordinator.recordRetry(
+            for: token,
+            source: .focusedWindowChanged,
+            retryLimit: 5
+        )
+        #expect(firstRetry?.retryCount == 1)
+
+        let secondRetry = coordinator.recordRetry(
+            for: token,
+            source: .focusedWindowChanged,
+            retryLimit: 5
+        )
+        #expect(secondRetry?.retryCount == 2)
+
+        let resetRetry = coordinator.recordRetry(
+            for: token,
+            source: .workspaceDidActivateApplication,
+            retryLimit: 5
+        )
+        #expect(resetRetry?.retryCount == 1)
+        #expect(resetRetry?.lastActivationSource == .workspaceDidActivateApplication)
+    }
+
     @Test func overviewLayoutHoverAndSelectionOnlyTouchOldAndNew() {
         let ws1 = WorkspaceDescriptor.ID()
         let ws2 = WorkspaceDescriptor.ID()

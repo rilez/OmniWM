@@ -497,7 +497,7 @@ private func prepareNiriState(
     return handlesByWindowId
 }
 
-@Suite struct RefreshRoutingTests {
+@Suite(.serialized) struct RefreshRoutingTests {
     @Test func relayoutPoliciesAreExplicit() {
         #expect(RefreshReason.axWindowChanged.relayoutSchedulingPolicy == .debounced(
             nanoseconds: 8_000_000,
@@ -909,7 +909,7 @@ private func prepareNiriState(
             return
         }
 
-        controller.keyboardFocusLifecycle.setFocusedTarget(
+        controller.focusBridge.setFocusedTarget(
             controller.managedKeyboardFocusTarget(for: focusedHandle.id)
         )
 
@@ -925,7 +925,7 @@ private func prepareNiriState(
         controller.workspaceManager.updateNiriViewportState(animatingState, for: workspaceOne)
 
         #expect(controller.workspaceNavigationHandler.moveWindow(handle: focusedHandle, toWorkspaceId: workspaceTwo))
-        #expect(controller.keyboardFocusLifecycle.focusedTarget?.workspaceId == workspaceTwo)
+        #expect(controller.focusBridge.focusedTarget?.workspaceId == workspaceTwo)
         #expect(controller.currentKeyboardFocusTargetForRendering()?.workspaceId == workspaceTwo)
 
         let rendered = controller.renderKeyboardFocusBorder(
