@@ -340,62 +340,76 @@ final class SettingsStore {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        hotkeysEnabled = defaults.object(forKey: Keys.hotkeysEnabled) as? Bool ?? true
-        focusFollowsMouse = defaults.object(forKey: Keys.focusFollowsMouse) as? Bool ?? false
-        moveMouseToFocusedWindow = defaults.object(forKey: Keys.moveMouseToFocusedWindow) as? Bool ?? false
-        focusFollowsWindowToMonitor = defaults.object(forKey: Keys.focusFollowsWindowToMonitor) as? Bool ?? false
+        let baseline = SettingsExport.defaults()
+
+        hotkeysEnabled = defaults.object(forKey: Keys.hotkeysEnabled) as? Bool ?? baseline.hotkeysEnabled
+        focusFollowsMouse = defaults.object(forKey: Keys.focusFollowsMouse) as? Bool ?? baseline.focusFollowsMouse
+        moveMouseToFocusedWindow = defaults.object(forKey: Keys.moveMouseToFocusedWindow) as? Bool ??
+            baseline.moveMouseToFocusedWindow
+        focusFollowsWindowToMonitor = defaults.object(forKey: Keys.focusFollowsWindowToMonitor) as? Bool ??
+            baseline.focusFollowsWindowToMonitor
         mouseWarpMonitorOrder = Self.loadMouseWarpMonitorOrder(from: defaults)
-        mouseWarpAxis = MouseWarpAxis(rawValue: defaults.string(forKey: Keys.mouseWarpAxis) ?? "") ?? .horizontal
+        mouseWarpAxis = MouseWarpAxis(rawValue: defaults.string(forKey: Keys.mouseWarpAxis) ?? "") ??
+            MouseWarpAxis(rawValue: baseline.mouseWarpAxis ?? "") ?? .horizontal
         niriColumnWidthPresets = Self.loadNiriColumnWidthPresets(from: defaults)
         niriDefaultColumnWidth = Self.loadNiriDefaultColumnWidth(from: defaults)
-        mouseWarpMargin = defaults.object(forKey: Keys.mouseWarpMargin) as? Int ?? 1
-        gapSize = defaults.object(forKey: Keys.gapSize) as? Double ?? 8
+        mouseWarpMargin = defaults.object(forKey: Keys.mouseWarpMargin) as? Int ?? baseline.mouseWarpMargin
+        gapSize = defaults.object(forKey: Keys.gapSize) as? Double ?? baseline.gapSize
 
-        outerGapLeft = defaults.object(forKey: Keys.outerGapLeft) as? Double ?? 8
-        outerGapRight = defaults.object(forKey: Keys.outerGapRight) as? Double ?? 8
-        outerGapTop = defaults.object(forKey: Keys.outerGapTop) as? Double ?? 8
-        outerGapBottom = defaults.object(forKey: Keys.outerGapBottom) as? Double ?? 8
+        outerGapLeft = defaults.object(forKey: Keys.outerGapLeft) as? Double ?? baseline.outerGapLeft
+        outerGapRight = defaults.object(forKey: Keys.outerGapRight) as? Double ?? baseline.outerGapRight
+        outerGapTop = defaults.object(forKey: Keys.outerGapTop) as? Double ?? baseline.outerGapTop
+        outerGapBottom = defaults.object(forKey: Keys.outerGapBottom) as? Double ?? baseline.outerGapBottom
 
-        niriMaxWindowsPerColumn = defaults.object(forKey: Keys.niriMaxWindowsPerColumn) as? Int ?? 3
-        niriMaxVisibleColumns = defaults.object(forKey: Keys.niriMaxVisibleColumns) as? Int ?? 2
-        niriInfiniteLoop = defaults.object(forKey: Keys.niriInfiniteLoop) as? Bool ?? false
+        niriMaxWindowsPerColumn = defaults.object(forKey: Keys.niriMaxWindowsPerColumn) as? Int ??
+            baseline.niriMaxWindowsPerColumn
+        niriMaxVisibleColumns = defaults.object(forKey: Keys.niriMaxVisibleColumns) as? Int ??
+            baseline.niriMaxVisibleColumns
+        niriInfiniteLoop = defaults.object(forKey: Keys.niriInfiniteLoop) as? Bool ?? baseline.niriInfiniteLoop
         niriCenterFocusedColumn = CenterFocusedColumn(rawValue: defaults
-            .string(forKey: Keys.niriCenterFocusedColumn) ?? "") ?? .never
-        niriAlwaysCenterSingleColumn = defaults.object(forKey: Keys.niriAlwaysCenterSingleColumn) as? Bool ?? true
+            .string(forKey: Keys.niriCenterFocusedColumn) ?? "") ??
+            CenterFocusedColumn(rawValue: baseline.niriCenterFocusedColumn) ?? .never
+        niriAlwaysCenterSingleColumn = defaults.object(forKey: Keys.niriAlwaysCenterSingleColumn) as? Bool ??
+            baseline.niriAlwaysCenterSingleColumn
         niriSingleWindowAspectRatio = SingleWindowAspectRatio(rawValue: defaults
-            .string(forKey: Keys.niriSingleWindowAspectRatio) ?? "") ?? .ratio4x3
+            .string(forKey: Keys.niriSingleWindowAspectRatio) ?? "") ??
+            SingleWindowAspectRatio(rawValue: baseline.niriSingleWindowAspectRatio) ?? .ratio4x3
 
         workspaceConfigurations = Self.loadWorkspaceConfigurations(from: defaults)
-        defaultLayoutType = LayoutType(rawValue: defaults.string(forKey: Keys.defaultLayoutType) ?? "") ?? .niri
+        defaultLayoutType = LayoutType(rawValue: defaults.string(forKey: Keys.defaultLayoutType) ?? "") ??
+            LayoutType(rawValue: baseline.defaultLayoutType) ?? .niri
 
-        bordersEnabled = defaults.object(forKey: Keys.bordersEnabled) as? Bool ?? true
-        borderWidth = defaults.object(forKey: Keys.borderWidth) as? Double ?? 5.0
-        borderColorRed = defaults.object(forKey: Keys.borderColorRed) as? Double ?? 0.084585202284378935
-        borderColorGreen = defaults.object(forKey: Keys.borderColorGreen) as? Double ?? 1.0
-        borderColorBlue = defaults.object(forKey: Keys.borderColorBlue) as? Double ?? 0.97930003794467602
-        borderColorAlpha = defaults.object(forKey: Keys.borderColorAlpha) as? Double ?? 1.0
+        bordersEnabled = defaults.object(forKey: Keys.bordersEnabled) as? Bool ?? baseline.bordersEnabled
+        borderWidth = defaults.object(forKey: Keys.borderWidth) as? Double ?? baseline.borderWidth
+        borderColorRed = defaults.object(forKey: Keys.borderColorRed) as? Double ?? baseline.borderColorRed
+        borderColorGreen = defaults.object(forKey: Keys.borderColorGreen) as? Double ?? baseline.borderColorGreen
+        borderColorBlue = defaults.object(forKey: Keys.borderColorBlue) as? Double ?? baseline.borderColorBlue
+        borderColorAlpha = defaults.object(forKey: Keys.borderColorAlpha) as? Double ?? baseline.borderColorAlpha
 
         hotkeyBindings = Self.loadBindings(from: defaults)
 
-        workspaceBarEnabled = defaults.object(forKey: Keys.workspaceBarEnabled) as? Bool ?? true
-        workspaceBarShowLabels = defaults.object(forKey: Keys.workspaceBarShowLabels) as? Bool ?? true
+        workspaceBarEnabled = defaults.object(forKey: Keys.workspaceBarEnabled) as? Bool ?? baseline.workspaceBarEnabled
+        workspaceBarShowLabels = defaults.object(forKey: Keys.workspaceBarShowLabels) as? Bool ??
+            baseline.workspaceBarShowLabels
         workspaceBarWindowLevel = WorkspaceBarWindowLevel(
             rawValue: defaults.string(forKey: Keys.workspaceBarWindowLevel) ?? ""
-        ) ?? .popup
+        ) ?? WorkspaceBarWindowLevel(rawValue: baseline.workspaceBarWindowLevel) ?? .popup
         workspaceBarPosition = WorkspaceBarPosition(
             rawValue: defaults.string(forKey: Keys.workspaceBarPosition) ?? ""
-        ) ?? .overlappingMenuBar
-        workspaceBarNotchAware = defaults.object(forKey: Keys.workspaceBarNotchAware) as? Bool ?? true
+        ) ?? WorkspaceBarPosition(rawValue: baseline.workspaceBarPosition) ?? .overlappingMenuBar
+        workspaceBarNotchAware = defaults.object(forKey: Keys.workspaceBarNotchAware) as? Bool ??
+            baseline.workspaceBarNotchAware
         workspaceBarDeduplicateAppIcons = defaults
-            .object(forKey: Keys.workspaceBarDeduplicateAppIcons) as? Bool ?? false
+            .object(forKey: Keys.workspaceBarDeduplicateAppIcons) as? Bool ?? baseline.workspaceBarDeduplicateAppIcons
         workspaceBarHideEmptyWorkspaces = defaults
-            .object(forKey: Keys.workspaceBarHideEmptyWorkspaces) as? Bool ?? false
+            .object(forKey: Keys.workspaceBarHideEmptyWorkspaces) as? Bool ?? baseline.workspaceBarHideEmptyWorkspaces
         workspaceBarReserveLayoutSpace = defaults
-            .object(forKey: Keys.workspaceBarReserveLayoutSpace) as? Bool ?? false
-        workspaceBarHeight = defaults.object(forKey: Keys.workspaceBarHeight) as? Double ?? 24.0
-        workspaceBarBackgroundOpacity = defaults.object(forKey: Keys.workspaceBarBackgroundOpacity) as? Double ?? 0.1
-        workspaceBarXOffset = defaults.object(forKey: Keys.workspaceBarXOffset) as? Double ?? 0.0
-        workspaceBarYOffset = defaults.object(forKey: Keys.workspaceBarYOffset) as? Double ?? 0.0
+            .object(forKey: Keys.workspaceBarReserveLayoutSpace) as? Bool ?? baseline.workspaceBarReserveLayoutSpace
+        workspaceBarHeight = defaults.object(forKey: Keys.workspaceBarHeight) as? Double ?? baseline.workspaceBarHeight
+        workspaceBarBackgroundOpacity = defaults.object(forKey: Keys.workspaceBarBackgroundOpacity) as? Double ??
+            baseline.workspaceBarBackgroundOpacity
+        workspaceBarXOffset = defaults.object(forKey: Keys.workspaceBarXOffset) as? Double ?? baseline.workspaceBarXOffset
+        workspaceBarYOffset = defaults.object(forKey: Keys.workspaceBarYOffset) as? Double ?? baseline.workspaceBarYOffset
         monitorBarSettings = MonitorSettingsStore.load(from: defaults, key: Keys.monitorBarSettings)
         let loadedAppRules = Self.loadAppRules(from: defaults)
         appRules = loadedAppRules
@@ -408,48 +422,64 @@ final class SettingsStore {
         monitorOrientationSettings = MonitorSettingsStore.load(from: defaults, key: Keys.monitorOrientationSettings)
         monitorNiriSettings = MonitorSettingsStore.load(from: defaults, key: Keys.monitorNiriSettings)
 
-        dwindleSmartSplit = defaults.object(forKey: Keys.dwindleSmartSplit) as? Bool ?? false
-        dwindleDefaultSplitRatio = defaults.object(forKey: Keys.dwindleDefaultSplitRatio) as? Double ?? 1.0
-        dwindleSplitWidthMultiplier = defaults.object(forKey: Keys.dwindleSplitWidthMultiplier) as? Double ?? 1.0
+        dwindleSmartSplit = defaults.object(forKey: Keys.dwindleSmartSplit) as? Bool ?? baseline.dwindleSmartSplit
+        dwindleDefaultSplitRatio = defaults.object(forKey: Keys.dwindleDefaultSplitRatio) as? Double ??
+            baseline.dwindleDefaultSplitRatio
+        dwindleSplitWidthMultiplier = defaults.object(forKey: Keys.dwindleSplitWidthMultiplier) as? Double ??
+            baseline.dwindleSplitWidthMultiplier
         dwindleSingleWindowAspectRatio = DwindleSingleWindowAspectRatio(
             rawValue: defaults.string(forKey: Keys.dwindleSingleWindowAspectRatio) ?? ""
-        ) ?? .ratio4x3
-        dwindleUseGlobalGaps = defaults.object(forKey: Keys.dwindleUseGlobalGaps) as? Bool ?? true
-        dwindleMoveToRootStable = defaults.object(forKey: Keys.dwindleMoveToRootStable) as? Bool ?? true
+        ) ?? DwindleSingleWindowAspectRatio(rawValue: baseline.dwindleSingleWindowAspectRatio) ?? .ratio4x3
+        dwindleUseGlobalGaps = defaults.object(forKey: Keys.dwindleUseGlobalGaps) as? Bool ??
+            baseline.dwindleUseGlobalGaps
+        dwindleMoveToRootStable = defaults.object(forKey: Keys.dwindleMoveToRootStable) as? Bool ??
+            baseline.dwindleMoveToRootStable
         monitorDwindleSettings = MonitorSettingsStore.load(from: defaults, key: Keys.monitorDwindleSettings)
 
-        preventSleepEnabled = defaults.object(forKey: Keys.preventSleepEnabled) as? Bool ?? false
-        scrollGestureEnabled = defaults.object(forKey: Keys.scrollGestureEnabled) as? Bool ?? true
-        scrollSensitivity = defaults.object(forKey: Keys.scrollSensitivity) as? Double ?? 5.0
+        preventSleepEnabled = defaults.object(forKey: Keys.preventSleepEnabled) as? Bool ?? baseline.preventSleepEnabled
+        scrollGestureEnabled = defaults.object(forKey: Keys.scrollGestureEnabled) as? Bool ??
+            baseline.scrollGestureEnabled
+        scrollSensitivity = defaults.object(forKey: Keys.scrollSensitivity) as? Double ?? baseline.scrollSensitivity
         scrollModifierKey = ScrollModifierKey(rawValue: defaults.string(forKey: Keys.scrollModifierKey) ?? "") ??
-            .optionShift
-        gestureFingerCount = GestureFingerCount(rawValue: defaults.integer(forKey: Keys.gestureFingerCount)) ?? .three
-        gestureInvertDirection = defaults.object(forKey: Keys.gestureInvertDirection) as? Bool ?? true
+            ScrollModifierKey(rawValue: baseline.scrollModifierKey) ?? .optionShift
+        gestureFingerCount = GestureFingerCount(
+            rawValue: defaults.object(forKey: Keys.gestureFingerCount) as? Int ?? baseline.gestureFingerCount
+        ) ?? .three
+        gestureInvertDirection = defaults.object(forKey: Keys.gestureInvertDirection) as? Bool ??
+            baseline.gestureInvertDirection
 
         commandPaletteLastMode = CommandPaletteMode(
             rawValue: defaults.string(forKey: Keys.commandPaletteLastMode) ?? ""
-        ) ?? .windows
+        ) ?? CommandPaletteMode(rawValue: baseline.commandPaletteLastMode) ?? .windows
 
-        hiddenBarIsCollapsed = defaults.object(forKey: Keys.hiddenBarIsCollapsed) as? Bool ?? true
+        hiddenBarIsCollapsed = defaults.object(forKey: Keys.hiddenBarIsCollapsed) as? Bool ??
+            baseline.hiddenBarIsCollapsed
 
-        quakeTerminalEnabled = defaults.object(forKey: Keys.quakeTerminalEnabled) as? Bool ?? true
+        quakeTerminalEnabled = defaults.object(forKey: Keys.quakeTerminalEnabled) as? Bool ?? baseline.quakeTerminalEnabled
         quakeTerminalPosition = QuakeTerminalPosition(
             rawValue: defaults.string(forKey: Keys.quakeTerminalPosition) ?? ""
-        ) ?? .center
-        quakeTerminalWidthPercent = defaults.object(forKey: Keys.quakeTerminalWidthPercent) as? Double ?? 50.0
-        quakeTerminalHeightPercent = defaults.object(forKey: Keys.quakeTerminalHeightPercent) as? Double ?? 50.0
-        quakeTerminalAnimationDuration = defaults.object(forKey: Keys.quakeTerminalAnimationDuration) as? Double ?? 0.2
-        quakeTerminalAutoHide = defaults.object(forKey: Keys.quakeTerminalAutoHide) as? Bool ?? false
-        quakeTerminalOpacity = defaults.object(forKey: Keys.quakeTerminalOpacity) as? Double ?? 1.0
+        ) ?? QuakeTerminalPosition(rawValue: baseline.quakeTerminalPosition) ?? .center
+        quakeTerminalWidthPercent = defaults.object(forKey: Keys.quakeTerminalWidthPercent) as? Double ??
+            baseline.quakeTerminalWidthPercent
+        quakeTerminalHeightPercent = defaults.object(forKey: Keys.quakeTerminalHeightPercent) as? Double ??
+            baseline.quakeTerminalHeightPercent
+        quakeTerminalAnimationDuration = defaults.object(forKey: Keys.quakeTerminalAnimationDuration) as? Double ??
+            baseline.quakeTerminalAnimationDuration
+        quakeTerminalAutoHide = defaults.object(forKey: Keys.quakeTerminalAutoHide) as? Bool ??
+            baseline.quakeTerminalAutoHide
+        quakeTerminalOpacity = defaults.object(forKey: Keys.quakeTerminalOpacity) as? Double ??
+            (baseline.quakeTerminalOpacity ?? 1.0)
         quakeTerminalMonitorMode = QuakeTerminalMonitorMode(
             rawValue: defaults.string(forKey: Keys.quakeTerminalMonitorMode) ?? ""
-        ) ?? .focusedWindow
-        quakeTerminalUseCustomFrame = defaults.object(forKey: Keys.quakeTerminalUseCustomFrame) as? Bool ?? false
+        ) ?? QuakeTerminalMonitorMode(rawValue: baseline.quakeTerminalMonitorMode ?? "") ?? .focusedWindow
+        quakeTerminalUseCustomFrame = defaults.object(forKey: Keys.quakeTerminalUseCustomFrame) as? Bool ??
+            baseline.quakeTerminalUseCustomFrame
         quakeTerminalCustomFrameX = defaults.object(forKey: Keys.quakeTerminalCustomFrameX) as? Double
         quakeTerminalCustomFrameY = defaults.object(forKey: Keys.quakeTerminalCustomFrameY) as? Double
         quakeTerminalCustomFrameWidth = defaults.object(forKey: Keys.quakeTerminalCustomFrameWidth) as? Double
         quakeTerminalCustomFrameHeight = defaults.object(forKey: Keys.quakeTerminalCustomFrameHeight) as? Double
-        appearanceMode = AppearanceMode(rawValue: defaults.string(forKey: Keys.appearanceMode) ?? "") ?? .dark
+        appearanceMode = AppearanceMode(rawValue: defaults.string(forKey: Keys.appearanceMode) ?? "") ??
+            AppearanceMode(rawValue: baseline.appearanceMode) ?? .dark
     }
 
     private static func loadBindings(from defaults: UserDefaults) -> [HotkeyBinding] {

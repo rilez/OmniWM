@@ -3,6 +3,11 @@ import Foundation
 
 // MARK: - SettingsExport
 
+enum SettingsExportMode {
+    case full
+    case compact
+}
+
 struct QuakeTerminalFrameExport: Codable, Equatable {
     var x: Double
     var y: Double
@@ -138,7 +143,7 @@ extension SettingsExport {
             niriCenterFocusedColumn: CenterFocusedColumn.never.rawValue,
             niriAlwaysCenterSingleColumn: true,
             niriSingleWindowAspectRatio: SingleWindowAspectRatio.ratio4x3.rawValue,
-            niriColumnWidthPresets: SettingsStore.defaultColumnWidthPresets,
+            niriColumnWidthPresets: BuiltInSettingsDefaults.niriColumnWidthPresets,
             niriDefaultColumnWidth: nil,
             workspaceConfigurations: BuiltInSettingsDefaults.workspaceConfigurations,
             defaultLayoutType: LayoutType.niri.rawValue,
@@ -201,12 +206,12 @@ extension SettingsExport {
     }
 
     func exportData(
-        incrementalOnly: Bool = false,
+        mode: SettingsExportMode = .full,
         defaults: SettingsExport = .defaults(),
         encoder: JSONEncoder = Self.makeEncoder()
     ) throws -> Data {
         let data = try encoder.encode(self)
-        guard incrementalOnly else { return data }
+        guard mode == .compact else { return data }
 
         let defaultsData = try encoder.encode(defaults)
         guard let currentDict = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -293,11 +298,11 @@ extension SettingsStore {
         FileManager.default.fileExists(atPath: Self.exportURL.path)
     }
 
-    func exportSettings(incrementalOnly: Bool = false) throws {
-        try exportSettings(to: Self.exportURL, incrementalOnly: incrementalOnly)
+    func exportSettings(mode: SettingsExportMode = .full) throws {
+        try exportSettings(to: Self.exportURL, mode: mode)
     }
 
-    func exportSettings(to url: URL, incrementalOnly: Bool = false) throws {
+    func exportSettings(to url: URL, mode: SettingsExportMode = .full) throws {
         let export = SettingsExport(
             hotkeysEnabled: hotkeysEnabled,
             focusFollowsMouse: focusFollowsMouse,
@@ -372,7 +377,7 @@ extension SettingsStore {
             appearanceMode: appearanceMode.rawValue
         )
 
-        let outputData = try export.exportData(incrementalOnly: incrementalOnly)
+        let outputData = try export.exportData(mode: mode)
 
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -142,12 +143,21 @@ struct GeneralSettingsTab: View {
                     .foregroundColor(.secondary)
             }
 
-            Section("Settings Backup") {
+            Section("Settings File") {
                 HStack {
-                    Button("Export Settings") {
+                    Button("Export Editable Config") {
                         do {
-                            try settings.exportSettings()
-                            exportStatus = .exported
+                            try settings.exportSettings(mode: .full)
+                            exportStatus = .exported(.full)
+                        } catch {
+                            exportStatus = .error(error.localizedDescription)
+                        }
+                    }
+
+                    Button("Export Compact Backup") {
+                        do {
+                            try settings.exportSettings(mode: .compact)
+                            exportStatus = .exported(.compact)
                         } catch {
                             exportStatus = .error(error.localizedDescription)
                         }
@@ -163,6 +173,22 @@ struct GeneralSettingsTab: View {
                     }
                     .disabled(!settings.settingsFileExists)
                 }
+
+                HStack {
+                    Button("Reveal Settings File") {
+                        revealSettingsFile()
+                    }
+                    .disabled(!settings.settingsFileExists)
+
+                    Button("Open Settings File") {
+                        openSettingsFile()
+                    }
+                    .disabled(!settings.settingsFileExists)
+                }
+
+                Text("Editable config exports the full canonical file. Compact backup exports only settings that differ from defaults.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
 
                 Text("~/.config/omniwm/settings.json")
                     .font(.caption)
@@ -185,6 +211,19 @@ struct GeneralSettingsTab: View {
             top: settings.outerGapTop,
             bottom: settings.outerGapBottom
         )
+    }
+
+    private func revealSettingsFile() {
+        NSWorkspace.shared.activateFileViewerSelecting([SettingsStore.exportURL])
+        exportStatus = .revealed
+    }
+
+    private func openSettingsFile() {
+        guard NSWorkspace.shared.open(SettingsStore.exportURL) else {
+            exportStatus = .error("Could not open settings file")
+            return
+        }
+        exportStatus = .opened
     }
 }
 
@@ -521,28 +560,33 @@ private struct MonitorNiriSettingsSection: View {
 }
 
 private enum ExportStatus {
-    case exported
+    case exported(SettingsExportMode)
     case imported
+    case revealed
+    case opened
     case error(String)
 
     var message: String {
         switch self {
-        case .exported: "Settings exported"
+        case .exported(.full): "Editable config exported"
+        case .exported(.compact): "Compact backup exported"
         case .imported: "Settings imported"
+        case .revealed: "Settings file revealed in Finder"
+        case .opened: "Settings file opened"
         case .error(let msg): "Error: \(msg)"
         }
     }
 
     var icon: String {
         switch self {
-        case .exported, .imported: "checkmark.circle.fill"
+        case .exported, .imported, .revealed, .opened: "checkmark.circle.fill"
         case .error: "xmark.circle.fill"
         }
     }
 
     var color: Color {
         switch self {
-        case .exported, .imported: .green
+        case .exported, .imported, .revealed, .opened: .green
         case .error: .red
         }
     }
