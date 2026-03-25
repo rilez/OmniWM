@@ -7,6 +7,21 @@ enum ConfigFileAction {
     case `import`
     case reveal
     case open
+
+    var failureAlertTitle: String {
+        switch self {
+        case .create:
+            "Could Not Create Config File"
+        case .export:
+            "Could Not Export Settings"
+        case .import:
+            "Could Not Import Settings"
+        case .reveal:
+            "Could Not Reveal Settings File"
+        case .open:
+            "Could Not Open Settings File"
+        }
+    }
 }
 
 @MainActor
@@ -609,6 +624,18 @@ enum ExportStatus: Equatable {
         case .revealed: "Settings file revealed in Finder"
         case .opened: "Settings file opened"
         case .error(let msg): "Error: \(msg)"
+        }
+    }
+
+    var successAlertTitle: String? {
+        switch self {
+        case .exported(.full): "Editable Config Exported"
+        case .exported(.compact): "Compact Backup Exported"
+        case .imported: "Settings Imported"
+        case .created: "Settings File Created"
+        case .revealed: "Settings File Revealed"
+        case .opened: "Settings File Opened"
+        case .error: nil
         }
     }
 

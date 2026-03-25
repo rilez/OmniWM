@@ -49,7 +49,7 @@ import Testing
             received.append((title, message))
         }
 
-        builder.performSettingsMenuAction(.export(.full))
+        builder.performConfigFileAction(.export(.full))
 
         #expect(received.count == 1)
         #expect(received.first?.0 == "Editable Config Exported")
@@ -68,11 +68,11 @@ import Testing
         defer { try? FileManager.default.removeItem(at: exportURL) }
         try? FileManager.default.removeItem(at: exportURL)
 
-        builder.performSettingsMenuAction(.revealSettingsFile)
+        builder.performConfigFileAction(.reveal)
 
         #expect(settings.settingsFileExists == true)
         #expect(received.count == 1)
-        #expect(received.first?.0 == "Settings File Created")
+        #expect(received.first?.0 == "Settings File Revealed")
         #expect(received.first?.1 == SettingsStore.exportURL.path)
     }
 
@@ -90,7 +90,7 @@ import Testing
             received.append((title, message))
         }
 
-        builder.performSettingsMenuAction(.import)
+        builder.performConfigFileAction(.import)
 
         #expect(targetController.settings.focusFollowsWindowToMonitor == true)
         #expect(received.count == 1)

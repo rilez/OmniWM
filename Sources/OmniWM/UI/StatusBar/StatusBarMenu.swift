@@ -2,13 +2,6 @@ import AppKit
 
 private let menuWidth: CGFloat = 280
 
-enum SettingsMenuAction {
-    case export(SettingsExportMode)
-    case `import`
-    case revealSettingsFile
-    case openSettingsFile
-}
-
 @MainActor
 private func applyCurrentAppAppearance(to view: NSView) {
     view.appearance = NSApplication.shared.appearance
@@ -206,7 +199,7 @@ final class StatusBarMenuBuilder {
             icon: "square.and.arrow.up",
             label: "Export Editable Config"
         ) { [weak self] in
-            self?.performSettingsMenuAction(.export(.full))
+            self?.performConfigFileAction(.export(.full))
         }
         let exportEditableItem = NSMenuItem()
         exportEditableItem.view = exportEditableRow
@@ -216,7 +209,7 @@ final class StatusBarMenuBuilder {
             icon: "archivebox",
             label: "Export Compact Backup"
         ) { [weak self] in
-            self?.performSettingsMenuAction(.export(.compact))
+            self?.performConfigFileAction(.export(.compact))
         }
         let exportCompactItem = NSMenuItem()
         exportCompactItem.view = exportCompactRow
@@ -226,7 +219,7 @@ final class StatusBarMenuBuilder {
             icon: "square.and.arrow.down",
             label: "Import Settings"
         ) { [weak self] in
-            self?.performSettingsMenuAction(.import)
+            self?.performConfigFileAction(.import)
         }
         let importSettingsItem = NSMenuItem()
         importSettingsItem.view = importSettingsRow
@@ -236,7 +229,7 @@ final class StatusBarMenuBuilder {
             icon: "folder",
             label: "Reveal Settings File"
         ) { [weak self] in
-            self?.performSettingsMenuAction(.revealSettingsFile)
+            self?.performConfigFileAction(.reveal)
         }
         let revealSettingsFileItem = NSMenuItem()
         revealSettingsFileItem.view = revealSettingsFileRow
@@ -246,94 +239,29 @@ final class StatusBarMenuBuilder {
             icon: "doc.text",
             label: "Open Settings File"
         ) { [weak self] in
-            self?.performSettingsMenuAction(.openSettingsFile)
+            self?.performConfigFileAction(.open)
         }
         let openSettingsFileItem = NSMenuItem()
         openSettingsFileItem.view = openSettingsFileRow
         menu.addItem(openSettingsFileItem)
     }
 
-    func performSettingsMenuAction(_ action: SettingsMenuAction) {
-        switch action {
-        case .export(let mode):
-            exportSettings(mode: mode)
-        case .import:
-            importSettings()
-        case .revealSettingsFile:
-            revealSettingsFile()
-        case .openSettingsFile:
-            openSettingsFile()
-        }
-    }
-
-    private func exportSettings(mode: SettingsExportMode) {
-        do {
-            try settings.exportSettings(mode: mode)
-            presentInfoAlert(
-                title: mode == .full ? "Editable Config Exported" : "Compact Backup Exported",
-                message: SettingsStore.exportURL.path
-            )
-        } catch {
-            presentInfoAlert(
-                title: "Could Not Export Settings",
-                message: error.localizedDescription
-            )
-        }
-    }
-
-    private func ensureSettingsFileExists() throws -> Bool {
-        guard !settings.settingsFileExists else { return false }
-        try settings.exportSettings(mode: .full)
-        return true
-    }
-
-    private func importSettings() {
+    func performConfigFileAction(_ action: ConfigFileAction) {
         do {
             guard let controller else {
                 throw CocoaError(.coderInvalidValue)
             }
-            try settings.importSettings(applyingTo: controller)
-            presentInfoAlert(
-                title: "Settings Imported",
-                message: SettingsStore.exportURL.path
+            let status = try ConfigFileWorkflow.perform(
+                action,
+                settings: settings,
+                controller: controller
             )
-        } catch {
-            presentInfoAlert(
-                title: "Could Not Import Settings",
-                message: error.localizedDescription
-            )
-        }
-    }
-
-    private func revealSettingsFile() {
-        do {
-            let created = try ensureSettingsFileExists()
-            NSWorkspace.shared.activateFileViewerSelecting([SettingsStore.exportURL])
-            presentInfoAlert(
-                title: created ? "Settings File Created" : "Settings File Revealed",
-                message: SettingsStore.exportURL.path
-            )
-        } catch {
-            presentInfoAlert(
-                title: "Could Not Reveal Settings File",
-                message: error.localizedDescription
-            )
-        }
-    }
-
-    private func openSettingsFile() {
-        do {
-            let created = try ensureSettingsFileExists()
-            guard NSWorkspace.shared.open(SettingsStore.exportURL) else {
-                throw CocoaError(.fileNoSuchFile)
+            if let title = status.successAlertTitle {
+                presentInfoAlert(title: title, message: SettingsStore.exportURL.path)
             }
-            presentInfoAlert(
-                title: created ? "Settings File Created" : "Settings File Opened",
-                message: SettingsStore.exportURL.path
-            )
         } catch {
             presentInfoAlert(
-                title: "Could Not Open Settings File",
+                title: action.failureAlertTitle,
                 message: error.localizedDescription
             )
         }
