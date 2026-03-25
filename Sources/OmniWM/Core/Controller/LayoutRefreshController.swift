@@ -378,7 +378,11 @@ import QuartzCore
             let isActive = controller.workspaceManager.activeWorkspace(on: monitor.id)?.id == ws.id
             if !isActive {
                 let preferredSide = preferredSides[monitor.id] ?? .right
-                hideWorkspace(ws.id, monitor: monitor, preferredSide: preferredSide)
+                hideWorkspace(
+                    controller.workspaceManager.entries(in: ws.id),
+                    monitor: monitor,
+                    preferredSide: preferredSide
+                )
             }
         }
     }
@@ -1647,14 +1651,24 @@ import QuartzCore
         NSScreen.screens.first(where: { $0.displayId == monitor.displayId })?.backingScaleFactor ?? 2.0
     }
 
+    private func workspaceEntriesSnapshot(
+        on controller: WMController
+    ) -> [(workspace: WorkspaceDescriptor, entries: [WindowModel.Entry])] {
+        controller.workspaceManager.workspaces.map { workspace in
+            (workspace, controller.workspaceManager.entries(in: workspace.id))
+        }
+    }
+
     func hideInactiveWorkspaces(activeWorkspaceIds: Set<WorkspaceDescriptor.ID>) {
         guard let controller else { return }
+        let workspaceEntries = workspaceEntriesSnapshot(on: controller)
 
         // Rebuild the workspace-level frame suppression set (live check in applyFramesParallel)
         var allEntries: [(workspaceId: WorkspaceDescriptor.ID, windowId: Int)] = []
-        for ws in controller.workspaceManager.workspaces {
-            for entry in controller.workspaceManager.entries(in: ws.id) {
-                allEntries.append((ws.id, entry.windowId))
+        allEntries.reserveCapacity(workspaceEntries.reduce(into: 0) { $0 += $1.entries.count })
+        for snapshot in workspaceEntries {
+            for entry in snapshot.entries {
+                allEntries.append((snapshot.workspace.id, entry.windowId))
             }
         }
         controller.axManager.updateInactiveWorkspaceWindows(
@@ -1665,8 +1679,9 @@ import QuartzCore
         // Bulk cancel in-flight frame jobs for all inactive workspace windows upfront,
         // before the per-window hide loop, to prevent AX batch races with SkyLight moves.
         var inactiveWindowJobs: [(pid: pid_t, windowId: Int)] = []
-        for ws in controller.workspaceManager.workspaces where !activeWorkspaceIds.contains(ws.id) {
-            for entry in controller.workspaceManager.entries(in: ws.id) {
+        let hiddenPlacementMonitors = controller.workspaceManager.monitors.map(HiddenPlacementMonitorContext.init)
+        for snapshot in workspaceEntries where !activeWorkspaceIds.contains(snapshot.workspace.id) {
+            for entry in snapshot.entries {
                 inactiveWindowJobs.append((entry.handle.pid, entry.windowId))
             }
         }
@@ -1675,10 +1690,15 @@ import QuartzCore
         }
 
         let preferredSides = preferredHideSides(for: controller.workspaceManager.monitors)
-        for ws in controller.workspaceManager.workspaces where !activeWorkspaceIds.contains(ws.id) {
-            guard let monitor = controller.workspaceManager.monitor(for: ws.id) else { continue }
+        for snapshot in workspaceEntries where !activeWorkspaceIds.contains(snapshot.workspace.id) {
+            guard let monitor = controller.workspaceManager.monitor(for: snapshot.workspace.id) else { continue }
             let preferredSide = preferredSides[monitor.id] ?? .right
-            hideWorkspace(ws.id, monitor: monitor, preferredSide: preferredSide)
+            hideWorkspace(
+                snapshot.entries,
+                monitor: monitor,
+                preferredSide: preferredSide,
+                hiddenPlacementMonitors: hiddenPlacementMonitors
+            )
         }
     }
 
@@ -1691,11 +1711,22 @@ import QuartzCore
         }
     }
 
-    private func hideWorkspace(_ workspaceId: WorkspaceDescriptor.ID, monitor: Monitor, preferredSide: HideSide) {
+    private func hideWorkspace(
+        _ entries: [WindowModel.Entry],
+        monitor: Monitor,
+        preferredSide: HideSide,
+        hiddenPlacementMonitors: [HiddenPlacementMonitorContext]? = nil
+    ) {
         guard let controller else { return }
-        for entry in controller.workspaceManager.entries(in: workspaceId) {
+        for entry in entries {
             controller.axManager.markWindowInactive(entry.windowId)
-            hideWindow(entry, monitor: monitor, side: preferredSide, reason: .workspaceInactive)
+            hideWindow(
+                entry,
+                monitor: monitor,
+                side: preferredSide,
+                reason: .workspaceInactive,
+                hiddenPlacementMonitors: hiddenPlacementMonitors
+            )
         }
     }
 
@@ -1735,7 +1766,8 @@ import QuartzCore
         for entry: WindowModel.Entry,
         monitor: Monitor,
         side: HideSide,
-        reason: HideReason
+        reason: HideReason,
+        hiddenPlacementMonitors: [HiddenPlacementMonitorContext]? = nil
     ) -> HideOperationResolution {
         guard let controller else { return .unavailable }
         guard let frame = AXWindowService.framePreferFast(entry.axRef)
@@ -1757,7 +1789,8 @@ import QuartzCore
             monitor: monitor,
             side: side,
             pid: entry.handle.pid,
-            reason: reason
+            reason: reason,
+            hiddenPlacementMonitors: hiddenPlacementMonitors
         ) else {
             return .unavailable
         }
@@ -1838,14 +1871,21 @@ import QuartzCore
         }
     }
 
-    func hideWindow(_ entry: WindowModel.Entry, monitor: Monitor, side: HideSide, reason: HideReason) {
+    func hideWindow(
+        _ entry: WindowModel.Entry,
+        monitor: Monitor,
+        side: HideSide,
+        reason: HideReason,
+        hiddenPlacementMonitors: [HiddenPlacementMonitorContext]? = nil
+    ) {
         guard let controller else { return }
         let frameEntry = (pid: entry.handle.pid, windowId: entry.windowId)
         switch resolveHideOperation(
             for: entry,
             monitor: monitor,
             side: side,
-            reason: reason
+            reason: reason,
+            hiddenPlacementMonitors: hiddenPlacementMonitors
         ) {
         case let .movable(plan, hiddenState):
             controller.workspaceManager.setHiddenState(hiddenState, for: entry.token)
@@ -1866,13 +1906,15 @@ import QuartzCore
         monitor: Monitor,
         side: HideSide,
         pid: pid_t,
-        reason: HideReason
+        reason: HideReason,
+        hiddenPlacementMonitors: [HiddenPlacementMonitorContext]? = nil
     ) -> CGPoint? {
         guard let controller else { return nil }
         let scale = backingScale(for: monitor)
         let baseReveal = Self.hiddenEdgeReveal(isZoomApp: isZoomApp(pid))
         let hiddenPlacementMonitor = HiddenPlacementMonitorContext(monitor)
-        let hiddenPlacementMonitors = controller.workspaceManager.monitors.map(HiddenPlacementMonitorContext.init)
+        let resolvedHiddenPlacementMonitors = hiddenPlacementMonitors
+            ?? controller.workspaceManager.monitors.map(HiddenPlacementMonitorContext.init)
 
         switch reason {
         case .workspaceInactive, .scratchpad:
@@ -1883,7 +1925,7 @@ import QuartzCore
                 baseReveal: baseReveal,
                 scale: scale,
                 monitor: hiddenPlacementMonitor,
-                monitors: hiddenPlacementMonitors
+                monitors: resolvedHiddenPlacementMonitors
             )
         case .layoutTransient:
             let orientation = controller.settings.effectiveOrientation(for: monitor)
@@ -1900,7 +1942,7 @@ import QuartzCore
                 scale: scale,
                 orientation: orientation,
                 monitor: hiddenPlacementMonitor,
-                monitors: hiddenPlacementMonitors
+                monitors: resolvedHiddenPlacementMonitors
             )
             return placement.origin
         }
