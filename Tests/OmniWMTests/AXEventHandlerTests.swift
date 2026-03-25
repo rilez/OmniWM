@@ -459,7 +459,7 @@ private func waitUntilAXEventTest(
         #expect(entry.mode == .tiling)
         #expect(entry.workspaceId == workspaceTwoId)
         #expect(entry.ruleEffects.matchedRuleId == controller.settings.appRules.first?.id)
-        #expect(relayoutReasons == [.workspaceTransition])
+        #expect(relayoutReasons == [.axWindowCreated])
     }
 
     @Test @MainActor func createdWindowRetriesWhenAXWindowRefIsInitiallyUnavailableWithoutRuleReevaluation() async {
@@ -3522,9 +3522,9 @@ private func waitUntilAXEventTest(
 
         #expect(entry.workspaceId == workspaceId)
         #expect(entry.mode == .tiling)
-        #expect(relayoutReasons == [.workspaceTransition])
-        #expect(relayoutRoutes == [.immediateRelayout])
-        #expect(controller.activeWorkspace()?.id == workspaceId)
+        #expect(relayoutReasons == [.axWindowCreated])
+        #expect(relayoutRoutes == [.relayout])
+        #expect(controller.activeWorkspace()?.id != workspaceId)
         #expect(subscriptions == [[826]])
     }
 

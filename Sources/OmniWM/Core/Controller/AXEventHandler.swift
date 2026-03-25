@@ -517,16 +517,6 @@ final class AXEventHandler: CGSEventDelegate {
             return
         }
 
-        var switchedTargetWorkspace = false
-        if candidate.workspaceId != controller.activeWorkspace()?.id {
-            if let monitor = controller.workspaceManager.monitor(for: candidate.workspaceId),
-               controller.workspaceManager.workspaces(on: monitor.id)
-               .contains(where: { $0.id == candidate.workspaceId })
-            {
-                switchedTargetWorkspace = controller.workspaceManager.setActiveWorkspace(candidate.workspaceId, on: monitor.id)
-            }
-        }
-
         _ = controller.workspaceManager.addWindow(
             candidate.axRef,
             pid: candidate.token.pid,
@@ -568,11 +558,10 @@ final class AXEventHandler: CGSEventDelegate {
             }
         }
 
-        if switchedTargetWorkspace {
-            controller.layoutRefreshController.commitWorkspaceTransition(reason: .workspaceTransition)
-        } else {
-            controller.layoutRefreshController.requestRelayout(reason: .axWindowCreated)
-        }
+        controller.layoutRefreshController.requestRelayout(
+            reason: .axWindowCreated,
+            affectedWorkspaceIds: [candidate.workspaceId]
+        )
         scheduleWindowRuleReevaluationIfNeeded(targets: [.pid(candidate.token.pid)])
     }
 
