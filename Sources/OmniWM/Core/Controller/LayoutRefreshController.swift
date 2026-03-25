@@ -392,7 +392,10 @@ import QuartzCore
     func executeLayoutPlan(_ plan: WorkspaceLayoutPlan) {
         applySessionPatch(plan.sessionPatch)
         diffExecutor.execute(plan)
-        applyAnimationDirectives(plan.animationDirectives)
+        applyAnimationDirectives(
+            plan.animationDirectives,
+            focusedFrame: plan.diff.focusedFrame
+        )
     }
 
     private func executeRefreshExecutionPlan(_ plan: RefreshExecutionPlan) async {
@@ -504,7 +507,10 @@ import QuartzCore
         controller?.workspaceManager.applySessionPatch(patch)
     }
 
-    private func applyAnimationDirectives(_ directives: [AnimationDirective]) {
+    private func applyAnimationDirectives(
+        _ directives: [AnimationDirective],
+        focusedFrame: LayoutFocusedFrame?
+    ) {
         guard let controller else { return }
 
         for directive in directives {
@@ -754,28 +760,7 @@ import QuartzCore
     }
 
     private func refreshFocusedBorderForVisibilityState(on controller: WMController) {
-        guard let focusedToken = controller.workspaceManager.focusedToken,
-              let entry = controller.workspaceManager.entry(for: focusedToken)
-        else {
-            controller.borderManager.hideBorder()
-            return
-        }
-
-        if !controller.isManagedWindowDisplayable(entry.handle) {
-            controller.borderManager.hideBorder()
-            return
-        }
-
-        guard let frame = try? AXWindowService.frame(entry.axRef) else {
-            controller.borderManager.hideBorder()
-            return
-        }
-
-        controller.borderCoordinator.updateBorderIfAllowed(
-            token: focusedToken,
-            frame: frame,
-            windowId: entry.windowId
-        )
+        _ = controller.renderKeyboardFocusBorder(policy: .coordinated)
     }
 
     func waitForRefreshWorkForTests() async {
@@ -2219,33 +2204,35 @@ final class LayoutDiffExecutor {
 
     private func applyDirectBorderUpdate(_ focusedFrame: LayoutFocusedFrame?) {
         guard let controller = refreshController.controller else { return }
-        guard let focusedFrame,
-              let entry = controller.workspaceManager.entry(for: focusedFrame.token)
-        else {
-            controller.borderManager.hideBorder()
-            return
+        let target = controller.currentKeyboardFocusTargetForRendering()
+        let preferredFrame: CGRect? = if let target,
+                                         target.isManaged,
+                                         focusedFrame?.token == target.token {
+            focusedFrame?.frame
+        } else {
+            nil
         }
-
-        controller.borderCoordinator.updateDirectBorderIfAllowed(
-            token: focusedFrame.token,
-            frame: focusedFrame.frame,
-            windowId: entry.windowId
+        _ = controller.renderKeyboardFocusBorder(
+            for: target,
+            preferredFrame: preferredFrame,
+            policy: .direct
         )
     }
 
     private func applyCoordinatedBorderUpdate(_ focusedFrame: LayoutFocusedFrame?) {
         guard let controller = refreshController.controller else { return }
-        guard let focusedFrame,
-              let entry = controller.workspaceManager.entry(for: focusedFrame.token)
-        else {
-            controller.borderManager.hideBorder()
-            return
+        let target = controller.currentKeyboardFocusTargetForRendering()
+        let preferredFrame: CGRect? = if let target,
+                                         target.isManaged,
+                                         focusedFrame?.token == target.token {
+            focusedFrame?.frame
+        } else {
+            nil
         }
-
-        controller.borderCoordinator.updateBorderIfAllowed(
-            token: focusedFrame.token,
-            frame: focusedFrame.frame,
-            windowId: entry.windowId
+        _ = controller.renderKeyboardFocusBorder(
+            for: target,
+            preferredFrame: preferredFrame,
+            policy: .coordinated
         )
     }
 }

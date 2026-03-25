@@ -1,16 +1,29 @@
 import AppKit
 import Foundation
 
+enum ActivationRetryReason: String, Equatable {
+    case missingFocusedWindow = "missing_focused_window"
+    case pendingFocusMismatch = "pending_focus_mismatch"
+    case pendingFocusUnmanagedToken = "pending_focus_unmanaged_token"
+}
+
 struct NiriCreateFocusTraceEvent: Equatable {
     enum Kind: Equatable {
         case createSeen(windowId: UInt32)
         case createRetryScheduled(windowId: UInt32, pid: pid_t, attempt: Int)
         case candidateTracked(token: WindowToken, workspaceId: WorkspaceDescriptor.ID)
         case relayoutActivatedWindow(token: WindowToken, workspaceId: WorkspaceDescriptor.ID)
-        case pendingFocusStarted(token: WindowToken, workspaceId: WorkspaceDescriptor.ID)
+        case pendingFocusStarted(requestId: UInt64, token: WindowToken, workspaceId: WorkspaceDescriptor.ID)
         case activationSourceObserved(pid: pid_t, source: ActivationEventSource)
-        case activationDeferred(pid: pid_t, source: ActivationEventSource, reason: String, attempt: Int)
+        case activationDeferred(
+            requestId: UInt64,
+            token: WindowToken,
+            source: ActivationEventSource,
+            reason: ActivationRetryReason,
+            attempt: Int
+        )
         case focusConfirmed(token: WindowToken, workspaceId: WorkspaceDescriptor.ID, source: ActivationEventSource)
+        case borderReapplied(token: WindowToken, phase: ManagedBorderReapplyPhase)
         case nonManagedFallbackEntered(pid: pid_t, source: ActivationEventSource)
     }
 
@@ -37,14 +50,16 @@ extension NiriCreateFocusTraceEvent: CustomStringConvertible {
             "candidate_tracked token=\(token) workspace=\(workspaceId.uuidString)"
         case let .relayoutActivatedWindow(token, workspaceId):
             "relayout_activated_window token=\(token) workspace=\(workspaceId.uuidString)"
-        case let .pendingFocusStarted(token, workspaceId):
-            "pending_focus_started token=\(token) workspace=\(workspaceId.uuidString)"
+        case let .pendingFocusStarted(requestId, token, workspaceId):
+            "pending_focus_started request=\(requestId) token=\(token) workspace=\(workspaceId.uuidString)"
         case let .activationSourceObserved(pid, source):
             "activation_source_observed pid=\(pid) source=\(source.rawValue)"
-        case let .activationDeferred(pid, source, reason, attempt):
-            "activation_deferred pid=\(pid) source=\(source.rawValue) reason=\(reason) attempt=\(attempt)"
+        case let .activationDeferred(requestId, token, source, reason, attempt):
+            "activation_deferred request=\(requestId) token=\(token) source=\(source.rawValue) reason=\(reason.rawValue) attempt=\(attempt)"
         case let .focusConfirmed(token, workspaceId, source):
             "focus_confirmed token=\(token) workspace=\(workspaceId.uuidString) source=\(source.rawValue)"
+        case let .borderReapplied(token, phase):
+            "border_reapplied token=\(token) phase=\(phase.rawValue)"
         case let .nonManagedFallbackEntered(pid, source):
             "non_managed_fallback_entered pid=\(pid) source=\(source.rawValue)"
         }
@@ -178,8 +193,9 @@ final class AXEventHandler: CGSEventDelegate {
     private var pendingWindowStabilizationTasks: [WindowToken: Task<Void, Never>] = [:]
     private var pendingCreatedWindowRetryTasks: [UInt32: Task<Void, Never>] = [:]
     private var createdWindowRetryCountById: [UInt32: Int] = [:]
-    private var pendingActivationRetryTasks: [pid_t: Task<Void, Never>] = [:]
-    private var activationRetryCountByPid: [pid_t: Int] = [:]
+    private var pendingActivationRetryTask: Task<Void, Never>?
+    private var pendingActivationRetryRequestId: UInt64?
+    private var isFrontingFocusProbeInFlight = false
     private var createFocusTrace: [NiriCreateFocusTraceEvent] = []
     private var nextManagedReplacementEventSequence: UInt64 = 0
     var windowInfoProvider: ((UInt32) -> WindowServerInfo?)?
@@ -318,10 +334,29 @@ final class AXEventHandler: CGSEventDelegate {
         resetWindowStabilizationState()
         resetCreatedWindowRetryState()
         resetActivationRetryState()
+        controller?.keyboardFocusLifecycle.reset()
         createFocusTrace.removeAll(keepingCapacity: true)
         pendingWindowRuleReevaluationTask?.cancel()
         pendingWindowRuleReevaluationTask = nil
         pendingWindowRuleReevaluationTargets.removeAll()
+    }
+
+    func probeFocusedWindowAfterFronting(
+        expectedToken: WindowToken,
+        workspaceId _: WorkspaceDescriptor.ID
+    ) {
+        let requestId = controller?.keyboardFocusLifecycle.activeManagedRequest(for: expectedToken)?.requestId
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let requestId,
+               self.controller?.keyboardFocusLifecycle.activeManagedRequest(requestId: requestId) == nil
+            {
+                return
+            }
+            self.isFrontingFocusProbeInFlight = true
+            defer { self.isFrontingFocusProbeInFlight = false }
+            self.handleAppActivation(pid: expectedToken.pid, source: .focusedWindowChanged)
+        }
     }
 
     func niriCreateFocusTraceSnapshotForTests() -> [NiriCreateFocusTraceEvent] {
@@ -372,7 +407,8 @@ final class AXEventHandler: CGSEventDelegate {
 
     private func updateFocusedBorderForFrameChange(token: WindowToken) {
         guard let controller else { return }
-        guard controller.workspaceManager.focusedToken == token,
+        guard let target = controller.currentKeyboardFocusTargetForRendering(),
+              target.token == token,
               let entry = controller.workspaceManager.entry(for: token)
         else { return }
 
@@ -382,7 +418,11 @@ final class AXEventHandler: CGSEventDelegate {
             ?? (try? AXWindowService.frame(entry.axRef))
         {
             updateManagedReplacementFrame(frame, for: entry)
-            controller.borderCoordinator.updateBorderIfAllowed(token: token, frame: frame, windowId: entry.windowId)
+            _ = controller.renderKeyboardFocusBorder(
+                for: target,
+                preferredFrame: frame,
+                policy: .coordinated
+            )
         }
     }
 
@@ -522,6 +562,22 @@ final class AXEventHandler: CGSEventDelegate {
             controller.focusCoordinator.discardPendingFocus(removed.id)
         }
 
+        let canceledRequest = controller.keyboardFocusLifecycle.cancelManagedRequest(
+            matching: token,
+            workspaceId: affectedWorkspaceId
+        )
+        _ = controller.workspaceManager.cancelManagedFocusRequest(
+            matching: token,
+            workspaceId: affectedWorkspaceId
+        )
+        if let canceledRequest {
+            cancelActivationRetry(requestId: canceledRequest.requestId)
+        }
+        controller.clearKeyboardFocusTarget(
+            matching: token,
+            restoreCurrentBorder: false
+        )
+
         if handleNativeFullscreenDestroy(token) {
             return
         }
@@ -561,6 +617,7 @@ final class AXEventHandler: CGSEventDelegate {
 
         _ = controller.workspaceManager.removeWindow(pid: token.pid, windowId: token.windowId)
         controller.clearManualWindowOverride(for: token)
+        _ = controller.renderKeyboardFocusBorder(policy: .direct)
 
         if let wsId = affectedWorkspaceId {
             controller.layoutRefreshController.requestWindowRemoval(
@@ -589,8 +646,14 @@ final class AXEventHandler: CGSEventDelegate {
         )
         guard controller.hasStartedServices else { return }
 
+        let activeRequest = controller.keyboardFocusLifecycle.activeManagedRequest(for: pid)
+
         if pid == getpid(), (controller.hasFrontmostOwnedWindow || controller.hasVisibleOwnedWindow) {
-            cancelActivationRetry(for: pid)
+            if let activeRequest {
+                _ = controller.keyboardFocusLifecycle.cancelManagedRequest(requestId: activeRequest.requestId)
+                cancelActivationRetry(requestId: activeRequest.requestId)
+            }
+            controller.clearKeyboardFocusTarget(pid: pid)
             _ = controller.workspaceManager.enterNonManagedFocus(
                 appFullscreen: false,
                 preserveFocusedToken: true
@@ -599,54 +662,23 @@ final class AXEventHandler: CGSEventDelegate {
             return
         }
 
-        let pendingTokenForPID = pendingManagedFocusToken(for: pid)
-
         guard let axRef = resolveFocusedAXWindowRef(pid: pid) else {
-            if pendingTokenForPID != nil || source.isAuthoritative {
-                if scheduleActivationRetryIfNeeded(
-                    pid: pid,
-                    source: source,
-                    reason: "missing_focused_window"
-                ) {
-                    return
-                }
-            }
-            if pendingTokenForPID != nil {
-                return
-            }
-            cancelActivationRetry(for: pid)
-            _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: false)
-            recordNiriCreateFocusTrace(
-                .init(
-                    kind: .nonManagedFallbackEntered(
-                        pid: pid,
-                        source: source
-                    )
-                )
+            handleMissingFocusedWindow(
+                pid: pid,
+                source: source,
+                activeRequest: activeRequest
             )
-            controller.borderManager.hideBorder()
             return
         }
         let token = WindowToken(pid: pid, windowId: axRef.windowId)
-
-        if !source.isAuthoritative,
-           let pendingTokenForPID,
-           token != pendingTokenForPID
-        {
-            if scheduleActivationRetryIfNeeded(
-                pid: pid,
-                source: source,
-                reason: "pending_focus_mismatch"
-            ) {
-                return
-            }
-            return
-        }
+        let target = controller.keyboardFocusTarget(for: token, axRef: axRef)
+        controller.keyboardFocusLifecycle.setFocusedTarget(target)
+        let activeRequestMatchesToken = activeRequest?.token == token
+        let shouldConfirmRequest = activeRequestMatchesToken || activeRequest == nil
 
         let appFullscreen = isFullscreenProvider?(axRef) ?? AXWindowService.isFullscreen(axRef)
 
         if let entry = controller.workspaceManager.entry(for: token) {
-            cancelActivationRetry(for: pid)
             if appFullscreen {
                 suspendManagedWindowForNativeFullscreen(entry)
                 return
@@ -663,7 +695,8 @@ final class AXEventHandler: CGSEventDelegate {
                 entry: entry,
                 isWorkspaceActive: isWorkspaceActive,
                 appFullscreen: appFullscreen,
-                source: source
+                source: source,
+                confirmRequest: shouldConfirmRequest
             )
             return
         }
@@ -683,31 +716,37 @@ final class AXEventHandler: CGSEventDelegate {
                 controller.workspaceManager.activeWorkspace(on: monitor.id)?.id == wsId
             } ?? false
 
-            cancelActivationRetry(for: pid)
             handleManagedAppActivation(
                 entry: restoredEntry,
                 isWorkspaceActive: isWorkspaceActive,
                 appFullscreen: appFullscreen,
+                source: source,
+                confirmRequest: shouldConfirmRequest
+            )
+            return
+        }
+
+        _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: appFullscreen)
+        _ = controller.renderKeyboardFocusBorder(for: target, policy: .direct)
+
+        if let activeRequest {
+            if isFrontingFocusProbeInFlight {
+                return
+            }
+            if scheduleActivationRetryIfNeeded(
+                request: activeRequest,
+                source: source,
+                reason: .pendingFocusUnmanagedToken
+            ) {
+                return
+            }
+            handleActivationRetryExhausted(
+                request: activeRequest,
                 source: source
             )
             return
         }
 
-        if !source.isAuthoritative,
-           pendingTokenForPID != nil
-        {
-            if scheduleActivationRetryIfNeeded(
-                pid: pid,
-                source: source,
-                reason: "pending_focus_unmanaged_token"
-            ) {
-                return
-            }
-            return
-        }
-
-        cancelActivationRetry(for: pid)
-        _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: appFullscreen)
         recordNiriCreateFocusTrace(
             .init(
                 kind: .nonManagedFallbackEntered(
@@ -716,14 +755,14 @@ final class AXEventHandler: CGSEventDelegate {
                 )
             )
         )
-        controller.borderManager.hideBorder()
     }
 
     func handleManagedAppActivation(
         entry: WindowModel.Entry,
         isWorkspaceActive: Bool,
         appFullscreen: Bool,
-        source: ActivationEventSource = .focusedWindowChanged
+        source: ActivationEventSource = .focusedWindowChanged,
+        confirmRequest: Bool? = nil
     ) {
         guard let controller else { return }
         if appFullscreen {
@@ -735,54 +774,108 @@ final class AXEventHandler: CGSEventDelegate {
         let wsId = entry.workspaceId
         let monitorId = controller.workspaceManager.monitorId(for: wsId)
         let shouldActivateWorkspace = !isWorkspaceActive && !controller.isTransferringWindow
+        let activeRequest = controller.keyboardFocusLifecycle.activeManagedRequest(for: entry.pid)
+        let shouldConfirmRequest = confirmRequest ?? (activeRequest?.token == entry.token || activeRequest == nil)
+        let preservePendingSelection = !shouldConfirmRequest && activeRequest != nil
 
-        _ = controller.workspaceManager.confirmManagedFocus(
-            entry.token,
-            in: wsId,
-            onMonitor: monitorId,
-            appFullscreen: appFullscreen,
-            activateWorkspaceOnMonitor: shouldActivateWorkspace
-        )
-        recordNiriCreateFocusTrace(
-            .init(
-                kind: .focusConfirmed(
-                    token: entry.token,
-                    workspaceId: wsId,
-                    source: source
-                )
+        if shouldConfirmRequest {
+            _ = controller.workspaceManager.confirmManagedFocus(
+                entry.token,
+                in: wsId,
+                onMonitor: monitorId,
+                appFullscreen: appFullscreen,
+                activateWorkspaceOnMonitor: shouldActivateWorkspace
             )
-        )
+            if let confirmedRequest = controller.keyboardFocusLifecycle.confirmManagedRequest(
+                token: entry.token,
+                source: source
+            ) {
+                cancelActivationRetry(requestId: confirmedRequest.requestId)
+                recordNiriCreateFocusTrace(
+                    .init(
+                        kind: .focusConfirmed(
+                            token: entry.token,
+                            workspaceId: wsId,
+                            source: source
+                        )
+                    )
+                )
+            } else {
+                cancelActivationRetry()
+            }
+        } else {
+            _ = controller.workspaceManager.setManagedFocus(
+                entry.token,
+                in: wsId,
+                onMonitor: monitorId
+            )
+        }
+
+        let target = controller.keyboardFocusTarget(for: entry.token, axRef: entry.axRef)
+        controller.keyboardFocusLifecycle.setFocusedTarget(target)
 
         if let engine = controller.niriEngine,
            let node = engine.findNode(for: entry.handle),
            let _ = controller.workspaceManager.monitor(for: wsId)
         {
-            var state = controller.workspaceManager.niriViewportState(for: wsId)
-            controller.niriLayoutHandler.activateNode(
-                node, in: wsId, state: &state,
-                options: .init(layoutRefresh: isWorkspaceActive, axFocus: false)
-            )
-            _ = controller.workspaceManager.applySessionPatch(
-                .init(
-                    workspaceId: wsId,
-                    viewportState: state,
-                    rememberedFocusToken: nil
+            if !preservePendingSelection {
+                var state = controller.workspaceManager.niriViewportState(for: wsId)
+                controller.niriLayoutHandler.activateNode(
+                    node, in: wsId, state: &state,
+                    options: .init(layoutRefresh: isWorkspaceActive, axFocus: false)
                 )
-            )
+                _ = controller.workspaceManager.applySessionPatch(
+                    .init(
+                        workspaceId: wsId,
+                        viewportState: state,
+                        rememberedFocusToken: nil
+                    )
+                )
+            }
 
-            _ = controller.refreshBorderForManagedWindow(
-                entry.token,
-                preferredFrame: node.renderedFrame ?? node.frame
+            _ = controller.renderKeyboardFocusBorder(
+                for: target,
+                preferredFrame: node.renderedFrame ?? node.frame,
+                policy: .direct
             )
         } else {
-            _ = controller.refreshBorderForManagedWindow(entry.token)
+            _ = controller.renderKeyboardFocusBorder(
+                for: target,
+                policy: .direct
+            )
         }
+
+        if !shouldConfirmRequest,
+           let activeRequest,
+           activeRequest.token != entry.token
+        {
+            if !isFrontingFocusProbeInFlight,
+               !scheduleActivationRetryIfNeeded(
+                   request: activeRequest,
+                   source: source,
+                   reason: .pendingFocusMismatch
+               )
+            {
+                handleActivationRetryExhausted(
+                    request: activeRequest,
+                    source: source
+                )
+            }
+        }
+
         controller.niriLayoutHandler.updateTabbedColumnOverlays()
-        if shouldActivateWorkspace {
+        if shouldActivateWorkspace, shouldConfirmRequest {
             controller.syncMonitorsToNiriEngine()
             controller.layoutRefreshController.commitWorkspaceTransition(
                 reason: .appActivationTransition
             )
+        }
+        if shouldConfirmRequest,
+           controller.moveMouseToFocusedWindowEnabled,
+           controller.workspaceManager.focusedToken == entry.token,
+           !controller.workspaceManager.isNonManagedFocusActive
+        {
+            controller.moveMouseToWindow(entry.token)
         }
     }
 
@@ -866,6 +959,13 @@ final class AXEventHandler: CGSEventDelegate {
         }
 
         controller.focusCoordinator.rekeyPendingFocus(from: oldToken, to: newToken)
+        controller.keyboardFocusLifecycle.rekeyManagedRequest(from: oldToken, to: newToken)
+        controller.keyboardFocusLifecycle.rekeyFocusedTarget(
+            from: oldToken,
+            to: newToken,
+            axRef: axRef,
+            workspaceId: entry.workspaceId
+        )
         controller.axManager.rekeyWindowState(
             pid: newToken.pid,
             oldWindowId: oldToken.windowId,
@@ -1384,13 +1484,13 @@ final class AXEventHandler: CGSEventDelegate {
 
     private func refreshBorderAfterManagedRekey(entry: WindowModel.Entry) {
         guard let controller else { return }
-        guard controller.workspaceManager.focusedToken == entry.token else { return }
+        guard controller.currentKeyboardFocusTargetForRendering()?.token == entry.token else { return }
 
         let preferredFrame = controller.niriEngine?.findNode(for: entry.token).flatMap { $0.renderedFrame ?? $0.frame }
             ?? frameProvider?(entry.axRef)
-        _ = controller.refreshBorderForManagedWindow(
-            entry.token,
-            preferredFrame: preferredFrame
+        _ = controller.renderKeyboardFocusBorder(
+            preferredFrame: preferredFrame,
+            policy: .coordinated
         )
     }
 
@@ -1561,66 +1661,139 @@ final class AXEventHandler: CGSEventDelegate {
         createdWindowRetryCountById.removeAll()
     }
 
-    private func pendingManagedFocusToken(for pid: pid_t) -> WindowToken? {
-        guard let controller,
-              let pendingToken = controller.workspaceManager.pendingFocusedToken,
-              pendingToken.pid == pid
-        else {
-            return nil
-        }
-        return pendingToken
-    }
-
-    private func hasManagedFocusInterest(for pid: pid_t) -> Bool {
-        guard let controller else { return false }
-        if pendingManagedFocusToken(for: pid) != nil {
-            return true
-        }
-        return !controller.workspaceManager.entries(forPid: pid).isEmpty
-    }
-
-    private func scheduleActivationRetryIfNeeded(
+    private func handleMissingFocusedWindow(
         pid: pid_t,
         source: ActivationEventSource,
-        reason: String
-    ) -> Bool {
-        guard hasManagedFocusInterest(for: pid) else { return false }
+        activeRequest: ManagedFocusRequest?
+    ) {
+        guard let controller else { return }
 
-        let attempt = activationRetryCountByPid[pid, default: 0] + 1
-        guard attempt <= Self.activationRetryLimit else { return false }
+        if let activeRequest {
+            if isFrontingFocusProbeInFlight {
+                return
+            }
+            if scheduleActivationRetryIfNeeded(
+                request: activeRequest,
+                source: source,
+                reason: .missingFocusedWindow
+            ) {
+                return
+            }
+            handleActivationRetryExhausted(
+                request: activeRequest,
+                source: source
+            )
+            return
+        }
 
-        activationRetryCountByPid[pid] = attempt
-        pendingActivationRetryTasks.removeValue(forKey: pid)?.cancel()
+        cancelActivationRetry()
+        controller.keyboardFocusLifecycle.setFocusedTarget(nil)
+        _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: false)
         recordNiriCreateFocusTrace(
             .init(
-                kind: .activationDeferred(
+                kind: .nonManagedFallbackEntered(
                     pid: pid,
-                    source: source,
-                    reason: reason,
-                    attempt: attempt
+                    source: source
                 )
             )
         )
-        pendingActivationRetryTasks[pid] = Task { @MainActor [weak self] in
+        controller.borderManager.hideBorder()
+    }
+
+    private func scheduleActivationRetryIfNeeded(
+        request: ManagedFocusRequest,
+        source: ActivationEventSource,
+        reason: ActivationRetryReason
+    ) -> Bool {
+        guard let controller,
+              let updatedRequest = controller.keyboardFocusLifecycle.recordRetry(
+                  for: request.token,
+                  source: source,
+                  retryLimit: Self.activationRetryLimit
+              )
+        else {
+            return false
+        }
+
+        cancelActivationRetry()
+        pendingActivationRetryRequestId = updatedRequest.requestId
+        recordNiriCreateFocusTrace(
+            .init(
+                kind: .activationDeferred(
+                    requestId: updatedRequest.requestId,
+                    token: updatedRequest.token,
+                    source: source,
+                    reason: reason,
+                    attempt: updatedRequest.retryCount
+                )
+            )
+        )
+        pendingActivationRetryTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: Self.stabilizationRetryDelay)
             guard !Task.isCancelled, let self else { return }
-            self.pendingActivationRetryTasks.removeValue(forKey: pid)
-            self.handleAppActivation(pid: pid, source: source)
+            let requestId = updatedRequest.requestId
+            guard self.pendingActivationRetryRequestId == requestId else { return }
+            self.pendingActivationRetryTask = nil
+            self.pendingActivationRetryRequestId = nil
+            guard let liveRequest = self.controller?.keyboardFocusLifecycle.activeManagedRequest(requestId: requestId)
+            else {
+                return
+            }
+            self.handleAppActivation(pid: liveRequest.token.pid, source: source)
         }
         return true
     }
 
-    private func cancelActivationRetry(for pid: pid_t) {
-        pendingActivationRetryTasks.removeValue(forKey: pid)?.cancel()
-        activationRetryCountByPid.removeValue(forKey: pid)
+    private func handleActivationRetryExhausted(
+        request: ManagedFocusRequest,
+        source: ActivationEventSource
+    ) {
+        guard let controller else { return }
+
+        cancelActivationRetry(requestId: request.requestId)
+        _ = controller.keyboardFocusLifecycle.cancelManagedRequest(requestId: request.requestId)
+        _ = controller.workspaceManager.cancelManagedFocusRequest(
+            matching: request.token,
+            workspaceId: request.workspaceId
+        )
+
+        if let target = controller.currentKeyboardFocusTargetForRendering(),
+           controller.renderKeyboardFocusBorder(for: target, policy: .direct)
+        {
+            recordNiriCreateFocusTrace(
+                .init(
+                    kind: .borderReapplied(
+                        token: target.token,
+                        phase: .retryExhaustedFallback
+                    )
+                )
+            )
+        } else {
+            recordNiriCreateFocusTrace(
+                .init(
+                    kind: .nonManagedFallbackEntered(
+                        pid: request.token.pid,
+                        source: source
+                    )
+                )
+            )
+            controller.borderManager.hideBorder()
+        }
+    }
+
+    private func cancelActivationRetry() {
+        pendingActivationRetryTask?.cancel()
+        pendingActivationRetryTask = nil
+        pendingActivationRetryRequestId = nil
+    }
+
+    private func cancelActivationRetry(requestId: UInt64) {
+        guard pendingActivationRetryRequestId == requestId else { return }
+        cancelActivationRetry()
     }
 
     private func resetActivationRetryState() {
-        for (_, task) in pendingActivationRetryTasks {
-            task.cancel()
-        }
-        pendingActivationRetryTasks.removeAll()
-        activationRetryCountByPid.removeAll()
+        cancelActivationRetry()
     }
 
     private func deferCreatedWindow(_ windowId: UInt32) {

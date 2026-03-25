@@ -2810,7 +2810,7 @@ private func makeCenteredCrossMonitorFixture(
         #expect(controller.workspaceManager.preferredFocusToken(in: workspaceId) == newToken)
         #expect(state.selectedNodeId == newNode.id)
         #expect(state.activeColumnIndex == 1)
-        #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == 404)
+        #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == 403)
     }
 
     @Test @MainActor func snapshotPlanEmitsHideDiffForOffscreenWindows() async throws {

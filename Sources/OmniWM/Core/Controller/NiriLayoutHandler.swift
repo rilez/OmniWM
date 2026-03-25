@@ -117,19 +117,32 @@ import QuartzCore
     }
 
     private func finalizeAnimation() {
-        guard let controller,
-              let focusedToken = controller.workspaceManager.focusedToken,
-              let entry = controller.workspaceManager.entry(for: focusedToken),
-              let engine = controller.niriEngine
-        else { return }
+        guard let controller else { return }
 
-        if let node = engine.findNode(for: focusedToken),
-           let frame = node.renderedFrame ?? node.frame {
-            controller.borderCoordinator.updateBorderIfAllowed(token: focusedToken, frame: frame, windowId: entry.windowId)
+        let focusedTarget = controller.currentKeyboardFocusTargetForRendering()
+        let preferredFrame: CGRect? = if let focusedTarget,
+                                         focusedTarget.isManaged,
+                                         let node = controller.niriEngine?.findNode(for: focusedTarget.token)
+        {
+            node.renderedFrame ?? node.frame
+        } else {
+            nil
+        }
+        if let token = focusedTarget?.token {
+            _ = controller.reapplyKeyboardFocusBorderIfMatching(
+                token: token,
+                preferredFrame: preferredFrame,
+                phase: .animationSettled,
+                policy: .coordinated
+            )
+        } else {
+            _ = controller.renderKeyboardFocusBorder(policy: .coordinated)
         }
 
-        if controller.moveMouseToFocusedWindowEnabled {
-            controller.moveMouseToWindow(focusedToken)
+        if controller.moveMouseToFocusedWindowEnabled,
+           let token = controller.workspaceManager.focusedToken
+        {
+            controller.moveMouseToWindow(token)
         }
     }
 

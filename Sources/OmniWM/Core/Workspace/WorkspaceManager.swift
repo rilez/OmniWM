@@ -285,6 +285,26 @@ final class WorkspaceManager {
     }
 
     @discardableResult
+    func cancelManagedFocusRequest(
+        matching token: WindowToken? = nil,
+        workspaceId: WorkspaceDescriptor.ID? = nil
+    ) -> Bool {
+        let changed = updateFocusSession(notify: false) { focus in
+            self.clearPendingManagedFocusRequest(
+                matching: token,
+                workspaceId: workspaceId,
+                focus: &focus
+            )
+        }
+
+        if changed {
+            notifySessionStateChanged()
+        }
+
+        return changed
+    }
+
+    @discardableResult
     func setManagedAppFullscreen(_ active: Bool) -> Bool {
         updateFocusSession(notify: true) { focus in
             var changed = false

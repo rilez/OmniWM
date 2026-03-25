@@ -1,98 +1,98 @@
 import AppKit
 import Foundation
 
+enum KeyboardFocusBorderRenderPolicy: Equatable {
+    case direct
+    case coordinated
+
+    var shouldDeferForAnimations: Bool {
+        self == .coordinated
+    }
+}
+
+enum ManagedBorderReapplyPhase: String, Equatable {
+    case postLayout
+    case animationSettled
+    case retryExhaustedFallback
+}
+
 @MainActor
 final class BorderCoordinator {
     private static let ghosttyBundleId = "com.mitchellh.ghostty"
 
-    private enum UpdateEligibility {
+    private enum RenderEligibility {
         case hide
         case skip
-        case update(activeWorkspaceId: WorkspaceDescriptor.ID)
+        case update
     }
 
     weak var controller: WMController?
     var observedFrameProviderForTests: ((AXWindowRef) -> CGRect?)?
+    var suppressNextKeyboardFocusBorderRenderForTests: ((KeyboardFocusTarget, KeyboardFocusBorderRenderPolicy) -> Bool)?
+    var suppressNextManagedBorderUpdateForTests: ((WindowToken, KeyboardFocusBorderRenderPolicy) -> Bool)?
 
     init(controller: WMController) {
         self.controller = controller
     }
 
-    func updateBorderIfAllowed(token: WindowToken, frame: CGRect, windowId: Int) {
-        guard let controller else { return }
-        switch eligibilityForBorderUpdate(token: token, allowPendingFocus: false) {
-        case .hide:
+    @discardableResult
+    func renderBorder(
+        for target: KeyboardFocusTarget?,
+        preferredFrame: CGRect? = nil,
+        policy: KeyboardFocusBorderRenderPolicy
+    ) -> Bool {
+        guard let controller else { return false }
+        guard let target else {
             controller.borderManager.hideBorder()
-        case .skip:
-            return
-        case let .update(activeWorkspaceId):
-            if shouldDeferBorderUpdates(for: activeWorkspaceId) {
-                return
-            }
-            controller.borderManager.updateFocusedWindow(
-                frame: resolveGhosttyObservedFrame(for: token, fallback: frame),
-                windowId: windowId
-            )
+            return false
         }
-    }
 
-    func updateDirectBorderIfAllowed(token: WindowToken, frame: CGRect, windowId: Int) {
-        guard let controller else { return }
+        if suppressNextKeyboardFocusBorderRenderForTests?(target, policy) == true {
+            suppressNextKeyboardFocusBorderRenderForTests = nil
+            return false
+        }
 
-        switch eligibilityForBorderUpdate(token: token, allowPendingFocus: true) {
+        if suppressNextManagedBorderUpdateForTests?(target.token, policy) == true {
+            suppressNextManagedBorderUpdateForTests = nil
+            return false
+        }
+
+        switch renderEligibility(for: target, policy: policy) {
         case .hide:
             controller.borderManager.hideBorder()
+            return false
         case .skip:
-            return
+            return false
         case .update:
-            controller.borderManager.updateFocusedWindow(
-                frame: resolveGhosttyObservedFrame(for: token, fallback: frame),
-                windowId: windowId
-            )
-        }
-    }
-
-    func updateBorderIfAllowed(handle: WindowHandle, frame: CGRect, windowId: Int) {
-        updateBorderIfAllowed(token: handle.id, frame: frame, windowId: windowId)
-    }
-
-    private func resolveGhosttyObservedFrame(for token: WindowToken, fallback providedFrame: CGRect) -> CGRect {
-        guard let controller,
-              controller.appInfoCache.bundleId(for: token.pid) == Self.ghosttyBundleId,
-              let entry = controller.workspaceManager.entry(for: token)
-        else {
-            return providedFrame
+            break
         }
 
-        if let observedFrameProviderForTests,
-           let frame = observedFrameProviderForTests(entry.axRef)
+        guard let frame = resolveFrame(for: target, preferredFrame: preferredFrame) else {
+            controller.borderManager.hideBorder()
+            return false
+        }
+
+        if policy.shouldDeferForAnimations,
+           let workspaceId = target.workspaceId,
+           shouldDeferBorderUpdates(for: workspaceId)
         {
-            return frame
+            return false
         }
 
-        if let frame = AXWindowService.framePreferFast(entry.axRef) {
-            return frame
-        }
-
-        if let frame = try? AXWindowService.frame(entry.axRef) {
-            return frame
-        }
-
-        return providedFrame
+        controller.borderManager.updateFocusedWindow(
+            frame: resolveGhosttyObservedFrame(for: target, fallback: frame),
+            windowId: target.windowId
+        )
+        return true
     }
 
-    private func eligibilityForBorderUpdate(
-        token: WindowToken,
-        allowPendingFocus: Bool
-    ) -> UpdateEligibility {
-        guard let controller,
-              let activeWorkspace = controller.activeWorkspace(),
-              controller.workspaceManager.workspace(for: token) == activeWorkspace.id
-        else {
-            return .hide
-        }
+    private func renderEligibility(
+        for target: KeyboardFocusTarget,
+        policy _: KeyboardFocusBorderRenderPolicy
+    ) -> RenderEligibility {
+        guard let controller else { return .hide }
 
-        if controller.workspaceManager.isNonManagedFocusActive {
+        if controller.isOwnedWindow(windowNumber: target.windowId) {
             return .hide
         }
 
@@ -100,28 +100,72 @@ final class BorderCoordinator {
             return .hide
         }
 
-        if controller.workspaceManager.isAppFullscreenActive || isManagedWindowFullscreen(token) {
+        if target.isManaged,
+           (controller.workspaceManager.isAppFullscreenActive || isManagedWindowFullscreen(target.token))
+        {
             return .hide
         }
 
-        if let entry = controller.workspaceManager.entry(for: token),
+        if target.isManaged,
+           let entry = controller.workspaceManager.entry(for: target.token),
            !controller.isManagedWindowDisplayable(entry.handle)
         {
             return .skip
         }
 
-        if controller.workspaceManager.focusedToken == token {
-            return .update(activeWorkspaceId: activeWorkspace.id)
+        return .update
+    }
+
+    private func resolveFrame(
+        for target: KeyboardFocusTarget,
+        preferredFrame: CGRect?
+    ) -> CGRect? {
+        if let preferredFrame {
+            return preferredFrame
         }
 
-        if allowPendingFocus,
-           controller.workspaceManager.pendingFocusedToken == token,
-           controller.workspaceManager.pendingFocusedWorkspaceId == activeWorkspace.id
+        guard let controller else { return nil }
+
+        if target.isManaged,
+           let entry = controller.workspaceManager.entry(for: target.token)
         {
-            return .update(activeWorkspaceId: activeWorkspace.id)
+            return controller.niriEngine?.findNode(for: target.token).flatMap { $0.renderedFrame ?? $0.frame }
+                ?? controller.axManager.lastAppliedFrame(for: entry.windowId)
+                ?? AXWindowService.framePreferFast(entry.axRef)
+                ?? (try? AXWindowService.frame(entry.axRef))
         }
 
-        return .skip
+        return AXWindowService.framePreferFast(target.axRef)
+            ?? (try? AXWindowService.frame(target.axRef))
+    }
+
+    private func resolveGhosttyObservedFrame(
+        for target: KeyboardFocusTarget,
+        fallback providedFrame: CGRect
+    ) -> CGRect {
+        guard let controller,
+              controller.appInfoCache.bundleId(for: target.pid) == Self.ghosttyBundleId
+        else {
+            return providedFrame
+        }
+
+        let axRef = controller.workspaceManager.entry(for: target.token)?.axRef ?? target.axRef
+
+        if let observedFrameProviderForTests,
+           let frame = observedFrameProviderForTests(axRef)
+        {
+            return frame
+        }
+
+        if let frame = AXWindowService.framePreferFast(axRef) {
+            return frame
+        }
+
+        if let frame = try? AXWindowService.frame(axRef) {
+            return frame
+        }
+
+        return providedFrame
     }
 
     private func shouldDeferBorderUpdates(for workspaceId: WorkspaceDescriptor.ID) -> Bool {
