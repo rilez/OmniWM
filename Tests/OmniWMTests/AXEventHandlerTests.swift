@@ -23,6 +23,18 @@ private func makeAXEventTestMonitor() -> Monitor {
     )
 }
 
+private func makeAXEventSecondaryMonitor() -> Monitor {
+    let frame = CGRect(x: 1920, y: 0, width: 1920, height: 1080)
+    return Monitor(
+        id: Monitor.ID(displayId: 2),
+        displayId: 2,
+        frame: frame,
+        visibleFrame: frame,
+        hasNotch: false,
+        name: "Secondary"
+    )
+}
+
 @MainActor
 private func makeAXEventOwnedWindow(
     frame: CGRect = CGRect(x: 80, y: 80, width: 280, height: 180)
@@ -447,7 +459,7 @@ private func waitUntilAXEventTest(
         #expect(entry.mode == .tiling)
         #expect(entry.workspaceId == workspaceTwoId)
         #expect(entry.ruleEffects.matchedRuleId == controller.settings.appRules.first?.id)
-        #expect(relayoutReasons == [.axWindowCreated])
+        #expect(relayoutReasons == [.workspaceTransition])
     }
 
     @Test @MainActor func createdWindowRetriesWhenAXWindowRefIsInitiallyUnavailableWithoutRuleReevaluation() async {
@@ -3389,6 +3401,63 @@ private func waitUntilAXEventTest(
         #expect(relayoutReasons == [.axWindowCreated])
     }
 
+    @Test @MainActor func floatingCreatedWindowAssignedToSecondaryMonitorAppliesFrameOnTargetMonitor() async {
+        let controller = makeAXEventTestController(
+            workspaceConfigurations: [
+                WorkspaceConfiguration(name: "1", monitorAssignment: .main),
+                WorkspaceConfiguration(name: "6", monitorAssignment: .secondary)
+            ]
+        )
+        let primaryMonitor = makeAXEventTestMonitor()
+        let secondaryMonitor = makeAXEventSecondaryMonitor()
+        controller.workspaceManager.applyMonitorConfigurationChange([primaryMonitor, secondaryMonitor])
+        controller.windowRuleEngine.rebuild(
+            rules: [
+                AppRule(
+                    bundleId: "dentalplus-air",
+                    layout: .float,
+                    assignToWorkspace: "6"
+                )
+            ]
+        )
+
+        controller.axEventHandler.windowInfoProvider = { windowId in
+            WindowServerInfo(id: windowId, pid: getpid(), level: 0, frame: .zero)
+        }
+        controller.axEventHandler.axWindowRefProvider = { windowId, _ in
+            AXWindowRef(element: AXUIElementCreateSystemWide(), windowId: Int(windowId))
+        }
+        controller.axEventHandler.frameProvider = { _ in
+            CGRect(x: 120, y: 160, width: 420, height: 300)
+        }
+        controller.axEventHandler.windowFactsProvider = { _, _ in
+            makeAXEventWindowRuleFacts(
+                bundleId: "dentalplus-air",
+                appName: "DentalPlus Client",
+                attributeFetchSucceeded: false
+            )
+        }
+        defer { controller.axEventHandler.frameProvider = nil }
+
+        controller.axEventHandler.cgsEventObserver(
+            CGSEventObserver.shared,
+            didReceive: .created(windowId: 827, spaceId: 0)
+        )
+        await controller.layoutRefreshController.waitForRefreshWorkForTests()
+
+        guard let workspaceId = controller.workspaceManager.workspaceId(for: "6", createIfMissing: false),
+              let entry = controller.workspaceManager.entry(forPid: getpid(), windowId: 827),
+              let appliedFrame = controller.axManager.lastAppliedFrame(for: 827)
+        else {
+            Issue.record("Expected tracked secondary-monitor floating entry")
+            return
+        }
+
+        #expect(entry.workspaceId == workspaceId)
+        #expect(entry.mode == .floating)
+        #expect(secondaryMonitor.visibleFrame.contains(appliedFrame.center))
+    }
+
     @Test @MainActor func browserHelperSurfaceWithAutoAssignRuleStaysTrackedAtCreateTime() async {
         let controller = makeAXEventTestController(trackedBundleId: "com.google.Chrome")
         controller.settings.appRules = [
@@ -3408,6 +3477,7 @@ private func waitUntilAXEventTest(
 
         var subscriptions: [[UInt32]] = []
         var relayoutReasons: [RefreshReason] = []
+        var relayoutRoutes: [LayoutRefreshController.RefreshRoute] = []
         controller.axEventHandler.windowInfoProvider = { windowId in
             guard windowId == 826 else { return nil }
             return WindowServerInfo(
@@ -3431,8 +3501,9 @@ private func waitUntilAXEventTest(
         controller.axEventHandler.windowSubscriptionHandler = { windowIds in
             subscriptions.append(windowIds)
         }
-        controller.layoutRefreshController.debugHooks.onRelayout = { reason, _ in
+        controller.layoutRefreshController.debugHooks.onRelayout = { reason, route in
             relayoutReasons.append(reason)
+            relayoutRoutes.append(route)
             return true
         }
 
@@ -3451,7 +3522,9 @@ private func waitUntilAXEventTest(
 
         #expect(entry.workspaceId == workspaceId)
         #expect(entry.mode == .tiling)
-        #expect(relayoutReasons == [.axWindowCreated])
+        #expect(relayoutReasons == [.workspaceTransition])
+        #expect(relayoutRoutes == [.immediateRelayout])
+        #expect(controller.activeWorkspace()?.id == workspaceId)
         #expect(subscriptions == [[826]])
     }
 

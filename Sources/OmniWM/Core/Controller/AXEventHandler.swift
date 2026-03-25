@@ -517,12 +517,13 @@ final class AXEventHandler: CGSEventDelegate {
             return
         }
 
+        var switchedTargetWorkspace = false
         if candidate.workspaceId != controller.activeWorkspace()?.id {
             if let monitor = controller.workspaceManager.monitor(for: candidate.workspaceId),
                controller.workspaceManager.workspaces(on: monitor.id)
                .contains(where: { $0.id == candidate.workspaceId })
             {
-                _ = controller.workspaceManager.setActiveWorkspace(candidate.workspaceId, on: monitor.id)
+                switchedTargetWorkspace = controller.workspaceManager.setActiveWorkspace(candidate.workspaceId, on: monitor.id)
             }
         }
 
@@ -550,6 +551,14 @@ final class AXEventHandler: CGSEventDelegate {
                 for: candidate.token,
                 referenceMonitor: controller.workspaceManager.monitor(for: candidate.workspaceId)
             )
+            if let targetFrame = controller.workspaceManager.resolvedFloatingFrame(
+                for: candidate.token,
+                preferredMonitor: controller.workspaceManager.monitor(for: candidate.workspaceId)
+            ) {
+                let windowId = Int(candidate.windowId)
+                controller.axManager.forceApplyNextFrame(for: windowId)
+                controller.axManager.applyFramesParallel([(candidate.token.pid, windowId, targetFrame)])
+            }
         }
 
         Task { @MainActor [weak self] in
@@ -559,7 +568,11 @@ final class AXEventHandler: CGSEventDelegate {
             }
         }
 
-        controller.layoutRefreshController.requestRelayout(reason: .axWindowCreated)
+        if switchedTargetWorkspace {
+            controller.layoutRefreshController.commitWorkspaceTransition(reason: .workspaceTransition)
+        } else {
+            controller.layoutRefreshController.requestRelayout(reason: .axWindowCreated)
+        }
         scheduleWindowRuleReevaluationIfNeeded(targets: [.pid(candidate.token.pid)])
     }
 
