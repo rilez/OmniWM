@@ -83,7 +83,7 @@ final class BorderCoordinator {
         }
 
         controller.borderManager.updateFocusedWindow(
-            frame: resolveGhosttyObservedFrame(for: target, fallback: frame),
+            frame: frame,
             windowId: target.windowId
         )
         return true
@@ -124,43 +124,39 @@ final class BorderCoordinator {
         preferredFrame: CGRect?
     ) -> CGRect? {
         guard let controller else { return nil }
+        let prefersGhosttyObservedFrame = controller.appInfoCache.bundleId(for: target.pid) == Self.ghosttyBundleId
 
         if target.isManaged,
            let entry = controller.workspaceManager.entry(for: target.token)
         {
             let shouldPreferObservedFrame = controller.axManager.shouldPreferObservedFrame(for: entry.windowId)
-            if !shouldPreferObservedFrame, let preferredFrame {
+            if !shouldPreferObservedFrame, !prefersGhosttyObservedFrame, let preferredFrame {
                 return preferredFrame
             }
 
-            return observedFrame(for: entry.axRef)
-                ?? controller.axManager.lastAppliedFrame(for: entry.windowId)
+            let observed = observedFrame(for: entry.axRef)
+            if let observed {
+                return observed
+            }
+
+            // Ghostty decorates the live frame; prefer one AX read when available,
+            // but never let stale cached geometry outrank the fresh layout frame.
+            if prefersGhosttyObservedFrame, let preferredFrame {
+                return preferredFrame
+            }
+
+            return controller.axManager.lastAppliedFrame(for: entry.windowId)
                 ?? (!shouldPreferObservedFrame
                     ? controller.niriEngine?.findNode(for: target.token).flatMap { $0.renderedFrame ?? $0.frame }
                     : nil)
                 ?? preferredFrame
         }
 
-        if let preferredFrame {
+        if !prefersGhosttyObservedFrame, let preferredFrame {
             return preferredFrame
         }
 
-        return observedFrame(for: target.axRef)
-    }
-
-    private func resolveGhosttyObservedFrame(
-        for target: KeyboardFocusTarget,
-        fallback providedFrame: CGRect
-    ) -> CGRect {
-        guard let controller,
-              controller.appInfoCache.bundleId(for: target.pid) == Self.ghosttyBundleId
-        else {
-            return providedFrame
-        }
-
-        let axRef = controller.workspaceManager.entry(for: target.token)?.axRef ?? target.axRef
-
-        return observedFrame(for: axRef) ?? providedFrame
+        return observedFrame(for: target.axRef) ?? preferredFrame
     }
 
     private func observedFrame(for axRef: AXWindowRef) -> CGRect? {

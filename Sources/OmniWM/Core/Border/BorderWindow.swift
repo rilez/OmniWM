@@ -14,6 +14,7 @@ final class BorderWindow {
         var transactionMove: @MainActor (UInt32, CGPoint) -> Void
         var transactionMoveAndOrder: @MainActor (UInt32, CGPoint, Int32, UInt32, SkyLightWindowOrder) -> Void
         var transactionHide: @MainActor (UInt32) -> Void
+        var backingScaleForFrame: @MainActor (CGRect) -> CGFloat
 
         static let live = Self(
             createBorderWindow: { SkyLight.shared.createBorderWindow(frame: $0) },
@@ -27,7 +28,13 @@ final class BorderWindow {
             transactionMoveAndOrder: {
                 SkyLight.shared.transactionMoveAndOrder($0, origin: $1, level: $2, relativeTo: $3, order: $4)
             },
-            transactionHide: { SkyLight.shared.transactionHide($0) }
+            transactionHide: { SkyLight.shared.transactionHide($0) },
+            backingScaleForFrame: { targetFrame in
+                let targetScreen = NSScreen.screens.first(where: {
+                    $0.frame.contains(targetFrame.center)
+                }) ?? NSScreen.main ?? NSScreen.screens.first
+                return targetScreen?.backingScaleFactor ?? 2.0
+            }
         )
     }
 
@@ -67,10 +74,7 @@ final class BorderWindow {
 
     func update(frame targetFrame: CGRect, targetWid: UInt32) {
         let borderWidth = config.width
-        let targetScreen = NSScreen.screens.first(where: {
-            $0.frame.contains(targetFrame.center)
-        }) ?? NSScreen.main ?? NSScreen.screens.first
-        let scale = targetScreen?.backingScaleFactor ?? 2.0
+        let scale = operations.backingScaleForFrame(targetFrame)
 
         let borderOffset = -borderWidth - padding
         var frame = targetFrame.insetBy(dx: borderOffset, dy: borderOffset)

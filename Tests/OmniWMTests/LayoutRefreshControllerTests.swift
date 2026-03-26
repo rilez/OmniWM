@@ -199,6 +199,42 @@ import Testing
         #expect(lastAppliedBorderFrameForLayoutPlanTests(on: controller) == observedFrame)
     }
 
+    @Test @MainActor func directGhosttyBorderUpdateFallsBackToPreferredFrameBeforeCachedFrameWhenObservedReadMisses() {
+        let controller = makeLayoutPlanTestController()
+        guard let monitor = controller.workspaceManager.monitors.first,
+              let workspaceId = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id
+        else {
+            Issue.record("Missing monitor or active workspace for Ghostty border fallback test")
+            return
+        }
+
+        let token = addLayoutPlanTestWindow(on: controller, workspaceId: workspaceId, windowId: 207)
+        _ = controller.workspaceManager.setManagedFocus(token, in: workspaceId, onMonitor: monitor.id)
+        controller.setBordersEnabled(true)
+        controller.appInfoCache.storeInfoForTests(pid: token.pid, bundleId: "com.mitchellh.ghostty")
+
+        let staleCachedFrame = CGRect(x: 96, y: 72, width: 720, height: 480)
+        controller.axManager.applyFramesParallel([(token.pid, token.windowId, staleCachedFrame)])
+        #expect(controller.axManager.lastAppliedFrame(for: token.windowId) == staleCachedFrame)
+
+        controller.axManager.frameApplyOverrideForTests = nil
+        controller.borderCoordinator.observedFrameProviderForTests = { _ in nil }
+        defer {
+            controller.borderCoordinator.observedFrameProviderForTests = nil
+        }
+
+        let freshPreferredFrame = CGRect(x: 132, y: 88, width: 840, height: 560)
+        let rendered = controller.renderKeyboardFocusBorder(
+            for: controller.managedKeyboardFocusTarget(for: token),
+            preferredFrame: freshPreferredFrame,
+            policy: .direct
+        )
+
+        #expect(rendered)
+        #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == 207)
+        #expect(lastAppliedBorderFrameForLayoutPlanTests(on: controller) == freshPreferredFrame)
+    }
+
     @Test @MainActor func managedResizeFailureKeepsConfirmedFrameAndObservedBorder() {
         let controller = makeLayoutPlanTestController()
         guard let monitor = controller.workspaceManager.monitors.first,
