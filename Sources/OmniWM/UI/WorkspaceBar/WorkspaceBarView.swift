@@ -2,14 +2,14 @@ import AppKit
 import Observation
 import SwiftUI
 
-struct WorkspaceBarItem: Identifiable {
+struct WorkspaceBarItem: Identifiable, Equatable {
     let id: WorkspaceDescriptor.ID
     let name: String
     let isFocused: Bool
     let windows: [WorkspaceBarWindowItem]
 }
 
-struct WorkspaceBarWindowItem: Identifiable {
+struct WorkspaceBarWindowItem: Identifiable, Equatable {
     let id: WindowToken
     let windowId: Int
     let appName: String
@@ -17,16 +17,26 @@ struct WorkspaceBarWindowItem: Identifiable {
     let isFocused: Bool
     let windowCount: Int
     let allWindows: [WorkspaceBarWindowInfo]
+
+    static func == (lhs: WorkspaceBarWindowItem, rhs: WorkspaceBarWindowItem) -> Bool {
+        lhs.id == rhs.id
+            && lhs.windowId == rhs.windowId
+            && lhs.appName == rhs.appName
+            && lhs.icon === rhs.icon
+            && lhs.isFocused == rhs.isFocused
+            && lhs.windowCount == rhs.windowCount
+            && lhs.allWindows == rhs.allWindows
+    }
 }
 
-struct WorkspaceBarWindowInfo: Identifiable {
+struct WorkspaceBarWindowInfo: Identifiable, Equatable {
     let id: WindowToken
     let windowId: Int
     let title: String
     let isFocused: Bool
 }
 
-struct WorkspaceBarSnapshot {
+struct WorkspaceBarSnapshot: Equatable {
     let items: [WorkspaceBarItem]
     let showLabels: Bool
     let backgroundOpacity: Double
