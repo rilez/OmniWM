@@ -356,9 +356,6 @@ final class SettingsStore {
             baseline.moveMouseToFocusedWindow
         focusFollowsWindowToMonitor = defaults.object(forKey: Keys.focusFollowsWindowToMonitor) as? Bool ??
             baseline.focusFollowsWindowToMonitor
-        mouseWarpMonitorOrder = Self.loadMouseWarpMonitorOrder(from: defaults)
-        mouseWarpAxis = MouseWarpAxis(rawValue: defaults.string(forKey: Keys.mouseWarpAxis) ?? "") ??
-            MouseWarpAxis(rawValue: baseline.mouseWarpAxis ?? "") ?? .horizontal
         niriColumnWidthPresets = Self.loadNiriColumnWidthPresets(from: defaults)
         niriDefaultColumnWidth = Self.loadNiriDefaultColumnWidth(from: defaults)
         mouseWarpMargin = defaults.object(forKey: Keys.mouseWarpMargin) as? Int ?? baseline.mouseWarpMargin

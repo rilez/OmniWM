@@ -155,128 +155,201 @@ final class MouseWarpHandler: NSObject {
         let layout = SpatialMonitorLayout(entries: layoutEntries)
         let margin = CGFloat(controller.settings.mouseWarpMargin)
 
-        // Find which monitor the cursor is currently inside
         guard let currentMonitor = monitors.first(where: { $0.frame.contains(location) }) else {
-            // Off-screen: clamp back to last known monitor
             spatialClampToMonitor(location: location, margin: margin)
             return
         }
 
-        // Cross-monitor detection: cursor jumped to a different monitor than
-        // the one we last tracked — clamp it back to the previous monitor.
+        // Cross-monitor: cursor appeared on a different monitor than last tracked.
+        // Find the connecting edge via the spatial layout and warp proportionally.
         if let lastId = state.lastMonitorId, lastId != currentMonitor.id {
+            guard let lastMonitor = monitors.first(where: { $0.id == lastId }),
+                  let lastEntry = spatialEntry(for: lastMonitor, in: layoutEntries),
+                  let currentEntry = spatialEntry(for: currentMonitor, in: layoutEntries) else {
+                spatialClampToMonitor(location: location, margin: margin)
+                return
+            }
+
+            // Find which edge of the last spatial entry connects to the current one.
+            // Convert the actual cursor position to the spatial coordinate system
+            // so the adjacency position check works correctly.
+            for edge in [SpatialMonitorLayout.Edge.left, .right, .top, .bottom] {
+                let spatialPos = actualToSpatial(
+                    position: edge.isHorizontal ? location.y : location.x,
+                    edge: edge, monitor: lastMonitor, entry: lastEntry
+                )
+                if let neighbor = layout.adjacentMonitor(from: lastEntry, edge: edge, atPosition: spatialPos),
+                   neighbor.displayId == currentEntry.displayId,
+                   neighbor.monitorName == currentEntry.monitorName {
+                    warpToAdjacentMonitor(
+                        sourceEntry: lastEntry, sourceMonitor: lastMonitor,
+                        targetEntry: neighbor, edge: edge,
+                        cursorPosition: edge.isHorizontal ? location.y : location.x,
+                        layout: layout, monitors: monitors, margin: margin
+                    )
+                    return
+                }
+            }
+
             spatialClampToMonitor(location: location, margin: margin)
             return
         }
 
         state.lastMonitorId = currentMonitor.id
 
-        // Find the spatial entry matching this monitor
-        guard let entry = layoutEntries.first(where: {
-            $0.displayId == currentMonitor.displayId && $0.monitorName == currentMonitor.name
-        }) else { return }
+        guard let entry = spatialEntry(for: currentMonitor, in: layoutEntries) else { return }
 
         let frame = currentMonitor.frame
 
-        // Check all 4 edges for margin trigger zone and attempt spatial warp.
-        // AppKit space: .left = minX, .right = maxX, .bottom = minY, .top = maxY.
+        // Edge margin trigger zone check.
+        // Convert cursor position to spatial coordinates for the adjacency lookup,
+        // then use actual monitor frames for the landing computation.
         if location.x <= frame.minX + margin {
-            spatialWarpToAdjacentMonitor(
-                from: entry, edge: .left, position: location.y,
-                location: location, layout: layout, monitors: monitors, margin: margin
-            )
+            let spatialY = actualToSpatial(position: location.y, edge: .left, monitor: currentMonitor, entry: entry)
+            warpViaEdge(entry: entry, monitor: currentMonitor, edge: .left,
+                        spatialPosition: spatialY, cursorPosition: location.y,
+                        layout: layout, monitors: monitors, margin: margin)
         } else if location.x >= frame.maxX - margin {
-            spatialWarpToAdjacentMonitor(
-                from: entry, edge: .right, position: location.y,
-                location: location, layout: layout, monitors: monitors, margin: margin
-            )
+            let spatialY = actualToSpatial(position: location.y, edge: .right, monitor: currentMonitor, entry: entry)
+            warpViaEdge(entry: entry, monitor: currentMonitor, edge: .right,
+                        spatialPosition: spatialY, cursorPosition: location.y,
+                        layout: layout, monitors: monitors, margin: margin)
         } else if location.y <= frame.minY + margin {
-            spatialWarpToAdjacentMonitor(
-                from: entry, edge: .bottom, position: location.x,
-                location: location, layout: layout, monitors: monitors, margin: margin
-            )
+            let spatialX = actualToSpatial(position: location.x, edge: .bottom, monitor: currentMonitor, entry: entry)
+            warpViaEdge(entry: entry, monitor: currentMonitor, edge: .bottom,
+                        spatialPosition: spatialX, cursorPosition: location.x,
+                        layout: layout, monitors: monitors, margin: margin)
         } else if location.y >= frame.maxY - margin {
-            spatialWarpToAdjacentMonitor(
-                from: entry, edge: .top, position: location.x,
-                location: location, layout: layout, monitors: monitors, margin: margin
-            )
+            let spatialX = actualToSpatial(position: location.x, edge: .top, monitor: currentMonitor, entry: entry)
+            warpViaEdge(entry: entry, monitor: currentMonitor, edge: .top,
+                        spatialPosition: spatialX, cursorPosition: location.x,
+                        layout: layout, monitors: monitors, margin: margin)
         }
     }
 
     // MARK: - Spatial warp helpers
 
-    /// Attempt to warp cursor to the adjacent monitor on the given edge.
-    /// If no adjacent monitor exists, this is a no-op (macOS constrains the cursor at physical edges).
-    private func spatialWarpToAdjacentMonitor(
-        from entry: SpatialMonitorEntry,
-        edge: SpatialMonitorLayout.Edge,
+    private func spatialEntry(for monitor: Monitor, in entries: [SpatialMonitorEntry]) -> SpatialMonitorEntry? {
+        entries.first { $0.displayId == monitor.displayId && $0.monitorName == monitor.name }
+    }
+
+    /// Convert a cursor position (actual screen coords) to the spatial layout coordinate system.
+    /// For horizontal edges (left/right), position is Y; for vertical edges (top/bottom), position is X.
+    private func actualToSpatial(
         position: CGFloat,
-        location: CGPoint,
+        edge: SpatialMonitorLayout.Edge,
+        monitor: Monitor,
+        entry: SpatialMonitorEntry
+    ) -> CGFloat {
+        if edge.isHorizontal {
+            let h = monitor.frame.height
+            guard h > 0 else { return entry.frame.minY }
+            return entry.frame.minY + (position - monitor.frame.minY) / h * entry.size.height
+        } else {
+            let w = monitor.frame.width
+            guard w > 0 else { return entry.frame.minX }
+            return entry.frame.minX + (position - monitor.frame.minX) / w * entry.size.width
+        }
+    }
+
+    /// Convert a spatial layout position back to actual screen coordinates on a target monitor.
+    private func spatialToActual(
+        position: CGFloat,
+        edge: SpatialMonitorLayout.Edge,
+        monitor: Monitor,
+        entry: SpatialMonitorEntry
+    ) -> CGFloat {
+        if edge.isHorizontal {
+            let h = entry.size.height
+            guard h > 0 else { return monitor.frame.minY }
+            return monitor.frame.minY + (position - entry.frame.minY) / h * monitor.frame.height
+        } else {
+            let w = entry.size.width
+            guard w > 0 else { return monitor.frame.minX }
+            return monitor.frame.minX + (position - entry.frame.minX) / w * monitor.frame.width
+        }
+    }
+
+    /// Find adjacent monitor and warp. Used by the edge-trigger path.
+    private func warpViaEdge(
+        entry: SpatialMonitorEntry,
+        monitor: Monitor,
+        edge: SpatialMonitorLayout.Edge,
+        spatialPosition: CGFloat,
+        cursorPosition: CGFloat,
         layout: SpatialMonitorLayout,
         monitors: [Monitor],
         margin: CGFloat
     ) {
-        guard let target = layout.adjacentMonitor(from: entry, edge: edge, atPosition: position) else {
+        guard let targetEntry = layout.adjacentMonitor(from: entry, edge: edge, atPosition: spatialPosition) else {
             return
         }
-        guard let overlapRange = layout.overlapRange(from: entry, to: target, edge: edge) else {
-            return
-        }
+        warpToAdjacentMonitor(
+            sourceEntry: entry, sourceMonitor: monitor,
+            targetEntry: targetEntry, edge: edge,
+            cursorPosition: cursorPosition,
+            layout: layout, monitors: monitors, margin: margin
+        )
+    }
 
-        // Compute ratio of cursor position within the source's overlap range
-        let rangeLength = overlapRange.upperBound - overlapRange.lowerBound
-        let ratio: CGFloat
-        if rangeLength > 0 {
-            ratio = min(max((position - overlapRange.lowerBound) / rangeLength, 0), 1)
-        } else {
-            ratio = 0.5
-        }
+    /// Core warp: compute proportional landing on the target monitor using actual frames.
+    /// The spatial layout is used only for overlap range computation (determining which
+    /// portion of the shared edge connects the two monitors).
+    private func warpToAdjacentMonitor(
+        sourceEntry: SpatialMonitorEntry,
+        sourceMonitor: Monitor,
+        targetEntry: SpatialMonitorEntry,
+        edge: SpatialMonitorLayout.Edge,
+        cursorPosition: CGFloat,
+        layout: SpatialMonitorLayout,
+        monitors: [Monitor],
+        margin: CGFloat
+    ) {
+        guard let targetMonitor = monitors.first(where: {
+            $0.displayId == targetEntry.displayId && $0.name == targetEntry.monitorName
+        }) else { return }
 
-        // Map ratio to the target's overlap range for the perpendicular coordinate
-        let targetRange = layout.overlapRange(from: target, to: entry, edge: oppositeEdge(edge))
-        let targetRangeActual = targetRange ?? overlapRange
-        let targetLength = targetRangeActual.upperBound - targetRangeActual.lowerBound
-        let mappedPosition = targetRangeActual.lowerBound + (ratio * targetLength)
+        // Compute overlap ranges in spatial coordinates
+        guard let srcOverlap = layout.overlapRange(from: sourceEntry, to: targetEntry, edge: edge) else { return }
+        let dstOverlap = layout.overlapRange(from: targetEntry, to: sourceEntry, edge: oppositeEdge(edge)) ?? srcOverlap
 
-        // Compute landing point on the target monitor
-        let targetFrame = target.frame
+        // Convert cursor position to spatial coords, compute ratio within source overlap
+        let spatialPos = actualToSpatial(position: cursorPosition, edge: edge, monitor: sourceMonitor, entry: sourceEntry)
+        let srcLen = srcOverlap.upperBound - srcOverlap.lowerBound
+        let ratio: CGFloat = srcLen > 0 ? min(max((spatialPos - srcOverlap.lowerBound) / srcLen, 0), 1) : 0.5
+
+        // Map ratio to target overlap in spatial coords, then convert to actual coords
+        let dstLen = dstOverlap.upperBound - dstOverlap.lowerBound
+        let targetSpatialPos = dstOverlap.lowerBound + ratio * dstLen
+        let mappedPosition = spatialToActual(position: targetSpatialPos, edge: edge, monitor: targetMonitor, entry: targetEntry)
+
+        // Compute landing point on the actual target monitor frame
+        let targetFrame = targetMonitor.frame
         let inset = margin + 1
         var landingX: CGFloat
         var landingY: CGFloat
 
         switch edge {
         case .left:
-            // Warping left → landing on target's right edge
             landingX = targetFrame.maxX - inset
             landingY = mappedPosition
         case .right:
-            // Warping right → landing on target's left edge
             landingX = targetFrame.minX + inset
             landingY = mappedPosition
         case .bottom:
-            // Warping down → landing on target's top edge
             landingX = mappedPosition
             landingY = targetFrame.maxY - inset
         case .top:
-            // Warping up → landing on target's bottom edge
             landingX = mappedPosition
             landingY = targetFrame.minY + inset
         }
 
-        // Clamp landing within target frame (inset by margin + 1 on all sides)
         landingX = min(max(landingX, targetFrame.minX + inset), targetFrame.maxX - inset)
         landingY = min(max(landingY, targetFrame.minY + inset), targetFrame.maxY - inset)
 
-        let destination = CGPoint(x: landingX, y: landingY)
-
-        // Find the target Monitor object to update lastMonitorId
-        let targetMonitor = monitors.first(where: {
-            $0.displayId == target.displayId && $0.name == target.monitorName
-        })
-
         state.isWarping = true
-        state.lastMonitorId = targetMonitor?.id
-        let warpPoint = ScreenCoordinateSpace.toWindowServer(point: destination)
+        state.lastMonitorId = targetMonitor.id
+        let warpPoint = ScreenCoordinateSpace.toWindowServer(point: CGPoint(x: landingX, y: landingY))
         postMouseMovedEvent(warpPoint)
         scheduleWarpCooldownReset()
     }

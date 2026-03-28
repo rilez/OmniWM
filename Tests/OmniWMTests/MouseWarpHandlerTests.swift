@@ -323,6 +323,9 @@ private func waitUntilMouseWarpDrain(
         fixture.handler.resetDebugStateForTests()
         fixture.handler.state.lastMonitorId = fixture.bottomMonitor.id
 
+        // Location is inside the top monitor (cursor crossed from bottom to top).
+        // The top monitor is spatially adjacent to the bottom, so the handler
+        // should detect the edge crossing and warp proportionally.
         let location = CGPoint(
             x: fixture.bottomMonitor.frame.maxX - 8,
             y: fixture.topMonitor.frame.minY + 12
@@ -331,16 +334,10 @@ private func waitUntilMouseWarpDrain(
         fixture.handler.receiveTapMouseWarpMoved(at: location)
         fixture.handler.flushPendingWarpEventsForTests()
 
-        // Spatial engine: cursor jumped to a different monitor (top) than
-        // lastMonitorId (bottom) → clamp back to last monitor (bottom).
-        let expectedPoint = ScreenCoordinateSpace.toWindowServer(point: CGPoint(
-            x: location.x,
-            y: fixture.bottomMonitor.frame.maxY - CGFloat(fixture.controller.settings.mouseWarpMargin) - 1
-        ))
-
-        #expect(fixture.handler.state.lastMonitorId == fixture.bottomMonitor.id)
-        #expect(fixture.recorder.postedPoints.isEmpty)
-        #expect(fixture.recorder.warpedPoints == [expectedPoint])
+        // Adjacent transition → warp fires
+        #expect(fixture.handler.state.lastMonitorId == fixture.topMonitor.id)
+        #expect(fixture.recorder.postedPoints.count == 1)
+        #expect(fixture.recorder.warpedPoints.isEmpty)
     }
 
     @Test @MainActor func verticalModeFallsBackToSideClampWhenNoWarpTargetExists() {

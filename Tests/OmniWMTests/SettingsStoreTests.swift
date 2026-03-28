@@ -1247,7 +1247,6 @@ private func makeSettingsTestMonitor(
 
         let settings = SettingsStore(defaults: makeTestDefaults())
         settings.focusFollowsWindowToMonitor = true
-        settings.mouseWarpAxis = .vertical
         settings.statusBarShowWorkspaceName = true
         settings.statusBarShowAppNames = true
         settings.statusBarUseWorkspaceId = true
@@ -1269,7 +1268,6 @@ private func makeSettingsTestMonitor(
         try imported.importSettings(from: exportURL)
 
         #expect(imported.focusFollowsWindowToMonitor == true)
-        #expect(imported.mouseWarpAxis == .vertical)
         #expect(imported.statusBarShowWorkspaceName == true)
         #expect(imported.statusBarShowAppNames == true)
         #expect(imported.statusBarUseWorkspaceId == true)
@@ -1296,7 +1294,7 @@ private func makeSettingsTestMonitor(
             SpatialMonitorEntry(monitorName: "Right", displayId: 2, origin: CGPoint(x: 1920, y: 0), size: CGSize(width: 2560, height: 1440)),
         ]
 
-        try settings.exportSettings(to: exportURL, incrementalOnly: false)
+        try settings.exportSettings(to: exportURL, mode: .full)
 
         let imported = SettingsStore(defaults: makeTestDefaults())
         try imported.importSettings(from: exportURL)
@@ -1463,8 +1461,8 @@ private func makeSettingsTestMonitor(
             focusFollowsMouse: imported.focusFollowsMouse,
             moveMouseToFocusedWindow: imported.moveMouseToFocusedWindow,
             focusFollowsWindowToMonitor: imported.focusFollowsWindowToMonitor,
-            mouseWarpMonitorOrder: imported.mouseWarpMonitorOrder,
-            mouseWarpAxis: imported.mouseWarpAxis.rawValue,
+            mouseWarpMonitorOrder: nil,
+            mouseWarpAxis: nil,
             mouseWarpMargin: imported.mouseWarpMargin,
             gapSize: imported.gapSize,
             outerGapLeft: imported.outerGapLeft,
@@ -1674,7 +1672,6 @@ private func makeSettingsTestMonitor(
         #expect(settings.focusFollowsMouse == exportDefaults.focusFollowsMouse)
         #expect(settings.moveMouseToFocusedWindow == exportDefaults.moveMouseToFocusedWindow)
         #expect(settings.focusFollowsWindowToMonitor == exportDefaults.focusFollowsWindowToMonitor)
-        #expect(settings.mouseWarpAxis.rawValue == exportDefaults.mouseWarpAxis)
         #expect(settings.mouseWarpMargin == exportDefaults.mouseWarpMargin)
         #expect(settings.gapSize == exportDefaults.gapSize)
         #expect(settings.niriMaxWindowsPerColumn == exportDefaults.niriMaxWindowsPerColumn)

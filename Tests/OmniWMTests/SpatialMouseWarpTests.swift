@@ -291,10 +291,12 @@ private func makeThreeMonitorStackedFixture(margin: Int = 2) -> (
     // MARK: Clamp when cursor escapes to different monitor
 
     @Test @MainActor func clampWhenCursorEscapesToDifferentMonitor() {
+        // Use non-adjacent monitors (gap between them) to test that the clamp
+        // still fires when the cursor jumps to a monitor that is NOT spatially adjacent.
         let leftEntry = makeTestEntry(name: "Left", displayId: 1, x: 0)
-        let rightEntry = makeTestEntry(name: "Right", displayId: 2, x: 1920)
+        let rightEntry = makeTestEntry(name: "Right", displayId: 2, x: 2000) // 80px gap
         let leftMonitor = makeTestMonitor(displayId: 1, name: "Left", x: 0)
-        let rightMonitor = makeTestMonitor(displayId: 2, name: "Right", x: 1920)
+        let rightMonitor = makeTestMonitor(displayId: 2, name: "Right", x: 2000)
 
         let fixture = makeSpatialWarpTestFixture(
             entries: [leftEntry, rightEntry],
@@ -307,7 +309,7 @@ private func makeThreeMonitorStackedFixture(margin: Int = 2) -> (
         // Pretend the cursor was last on the left monitor
         fixture.handler.state.lastMonitorId = leftMonitor.id
 
-        // Now send a location inside the right monitor
+        // Now send a location inside the right monitor (non-adjacent — 80px gap)
         let location = CGPoint(
             x: rightMonitor.frame.midX,
             y: rightMonitor.frame.midY
@@ -317,7 +319,7 @@ private func makeThreeMonitorStackedFixture(margin: Int = 2) -> (
         fixture.handler.receiveTapMouseWarpMoved(at: location)
         fixture.handler.flushPendingWarpEventsForTests()
 
-        // Spatial engine: cursor jumped to a different monitor → clamp back to last (left)
+        // Cursor jumped to a non-adjacent monitor → clamp back to last (left)
         let expectedPoint = ScreenCoordinateSpace.toWindowServer(point: CGPoint(
             x: leftMonitor.frame.maxX - margin - 1,
             y: leftMonitor.frame.midY
@@ -326,6 +328,39 @@ private func makeThreeMonitorStackedFixture(margin: Int = 2) -> (
         #expect(fixture.handler.state.lastMonitorId == leftMonitor.id)
         #expect(fixture.recorder.postedPoints.isEmpty)
         #expect(fixture.recorder.warpedPoints == [expectedPoint])
+    }
+
+    @Test @MainActor func adjacentMonitorTransitionIsWarped() {
+        // Side-by-side monitors that ARE spatially adjacent — when cursor crosses
+        // from left to right, the handler should warp to the proportional position
+        // on the target (not clamp, not no-op).
+        let leftEntry = makeTestEntry(name: "Left", displayId: 1, x: 0)
+        let rightEntry = makeTestEntry(name: "Right", displayId: 2, x: 1920)
+        let leftMonitor = makeTestMonitor(displayId: 1, name: "Left", x: 0)
+        let rightMonitor = makeTestMonitor(displayId: 2, name: "Right", x: 1920)
+
+        let fixture = makeSpatialWarpTestFixture(
+            entries: [leftEntry, rightEntry],
+            monitors: [leftMonitor, rightMonitor]
+        )
+        defer { fixture.handler.cleanup() }
+
+        fixture.handler.state.lastMonitorId = leftMonitor.id
+
+        // Cursor appears inside the adjacent right monitor at its vertical midpoint
+        let location = CGPoint(
+            x: rightMonitor.frame.midX,
+            y: rightMonitor.frame.midY
+        )
+
+        fixture.handler.resetDebugStateForTests()
+        fixture.handler.receiveTapMouseWarpMoved(at: location)
+        fixture.handler.flushPendingWarpEventsForTests()
+
+        // Adjacent transition detected → warp fires (proportional landing on right monitor's left edge)
+        #expect(fixture.handler.state.lastMonitorId == rightMonitor.id)
+        #expect(fixture.recorder.postedPoints.count == 1)
+        #expect(fixture.recorder.warpedPoints.isEmpty)
     }
 
     // MARK: - 3-monitor stacked layout (R015)
@@ -672,6 +707,77 @@ private func makeThreeMonitorStackedFixture(margin: Int = 2) -> (
         // margin=1 → inset=2, landing x=1922; margin=5 → inset=6, landing x=1926
         #expect(fixture1.recorder.postedPoints.first != fixture5.recorder.postedPoints.first,
                 "Different margins should produce different landing positions")
+    }
+
+    // MARK: - Divergent spatial/actual coordinate tests
+
+    /// Helper: spatial entries have topLeft/topRight side-by-side, but macOS stacks them vertically.
+    @MainActor
+    private static func makeDivergentFixture(margin: Int = 2) -> (
+        controller: WMController,
+        handler: MouseWarpHandler,
+        recorder: WarpEffectRecorder,
+        topLeft: Monitor,
+        topRight: Monitor,
+        bottom: Monitor
+    ) {
+        // Spatial entries: user arranged side-by-side in OmniWM canvas
+        let topLeftEntry = makeTestEntry(name: "TopLeft", displayId: 1, x: 0, y: 1440, width: 1920, height: 1080)
+        let topRightEntry = makeTestEntry(name: "TopRight", displayId: 2, x: 1920, y: 1440, width: 1920, height: 1080)
+        let bottomEntry = makeTestEntry(name: "Bottom", displayId: 3, x: 760, y: 0, width: 3440, height: 1440)
+
+        // Actual macOS monitors: stacked vertically (both PHLs at x=707)
+        let topLeft = makeTestMonitor(displayId: 1, name: "TopLeft", x: 707, y: 1440, width: 1920, height: 1080)
+        let topRight = makeTestMonitor(displayId: 2, name: "TopRight", x: 707, y: 2520, width: 1920, height: 1080)
+        let bottom = makeTestMonitor(displayId: 3, name: "Bottom", x: 0, y: 0, width: 3440, height: 1440)
+
+        let f = makeSpatialWarpTestFixture(
+            entries: [topLeftEntry, topRightEntry, bottomEntry],
+            monitors: [topLeft, topRight, bottom],
+            margin: margin
+        )
+        return (f.controller, f.handler, f.recorder, topLeft, topRight, bottom)
+    }
+
+    /// macOS stacks monitors vertically but spatial layout has them side-by-side.
+    /// Top center of ultrawide should warp to topRight (not topLeft).
+    @Test @MainActor func divergentLayoutBottomCenterWarpsToCorrectTopMonitor() {
+        let f = Self.makeDivergentFixture()
+        defer { f.handler.cleanup() }
+
+        let margin = CGFloat(f.controller.settings.mouseWarpMargin)
+
+        // Actual cursor at center of bottom's top edge: x=1720
+        // Spatial: maps to x = 760 + (1720/3440)*3440 = 2480, within topRight spatial [1920,3840]
+        let location = CGPoint(x: 1720, y: f.bottom.frame.maxY - margin + 1)
+        f.handler.resetDebugStateForTests()
+        f.handler.receiveTapMouseWarpMoved(at: location)
+        f.handler.flushPendingWarpEventsForTests()
+
+        #expect(f.handler.state.lastMonitorId == f.topRight.id,
+                "Center of ultrawide should warp to topRight, not topLeft")
+        #expect(f.recorder.postedPoints.count == 1)
+    }
+
+    /// Right edge of topLeft should warp to topRight even when macOS frames differ from spatial.
+    @Test @MainActor func divergentLayoutTopLeftRightEdgeWarpsToTopRight() {
+        let f = Self.makeDivergentFixture()
+        defer { f.handler.cleanup() }
+
+        let margin = CGFloat(f.controller.settings.mouseWarpMargin)
+        f.handler.state.lastMonitorId = f.topLeft.id
+
+        let location = CGPoint(
+            x: f.topLeft.frame.maxX - margin + 1,
+            y: f.topLeft.frame.midY
+        )
+        f.handler.resetDebugStateForTests()
+        f.handler.receiveTapMouseWarpMoved(at: location)
+        f.handler.flushPendingWarpEventsForTests()
+
+        #expect(f.handler.state.lastMonitorId == f.topRight.id,
+                "Right edge of topLeft should warp to topRight")
+        #expect(f.recorder.postedPoints.count == 1)
     }
 
     @Test @MainActor func warpFromBottomLeftCornerOfUltrawide() {

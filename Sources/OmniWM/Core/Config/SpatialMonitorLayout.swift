@@ -31,6 +31,11 @@ struct SpatialMonitorLayout: Codable, Equatable, Sendable {
 
     enum Edge: Sendable {
         case left, right, top, bottom
+
+        /// Left/right edges have a perpendicular Y axis; top/bottom have X.
+        var isHorizontal: Bool {
+            self == .left || self == .right
+        }
     }
 
     // MARK: - Adjacency queries
