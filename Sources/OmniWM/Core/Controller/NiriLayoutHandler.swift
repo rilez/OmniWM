@@ -117,19 +117,32 @@ import QuartzCore
     }
 
     private func finalizeAnimation() {
-        guard let controller,
-              let focusedToken = controller.workspaceManager.focusedToken,
-              let entry = controller.workspaceManager.entry(for: focusedToken),
-              let engine = controller.niriEngine
-        else { return }
+        guard let controller else { return }
 
-        if let node = engine.findNode(for: focusedToken),
-           let frame = node.renderedFrame ?? node.frame {
-            controller.borderCoordinator.updateBorderIfAllowed(token: focusedToken, frame: frame, windowId: entry.windowId)
+        let focusedTarget = controller.currentKeyboardFocusTargetForRendering()
+        let preferredFrame: CGRect? = if let focusedTarget,
+                                         focusedTarget.isManaged,
+                                         let node = controller.niriEngine?.findNode(for: focusedTarget.token)
+        {
+            node.renderedFrame ?? node.frame
+        } else {
+            nil
+        }
+        if let token = focusedTarget?.token {
+            _ = controller.reapplyKeyboardFocusBorderIfMatching(
+                token: token,
+                preferredFrame: preferredFrame,
+                phase: .animationSettled,
+                policy: .coordinated
+            )
+        } else {
+            _ = controller.renderKeyboardFocusBorder(policy: .coordinated)
         }
 
-        if controller.moveMouseToFocusedWindowEnabled {
-            controller.moveMouseToWindow(focusedToken)
+        if controller.moveMouseToFocusedWindowEnabled,
+           let token = controller.workspaceManager.focusedToken
+        {
+            controller.moveMouseToWindow(token)
         }
     }
 
@@ -152,17 +165,15 @@ import QuartzCore
     ) async throws -> [WorkspaceLayoutPlan] {
         guard let controller, let engine = controller.niriEngine else { return [] }
         var plans: [WorkspaceLayoutPlan] = []
-        var processedWorkspaces: Set<WorkspaceDescriptor.ID> = []
-        for monitor in controller.workspaceManager.monitors {
+        for wsId in activeWorkspaces.sorted(by: { $0.uuidString < $1.uuidString }) {
             try Task.checkCancellation()
-            guard let workspace = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id) else { continue }
-            let wsId = workspace.id
-            guard activeWorkspaces.contains(wsId) else { continue }
-            guard !processedWorkspaces.contains(wsId) else { continue }
-            processedWorkspaces.insert(wsId)
+            guard let workspace = controller.workspaceManager.descriptor(for: wsId),
+                  let monitor = controller.workspaceManager.monitor(for: wsId)
+            else { continue }
 
             let layoutType = controller.settings.layoutType(for: workspace.name)
             if layoutType == .dwindle { continue }
+            let isActiveWorkspace = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id == wsId
 
             guard let snapshot = makeWorkspaceSnapshot(
                 workspaceId: wsId,
@@ -170,7 +181,7 @@ import QuartzCore
                 viewportState: nil,
                 useScrollAnimationPath: useScrollAnimationPath,
                 removalSeed: removalSeeds[wsId],
-                isActiveWorkspace: activeWorkspaces.contains(wsId)
+                isActiveWorkspace: isActiveWorkspace
             ) else { continue }
 
             plans.append(
@@ -199,35 +210,39 @@ import QuartzCore
     ) -> NiriWorkspaceSnapshot? {
         guard let controller else { return nil }
 
-        let entries = controller.workspaceManager.tiledEntries(in: wsId)
         let shouldResolveConstraints = viewportState == nil
-        let windows = controller.layoutRefreshController.buildWindowSnapshots(
-            for: entries,
-            resolveConstraints: shouldResolveConstraints
-        )
-        let effectiveViewportState = viewportState ?? controller.workspaceManager.niriViewportState(for: wsId)
         let orientation = controller.niriEngine?.monitor(for: monitor.id)?.orientation
             ?? controller.settings.effectiveOrientation(for: monitor)
-        let monitorSnapshot = controller.layoutRefreshController.buildMonitorSnapshot(
-            for: monitor,
-            orientation: orientation
-        )
+        guard let refreshInput = controller.layoutRefreshController.buildRefreshInput(
+            workspaceId: wsId,
+            monitor: monitor,
+            resolveConstraints: shouldResolveConstraints,
+            orientation: orientation,
+            isActiveWorkspace: isActiveWorkspace
+        ) else {
+            return nil
+        }
+
+        let effectiveViewportState = viewportState ?? controller.workspaceManager.niriViewportState(for: wsId)
         let interactionWorkspaceId = controller.activeWorkspace()?.id
 
         return NiriWorkspaceSnapshot(
             workspaceId: wsId,
-            monitor: monitorSnapshot,
-            windows: windows,
+            monitor: refreshInput.monitor,
+            windows: refreshInput.windows,
             viewportState: effectiveViewportState,
             preferredFocusToken: controller.workspaceManager.preferredFocusToken(in: wsId),
             confirmedFocusedToken: controller.workspaceManager.focusedToken,
+            pendingFocusedToken: controller.workspaceManager.pendingFocusedToken,
+            pendingFocusedWorkspaceId: controller.workspaceManager.pendingFocusedWorkspaceId,
+            isNonManagedFocusActive: controller.workspaceManager.isNonManagedFocusActive,
             hasCompletedInitialRefresh: controller.layoutRefreshController.layoutState.hasCompletedInitialRefresh,
             useScrollAnimationPath: useScrollAnimationPath,
             removalSeed: removalSeed,
             gap: CGFloat(controller.workspaceManager.gaps),
             outerGaps: controller.workspaceManager.outerGaps,
             displayRefreshRate: controller.layoutRefreshController.layoutState.refreshRateByDisplay[monitor.displayId] ?? 60.0,
-            isActiveWorkspace: isActiveWorkspace,
+            isActiveWorkspace: refreshInput.isActiveWorkspace,
             isInteractionWorkspace: interactionWorkspaceId == wsId
         )
     }
@@ -264,7 +279,10 @@ import QuartzCore
             frames: frames,
             hiddenHandles: hiddenHandles,
             confirmedFocusedToken: snapshot.confirmedFocusedToken,
-            borderFocusToken: snapshot.preferredFocusToken,
+            pendingFocusedToken: snapshot.pendingFocusedToken,
+            pendingFocusedWorkspaceId: snapshot.pendingFocusedWorkspaceId,
+            isNonManagedFocusActive: snapshot.isNonManagedFocusActive,
+            workspaceId: snapshot.workspaceId,
             engine: engine,
             directBorderUpdate: true,
             isInteractionWorkspace: snapshot.isInteractionWorkspace,
@@ -300,7 +318,7 @@ import QuartzCore
             state: &state,
             windowTokens: windowTokens,
             currentSelection: currentSelection,
-            removedNodeId: snapshot.removalSeed?.removedNodeId
+            removedNodeIds: snapshot.removalSeed?.removedNodeIds ?? []
         )
 
         let newTokens = syncAndInsert(
@@ -346,11 +364,12 @@ import QuartzCore
         state: inout ViewportState,
         windowTokens: [WindowToken],
         currentSelection: NodeId?,
-        removedNodeId: NodeId?
+        removedNodeIds: [NodeId]
     ) -> RemovalContext {
         let existingHandleIds = pass.engine.root(for: pass.wsId)?.windowIdSet ?? []
         let currentHandleIds = Set(windowTokens)
         let removedHandleIds = existingHandleIds.subtracting(currentHandleIds)
+        let removedNodeIdSet = Set(removedNodeIds)
 
         var precomputedFallback: NodeId?
         var originalColumnIndex: Int?
@@ -377,8 +396,12 @@ import QuartzCore
                 )
             }
 
-            let nodeIdForFallback = removedNodeId ?? currentSelection
-            if window.id == nodeIdForFallback {
+            let shouldPrecomputeFallback = if removedNodeIdSet.isEmpty {
+                window.id == currentSelection
+            } else {
+                removedNodeIdSet.contains(window.id)
+            }
+            if shouldPrecomputeFallback {
                 precomputedFallback = pass.engine.fallbackSelectionOnRemoval(
                     removing: window.id,
                     in: pass.wsId
@@ -702,7 +725,10 @@ import QuartzCore
             frames: frames,
             hiddenHandles: hiddenHandles,
             confirmedFocusedToken: snapshot.confirmedFocusedToken,
-            borderFocusToken: rememberedFocusToken,
+            pendingFocusedToken: snapshot.pendingFocusedToken,
+            pendingFocusedWorkspaceId: snapshot.pendingFocusedWorkspaceId,
+            isNonManagedFocusActive: snapshot.isNonManagedFocusActive,
+            workspaceId: pass.wsId,
             engine: pass.engine,
             directBorderUpdate: snapshot.useScrollAnimationPath,
             isInteractionWorkspace: snapshot.isInteractionWorkspace,
@@ -727,7 +753,10 @@ import QuartzCore
         frames: [WindowToken: CGRect],
         hiddenHandles: [WindowToken: HideSide],
         confirmedFocusedToken: WindowToken?,
-        borderFocusToken: WindowToken?,
+        pendingFocusedToken: WindowToken?,
+        pendingFocusedWorkspaceId: WorkspaceDescriptor.ID?,
+        isNonManagedFocusActive: Bool,
+        workspaceId: WorkspaceDescriptor.ID,
         engine: NiriLayoutEngine,
         directBorderUpdate: Bool,
         isInteractionWorkspace: Bool,
@@ -739,8 +768,17 @@ import QuartzCore
                 .filter(\.isNativeFullscreenSuspended)
                 .map(\.token)
         )
-        let effectiveBorderToken = if directBorderUpdate && isInteractionWorkspace {
-            borderFocusToken ?? confirmedFocusedToken
+        let effectiveBorderToken: WindowToken? = if directBorderUpdate && isInteractionWorkspace {
+            if !isNonManagedFocusActive,
+               pendingFocusedWorkspaceId == workspaceId,
+               let pendingFocusedToken
+            {
+                pendingFocusedToken
+            } else if let confirmedFocusedToken {
+                confirmedFocusedToken
+            } else {
+                nil
+            }
         } else {
             confirmedFocusedToken
         }
@@ -1125,6 +1163,13 @@ import QuartzCore
 
         if options.layoutRefresh {
             let focusToken = options.axFocus ? (node as? NiriWindow)?.token : nil
+            if let focusToken {
+                _ = controller.workspaceManager.beginManagedFocusRequest(
+                    focusToken,
+                    in: workspaceId,
+                    onMonitor: controller.workspaceManager.monitorId(for: workspaceId)
+                )
+            }
             controller.layoutRefreshController.requestImmediateRelayout(
                 reason: .layoutCommand
             ) { [weak controller] in

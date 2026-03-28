@@ -279,7 +279,9 @@ final class WorkspaceBarManager {
 
         let resolved = settings.resolvedBarSettings(for: monitor)
         let snapshot = makeSnapshot(for: monitor, resolved: resolved)
-        instance.model.snapshot = snapshot
+        if snapshot != instance.model.snapshot {
+            instance.model.snapshot = snapshot
+        }
         updateBarFrameAndPosition(
             for: monitor,
             resolved: resolved,

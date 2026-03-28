@@ -2754,6 +2754,65 @@ private func makeCenteredCrossMonitorFixture(
         #expect(hasActivationDirective(plan.animationDirectives, token: newToken))
     }
 
+    @Test @MainActor func executingActivateWindowPlanPreservesPendingSelectionAndViewport() async throws {
+        let controller = makeLayoutPlanTestController()
+        guard let monitor = controller.workspaceManager.monitors.first,
+              let workspaceId = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id
+        else {
+            Issue.record("Missing monitor or active workspace for pending-focus relayout regression test")
+            return
+        }
+
+        controller.setBordersEnabled(true)
+        controller.enableNiriLayout(maxWindowsPerColumn: 1)
+        controller.updateNiriConfig(
+            maxVisibleColumns: 1,
+            centerFocusedColumn: .never,
+            alwaysCenterSingleColumn: false
+        )
+        await waitForLayoutPlanRefreshWork(on: controller)
+        controller.syncMonitorsToNiriEngine()
+        controller.niriEngine?.presetColumnWidths = [.proportion(1.0), .proportion(1.0)]
+
+        let firstToken = addLayoutPlanTestWindow(on: controller, workspaceId: workspaceId, windowId: 403)
+        _ = controller.workspaceManager.setManagedFocus(firstToken, in: workspaceId, onMonitor: monitor.id)
+
+        let initialPlans = try await controller.niriLayoutHandler.layoutWithNiriEngine(
+            activeWorkspaces: [workspaceId]
+        )
+        controller.layoutRefreshController.executeLayoutPlans(initialPlans)
+        await waitForLayoutPlanRefreshWork(on: controller)
+
+        controller.layoutRefreshController.layoutState.hasCompletedInitialRefresh = true
+        let newToken = addLayoutPlanTestWindow(on: controller, workspaceId: workspaceId, windowId: 404)
+
+        let plans = try await controller.niriLayoutHandler.layoutWithNiriEngine(
+            activeWorkspaces: [workspaceId]
+        )
+        guard let plan = plans.first,
+              let newNode = controller.niriEngine?.findNode(for: newToken)
+        else {
+            Issue.record("Expected a Niri plan and node for pending-focus relayout regression test")
+            return
+        }
+
+        #expect(plan.sessionPatch.rememberedFocusToken == newToken)
+        #expect(plan.sessionPatch.viewportState?.selectedNodeId == newNode.id)
+        #expect(plan.sessionPatch.viewportState?.activeColumnIndex == 1)
+        #expect(hasActivationDirective(plan.animationDirectives, token: newToken))
+
+        controller.layoutRefreshController.executeLayoutPlans(plans)
+        await waitForLayoutPlanRefreshWork(on: controller)
+
+        let state = controller.workspaceManager.niriViewportState(for: workspaceId)
+        #expect(controller.workspaceManager.focusedToken == firstToken)
+        #expect(controller.workspaceManager.pendingFocusedToken == newToken)
+        #expect(controller.workspaceManager.preferredFocusToken(in: workspaceId) == newToken)
+        #expect(state.selectedNodeId == newNode.id)
+        #expect(state.activeColumnIndex == 1)
+        #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == 403)
+    }
+
     @Test @MainActor func snapshotPlanEmitsHideDiffForOffscreenWindows() async throws {
         let monitor = makeLayoutPlanTestMonitor(width: 1600, height: 900)
         let controller = makeLayoutPlanTestController(monitors: [monitor])
@@ -4761,7 +4820,7 @@ private func makeCenteredCrossMonitorFixture(
             useScrollAnimationPath: true,
             removalSeeds: [
                 workspaceId: NiriWindowRemovalSeed(
-                    removedNodeId: removedNodeId,
+                    removedNodeIds: [removedNodeId],
                     oldFrames: oldFrames
                 )
             ]
@@ -4816,6 +4875,46 @@ private func makeCenteredCrossMonitorFixture(
         controller.layoutRefreshController.executeLayoutPlans(plans)
 
         #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == 601)
+    }
+
+    @Test @MainActor func directBorderUpdateUsesConfirmedFocusInsteadOfRememberedFocus() async throws {
+        let controller = makeLayoutPlanTestController()
+        guard let monitor = controller.workspaceManager.monitors.first,
+              let workspaceId = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id
+        else {
+            Issue.record("Missing monitor or active workspace for direct border focus-source regression test")
+            return
+        }
+
+        controller.setBordersEnabled(true)
+        controller.enableNiriLayout(maxWindowsPerColumn: 1)
+        await waitForLayoutPlanRefreshWork(on: controller)
+
+        let focusedToken = addLayoutPlanTestWindow(
+            on: controller,
+            workspaceId: workspaceId,
+            windowId: 609,
+            pid: 8_101
+        )
+        let rememberedToken = addLayoutPlanTestWindow(
+            on: controller,
+            workspaceId: workspaceId,
+            windowId: 610,
+            pid: 8_102
+        )
+        _ = controller.workspaceManager.setManagedFocus(focusedToken, in: workspaceId, onMonitor: monitor.id)
+        _ = controller.workspaceManager.applySessionPatch(
+            .init(workspaceId: workspaceId, rememberedFocusToken: rememberedToken)
+        )
+
+        let plans = try await controller.niriLayoutHandler.layoutWithNiriEngine(
+            activeWorkspaces: [workspaceId],
+            useScrollAnimationPath: true
+        )
+        controller.layoutRefreshController.executeLayoutPlans(plans)
+
+        #expect(controller.workspaceManager.focusedToken == focusedToken)
+        #expect(lastAppliedBorderWindowIdForLayoutPlanTests(on: controller) == 609)
     }
 
     @Test @MainActor func focusNeighborUsesObservedGhosttyFrameForDirectBorderUpdatesFromEitherSide() async throws {

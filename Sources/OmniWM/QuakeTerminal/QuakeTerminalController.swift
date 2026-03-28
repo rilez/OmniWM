@@ -61,6 +61,7 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate, QuakeTerminalTa
 
         updateGhosttyOpacityConfig()
         ghostty_config_load_default_files(ghosttyConfig)
+        ghostty_config_load_recursive_files(ghosttyConfig)
         ghostty_config_finalize(ghosttyConfig)
 
         var runtimeConfig = ghostty_runtime_config_s()
@@ -175,6 +176,8 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate, QuakeTerminalTa
             }
 
             let newContent = lines.joined(separator: "\n")
+            let existingContent = try? String(contentsOf: configFile, encoding: .utf8)
+            guard newContent != existingContent else { return }
             try newContent.write(to: configFile, atomically: true, encoding: .utf8)
         } catch {
             print("QuakeTerminal: Failed to update ghostty config: \(error)")
@@ -188,6 +191,7 @@ final class QuakeTerminalController: NSObject, NSWindowDelegate, QuakeTerminalTa
 
         guard let newConfig = ghostty_config_new() else { return }
         ghostty_config_load_default_files(newConfig)
+        ghostty_config_load_recursive_files(newConfig)
         ghostty_config_finalize(newConfig)
 
         ghostty_app_update_config(ghosttyApp, newConfig)

@@ -558,6 +558,82 @@ private func workspaceConfigurations(
         #expect(manager.resolveWorkspaceFocusToken(in: workspaceId) == tiledToken)
     }
 
+    @Test @MainActor func preferredFocusAllowsRememberedWorkspaceInactiveWindow() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .main)
+        ]
+
+        let manager = WorkspaceManager(settings: settings)
+        let monitor = makeWorkspaceManagerTestMonitor(displayId: 120, name: "Main", x: 0, y: 0)
+        manager.applyMonitorConfigurationChange([monitor])
+
+        guard let workspaceId = manager.workspaceId(for: "1", createIfMissing: true) else {
+            Issue.record("Failed to create workspace")
+            return
+        }
+
+        _ = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2210),
+            pid: 2210,
+            windowId: 2210,
+            to: workspaceId
+        )
+        let rememberedToken = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2211),
+            pid: 2211,
+            windowId: 2211,
+            to: workspaceId
+        )
+        _ = manager.rememberFocus(rememberedToken, in: workspaceId)
+        manager.setHiddenState(
+            .init(
+                proportionalPosition: CGPoint(x: 0.1, y: 0.9),
+                referenceMonitorId: monitor.id,
+                reason: .workspaceInactive
+            ),
+            for: rememberedToken
+        )
+
+        #expect(manager.preferredFocusToken(in: workspaceId) == rememberedToken)
+        #expect(manager.resolveWorkspaceFocusToken(in: workspaceId) == rememberedToken)
+    }
+
+    @Test @MainActor func preferredFocusFallsBackToWorkspaceInactiveTiledWindow() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .main)
+        ]
+
+        let manager = WorkspaceManager(settings: settings)
+        let monitor = makeWorkspaceManagerTestMonitor(displayId: 121, name: "Main", x: 0, y: 0)
+        manager.applyMonitorConfigurationChange([monitor])
+
+        guard let workspaceId = manager.workspaceId(for: "1", createIfMissing: true) else {
+            Issue.record("Failed to create workspace")
+            return
+        }
+
+        let token = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2212),
+            pid: 2212,
+            windowId: 2212,
+            to: workspaceId
+        )
+        manager.setHiddenState(
+            .init(
+                proportionalPosition: CGPoint(x: 0.2, y: 0.8),
+                referenceMonitorId: monitor.id,
+                reason: .workspaceInactive
+            ),
+            for: token
+        )
+
+        #expect(manager.preferredFocusToken(in: workspaceId) == token)
+    }
+
     @Test @MainActor func resolveWorkspaceFocusFallsBackToFloatingWhenNoTiledWindowExists() {
         let defaults = makeWorkspaceManagerTestDefaults()
         let settings = SettingsStore(defaults: defaults)
@@ -582,6 +658,42 @@ private func workspaceConfigurations(
             mode: .floating
         )
         _ = manager.setManagedFocus(floatingToken, in: workspaceId, onMonitor: monitor.id)
+
+        #expect(manager.preferredFocusToken(in: workspaceId) == nil)
+        #expect(manager.resolveWorkspaceFocusToken(in: workspaceId) == floatingToken)
+    }
+
+    @Test @MainActor func resolveWorkspaceFocusFallsBackToWorkspaceInactiveFloatingWindow() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = [
+            WorkspaceConfiguration(name: "1", monitorAssignment: .main)
+        ]
+
+        let manager = WorkspaceManager(settings: settings)
+        let monitor = makeWorkspaceManagerTestMonitor(displayId: 122, name: "Main", x: 0, y: 0)
+        manager.applyMonitorConfigurationChange([monitor])
+
+        guard let workspaceId = manager.workspaceId(for: "1", createIfMissing: true) else {
+            Issue.record("Failed to create workspace")
+            return
+        }
+
+        let floatingToken = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2213),
+            pid: 2213,
+            windowId: 2213,
+            to: workspaceId,
+            mode: .floating
+        )
+        manager.setHiddenState(
+            .init(
+                proportionalPosition: CGPoint(x: 0.3, y: 0.7),
+                referenceMonitorId: monitor.id,
+                reason: .workspaceInactive
+            ),
+            for: floatingToken
+        )
 
         #expect(manager.preferredFocusToken(in: workspaceId) == nil)
         #expect(manager.resolveWorkspaceFocusToken(in: workspaceId) == floatingToken)
@@ -757,6 +869,71 @@ private func workspaceConfigurations(
         #expect(manager.layoutReason(for: token2) == .standard)
         #expect(manager.layoutReason(for: token1) == .nativeFullscreen)
         #expect(manager.nativeFullscreenCommandTarget(frontmostToken: token1) == token1)
+    }
+
+    @Test @MainActor func staleTemporarilyUnavailableNativeFullscreenCleanupWaitsForTimeoutAndAppTerminationStillClearsImmediately() {
+        let defaults = makeWorkspaceManagerTestDefaults()
+        let settings = SettingsStore(defaults: defaults)
+        settings.workspaceConfigurations = workspaceConfigurations([
+            ("1", .main)
+        ])
+
+        let manager = WorkspaceManager(settings: settings)
+        let monitor = makeWorkspaceManagerTestMonitor(displayId: 32, name: "Main", x: 0, y: 0)
+        manager.applyMonitorConfigurationChange([monitor])
+
+        guard let workspaceId = manager.workspaceId(for: "1", createIfMissing: true) else {
+            Issue.record("Failed to create workspace")
+            return
+        }
+
+        let firstToken = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2331),
+            pid: 2331,
+            windowId: 2331,
+            to: workspaceId
+        )
+        _ = manager.requestNativeFullscreenEnter(firstToken, in: workspaceId)
+        _ = manager.markNativeFullscreenSuspended(firstToken)
+        _ = manager.markNativeFullscreenTemporarilyUnavailable(
+            firstToken,
+            now: Date(timeIntervalSince1970: 100)
+        )
+
+        let earlyRemoved = manager.expireStaleTemporarilyUnavailableNativeFullscreenRecords(
+            now: Date(timeIntervalSince1970: 114),
+            staleInterval: 15
+        )
+        #expect(earlyRemoved.isEmpty)
+        #expect(manager.entry(for: firstToken) != nil)
+        #expect(manager.nativeFullscreenRecord(for: firstToken) != nil)
+
+        let lateRemoved = manager.expireStaleTemporarilyUnavailableNativeFullscreenRecords(
+            now: Date(timeIntervalSince1970: 116),
+            staleInterval: 15
+        )
+        #expect(lateRemoved.count == 1)
+        #expect(manager.entry(for: firstToken) == nil)
+        #expect(manager.nativeFullscreenRecord(for: firstToken) == nil)
+
+        let secondPid: pid_t = 2332
+        let secondToken = manager.addWindow(
+            makeWorkspaceManagerTestWindow(windowId: 2332),
+            pid: secondPid,
+            windowId: 2332,
+            to: workspaceId
+        )
+        _ = manager.requestNativeFullscreenEnter(secondToken, in: workspaceId)
+        _ = manager.markNativeFullscreenSuspended(secondToken)
+        _ = manager.markNativeFullscreenTemporarilyUnavailable(
+            secondToken,
+            now: Date(timeIntervalSince1970: 200)
+        )
+
+        let affectedWorkspaces = manager.removeWindowsForApp(pid: secondPid)
+        #expect(affectedWorkspaces == Set([workspaceId]))
+        #expect(manager.entry(for: secondToken) == nil)
+        #expect(manager.nativeFullscreenRecord(for: secondToken) == nil)
     }
 
     @Test @MainActor func monitorReconnectPrefersFocusedWorkspaceMonitorForInteractionState() {

@@ -86,22 +86,22 @@ import QuartzCore
     func layoutWithDwindleEngine(activeWorkspaces: Set<WorkspaceDescriptor.ID>) async throws -> [WorkspaceLayoutPlan] {
         guard let controller, let engine = controller.dwindleEngine else { return [] }
         var plans: [WorkspaceLayoutPlan] = []
-        for monitor in controller.workspaceManager.monitors {
+        for wsId in activeWorkspaces.sorted(by: { $0.uuidString < $1.uuidString }) {
             try Task.checkCancellation()
-            guard let workspace = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id) else { continue }
-            let wsId = workspace.id
-
-            guard activeWorkspaces.contains(wsId) else { continue }
+            guard let workspace = controller.workspaceManager.descriptor(for: wsId),
+                  let monitor = controller.workspaceManager.monitor(for: wsId)
+            else { continue }
 
             let wsName = workspace.name
             let layoutType = controller.settings.layoutType(for: wsName)
             guard layoutType == .dwindle else { continue }
+            let isActiveWorkspace = controller.workspaceManager.activeWorkspaceOrFirst(on: monitor.id)?.id == wsId
 
             guard let snapshot = makeWorkspaceSnapshot(
                 workspaceId: wsId,
                 monitor: monitor,
                 resolveConstraints: true,
-                isActiveWorkspace: activeWorkspaces.contains(wsId)
+                isActiveWorkspace: isActiveWorkspace
             ) else { continue }
 
             plans.append(
@@ -259,12 +259,14 @@ import QuartzCore
     ) -> DwindleWorkspaceSnapshot? {
         guard let controller else { return nil }
 
-        let entries = controller.workspaceManager.tiledEntries(in: wsId)
-        let windows = controller.layoutRefreshController.buildWindowSnapshots(
-            for: entries,
-            resolveConstraints: resolveConstraints
-        )
-        let monitorSnapshot = controller.layoutRefreshController.buildMonitorSnapshot(for: monitor)
+        guard let refreshInput = controller.layoutRefreshController.buildRefreshInput(
+            workspaceId: wsId,
+            monitor: monitor,
+            resolveConstraints: resolveConstraints,
+            isActiveWorkspace: isActiveWorkspace
+        ) else {
+            return nil
+        }
         let selectedToken: WindowToken?
         if let selected = controller.dwindleEngine?.selectedNode(in: wsId),
            case let .leaf(handle, _) = selected.kind
@@ -276,13 +278,13 @@ import QuartzCore
 
         return DwindleWorkspaceSnapshot(
             workspaceId: wsId,
-            monitor: monitorSnapshot,
-            windows: windows,
+            monitor: refreshInput.monitor,
+            windows: refreshInput.windows,
             preferredFocusToken: controller.workspaceManager.preferredFocusToken(in: wsId),
             confirmedFocusedToken: controller.workspaceManager.focusedToken,
             selectedToken: selectedToken,
             settings: controller.settings.resolvedDwindleSettings(for: monitor),
-            isActiveWorkspace: isActiveWorkspace
+            isActiveWorkspace: refreshInput.isActiveWorkspace
         )
     }
 

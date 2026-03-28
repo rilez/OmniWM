@@ -5,7 +5,7 @@ import Testing
 @testable import OmniWM
 
 @Suite struct AXWindowServiceTests {
-    @Test func attributeFetchFailureProducesManagedDispositionAndFailureReason() {
+    @Test func attributeFetchFailureProducesUndecidedDispositionAndFailureReason() {
         let decision = AXWindowService.heuristicDisposition(
             for: AXWindowFacts(
                 role: nil,
@@ -22,11 +22,11 @@ import Testing
             )
         )
 
-        #expect(decision.disposition == .managed)
+        #expect(decision.disposition == .undecided)
         #expect(decision.reasons == [AXWindowHeuristicReason.attributeFetchFailed])
     }
 
-    @Test func missingFullscreenButtonProducesWeakManagedHint() {
+    @Test func missingFullscreenButtonProducesFloatingDisposition() {
         let decision = AXWindowService.heuristicDisposition(
             for: AXWindowFacts(
                 role: kAXWindowRole as String,
@@ -43,7 +43,7 @@ import Testing
             )
         )
 
-        #expect(decision.disposition == .managed)
+        #expect(decision.disposition == .floating)
         #expect(decision.reasons == [AXWindowHeuristicReason.missingFullscreenButton])
     }
 
@@ -90,7 +90,7 @@ import Testing
         #expect(decision.reasons.isEmpty)
     }
 
-    @Test func fixedSizeStandardWindowDefaultsToFloating() {
+    @Test func fixedSizeStandardWindowNoLongerForcesFloating() {
         let decision = AXWindowService.heuristicDisposition(
             for: AXWindowFacts(
                 role: kAXWindowRole as String,
@@ -108,11 +108,11 @@ import Testing
             sizeConstraints: .fixed(size: CGSize(width: 440, height: 320))
         )
 
-        #expect(decision.disposition == .floating)
-        #expect(decision.reasons == [.fixedSizeWindow])
+        #expect(decision.disposition == .managed)
+        #expect(decision.reasons.isEmpty)
     }
 
-    @Test func trustedFloatingSubroleDefaultsToFloating() {
+    @Test func nonStandardSubroleDefaultsToFloating() {
         let decision = AXWindowService.heuristicDisposition(
             for: AXWindowFacts(
                 role: kAXWindowRole as String,
@@ -130,16 +130,16 @@ import Testing
         )
 
         #expect(decision.disposition == .floating)
-        #expect(decision.reasons == [.trustedFloatingSubrole])
+        #expect(decision.reasons == [.nonStandardSubrole])
     }
 
-    @Test func untrustedNonStandardSubroleDefaultsToUnmanaged() {
+    @Test func noButtonsOnNonStandardSubroleDefaultsToFloating() {
         let decision = AXWindowService.heuristicDisposition(
             for: AXWindowFacts(
                 role: kAXWindowRole as String,
                 subrole: "AXWeirdPopover",
                 title: "Transient",
-                hasCloseButton: true,
+                hasCloseButton: false,
                 hasFullscreenButton: false,
                 fullscreenButtonEnabled: nil,
                 hasZoomButton: false,
@@ -150,8 +150,8 @@ import Testing
             )
         )
 
-        #expect(decision.disposition == .unmanaged)
-        #expect(decision.reasons == [.nonStandardSubrole])
+        #expect(decision.disposition == .floating)
+        #expect(decision.reasons == [.noButtonsOnNonStandardSubrole])
     }
 
     @Test func fullscreenEntryFromRightColumnUsesPositionThenSize() {
@@ -188,5 +188,93 @@ import Testing
         #expect(
             AXWindowService.frameWriteOrder(currentFrame: current, targetFrame: target) == .sizeThenPosition
         )
+    }
+}
+
+@Suite @MainActor struct AXWindowTitleCacheTests {
+    @Test func titleCacheReusesLookupWithinTTL() {
+        AXWindowService.clearTitleCacheForTests()
+        defer {
+            AXWindowService.titleLookupProviderForTests = nil
+            AXWindowService.timeSourceForTests = nil
+            AXWindowService.clearTitleCacheForTests()
+        }
+
+        let now: TimeInterval = 10
+        var lookups: [UInt32] = []
+        AXWindowService.timeSourceForTests = { now }
+        AXWindowService.titleLookupProviderForTests = { windowId in
+            lookups.append(windowId)
+            return "Window \(windowId)"
+        }
+
+        #expect(AXWindowService.titlePreferFast(windowId: 12) == "Window 12")
+        #expect(AXWindowService.titlePreferFast(windowId: 12) == "Window 12")
+        #expect(lookups == [12])
+    }
+
+    @Test func titleCacheRefreshesAfterTTLExpires() {
+        AXWindowService.clearTitleCacheForTests()
+        defer {
+            AXWindowService.titleLookupProviderForTests = nil
+            AXWindowService.timeSourceForTests = nil
+            AXWindowService.clearTitleCacheForTests()
+        }
+
+        var now: TimeInterval = 20
+        var lookupCount = 0
+        AXWindowService.timeSourceForTests = { now }
+        AXWindowService.titleLookupProviderForTests = { _ in
+            lookupCount += 1
+            return "Title \(lookupCount)"
+        }
+
+        #expect(AXWindowService.titlePreferFast(windowId: 24) == "Title 1")
+        now += 0.6
+        #expect(AXWindowService.titlePreferFast(windowId: 24) == "Title 2")
+        #expect(lookupCount == 2)
+    }
+
+    @Test func titleCacheStoresNilResultsWithinTTL() {
+        AXWindowService.clearTitleCacheForTests()
+        defer {
+            AXWindowService.titleLookupProviderForTests = nil
+            AXWindowService.timeSourceForTests = nil
+            AXWindowService.clearTitleCacheForTests()
+        }
+
+        let now: TimeInterval = 30
+        var lookupCount = 0
+        AXWindowService.timeSourceForTests = { now }
+        AXWindowService.titleLookupProviderForTests = { _ in
+            lookupCount += 1
+            return nil
+        }
+
+        #expect(AXWindowService.titlePreferFast(windowId: 36) == nil)
+        #expect(AXWindowService.titlePreferFast(windowId: 36) == nil)
+        #expect(lookupCount == 1)
+    }
+
+    @Test func explicitTitleInvalidationForcesReload() {
+        AXWindowService.clearTitleCacheForTests()
+        defer {
+            AXWindowService.titleLookupProviderForTests = nil
+            AXWindowService.timeSourceForTests = nil
+            AXWindowService.clearTitleCacheForTests()
+        }
+
+        let now: TimeInterval = 40
+        var lookupCount = 0
+        AXWindowService.timeSourceForTests = { now }
+        AXWindowService.titleLookupProviderForTests = { _ in
+            lookupCount += 1
+            return "Lookup \(lookupCount)"
+        }
+
+        #expect(AXWindowService.titlePreferFast(windowId: 48) == "Lookup 1")
+        AXWindowService.invalidateCachedTitle(windowId: 48)
+        #expect(AXWindowService.titlePreferFast(windowId: 48) == "Lookup 2")
+        #expect(lookupCount == 2)
     }
 }

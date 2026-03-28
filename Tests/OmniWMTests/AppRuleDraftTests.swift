@@ -19,6 +19,9 @@ private func makeDecisionSnapshot(
         manualOverride: nil,
         disposition: .managed,
         source: .heuristic,
+        layoutDecisionKind: .fallbackLayout,
+        deferredReason: nil,
+        admissionOutcome: .trackedTiling,
         workspaceName: nil,
         minWidth: nil,
         minHeight: nil,
@@ -62,5 +65,20 @@ private func makeDecisionSnapshot(
         #expect(draft?.axRoleEnabled == false)
         #expect(draft?.axSubroleEnabled == false)
         #expect(draft?.hasActiveAdvancedMatchers == false)
+    }
+
+    @Test func guidedSeedAcceptsObservedNonReverseDnsAppIdentifier() {
+        let snapshot = makeDecisionSnapshot(bundleId: "dentalplus-air")
+
+        let draft = AppRuleDraft.guided(from: snapshot)
+
+        #expect(draft?.bundleId == "dentalplus-air")
+        #expect(AppRuleDraftValidation.bundleIdError(for: "dentalplus-air") == nil)
+    }
+
+    @Test func bundleIdValidationStillRejectsWhitespaceAndPathLikeValues() {
+        #expect(AppRuleDraftValidation.bundleIdError(for: "DentalPlus Client") == "Invalid bundle ID format")
+        #expect(AppRuleDraftValidation.bundleIdError(for: "com/example/app") == "Invalid bundle ID format")
+        #expect(AppRuleDraftValidation.bundleIdError(for: "com.example.app") == nil)
     }
 }

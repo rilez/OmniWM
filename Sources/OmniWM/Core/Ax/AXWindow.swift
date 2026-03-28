@@ -39,6 +39,65 @@ enum AXFrameWriteOrder {
     case positionThenSize
 }
 
+enum AXFrameWriteFailureReason: Equatable, Sendable {
+    case valueCreationFailed
+    case sizeWriteFailed(AXError)
+    case positionWriteFailed(AXError)
+    case staleElement
+    case cacheMiss
+    case contextUnavailable
+    case readbackFailed
+    case verificationMismatch
+    case cancelled
+    case suppressed
+}
+
+struct AXFrameWriteResult: Equatable, Sendable {
+    let targetFrame: CGRect
+    let observedFrame: CGRect?
+    let writeOrder: AXFrameWriteOrder
+    let sizeError: AXError
+    let positionError: AXError
+    let failureReason: AXFrameWriteFailureReason?
+
+    var isVerifiedSuccess: Bool {
+        failureReason == nil
+    }
+
+    var shouldRetryAfterRefresh: Bool {
+        failureReason == .staleElement || failureReason == .cacheMiss
+    }
+
+    static func skipped(
+        targetFrame: CGRect,
+        currentFrameHint: CGRect?,
+        failureReason: AXFrameWriteFailureReason,
+        observedFrame: CGRect? = nil
+    ) -> Self {
+        Self(
+            targetFrame: targetFrame,
+            observedFrame: observedFrame,
+            writeOrder: AXWindowService.frameWriteOrder(currentFrame: currentFrameHint, targetFrame: targetFrame),
+            sizeError: .success,
+            positionError: .success,
+            failureReason: failureReason
+        )
+    }
+}
+
+struct AXFrameApplyResult: Equatable, Sendable {
+    let pid: pid_t
+    let windowId: Int
+    let targetFrame: CGRect
+    let currentFrameHint: CGRect?
+    let writeResult: AXFrameWriteResult
+
+    var confirmedFrame: CGRect? {
+        guard writeResult.isVerifiedSuccess else { return nil }
+        return writeResult.observedFrame ?? targetFrame
+    }
+}
+
 enum AXWindowHeuristicReason: String, Sendable {
     case attributeFetchFailed
     case browserPictureInPicture
@@ -81,16 +140,65 @@ enum AXWindowService {
         case title
     }
 
-    private static let trustedFloatingSubroles: Set<String> = [
-        "AXDialog",
-        "AXSystemDialog",
-        "AXFloatingWindow",
-        "AXUtilityWindow"
-    ]
+    nonisolated(unsafe) static var axWindowRefProviderForTests: ((UInt32, pid_t) -> AXWindowRef?)?
+    nonisolated(unsafe) static var setFrameResultProviderForTests: ((AXWindowRef, CGRect, CGRect?) -> AXFrameWriteResult)?
+    @MainActor static var titleLookupProviderForTests: ((UInt32) -> String?)?
+    @MainActor static var timeSourceForTests: (() -> TimeInterval)?
+
+    private struct CachedTitle {
+        let title: String?
+        let fetchedAt: TimeInterval
+    }
+
+    private static let titleTTL: TimeInterval = 0.5
+    private static let titleCacheCap = 512
+    @MainActor private static var titleCache: [UInt32: CachedTitle] = [:]
+    @MainActor private static var titleInsertionOrder: [UInt32] = []
 
     @MainActor
     static func titlePreferFast(windowId: UInt32) -> String? {
-        SkyLight.shared.getWindowTitle(windowId)
+        let now = timeSourceForTests?() ?? ProcessInfo.processInfo.systemUptime
+        if let cached = titleCache[windowId],
+           now - cached.fetchedAt < titleTTL
+        {
+            return cached.title
+        }
+        let title = titleLookupProviderForTests?(windowId) ?? SkyLight.shared.getWindowTitle(windowId)
+        storeTitleCacheEntry(windowId: windowId, title: title, at: now)
+        return title
+    }
+
+    @MainActor
+    static func invalidateCachedTitle(windowId: UInt32) {
+        titleCache.removeValue(forKey: windowId)
+        titleInsertionOrder.removeAll { $0 == windowId }
+    }
+
+    @MainActor
+    static func invalidateCachedTitles(windowIds: [UInt32]) {
+        for windowId in windowIds {
+            titleCache.removeValue(forKey: windowId)
+        }
+        let windowIdSet = Set(windowIds)
+        titleInsertionOrder.removeAll { windowIdSet.contains($0) }
+    }
+
+    @MainActor
+    static func clearTitleCacheForTests() {
+        titleCache.removeAll()
+        titleInsertionOrder.removeAll()
+    }
+
+    @MainActor
+    private static func storeTitleCacheEntry(windowId: UInt32, title: String?, at time: TimeInterval) {
+        if titleCache[windowId] == nil {
+            titleInsertionOrder.append(windowId)
+        }
+        titleCache[windowId] = CachedTitle(title: title, fetchedAt: time)
+        while titleCache.count > titleCacheCap, let oldest = titleInsertionOrder.first {
+            titleInsertionOrder.removeFirst()
+            titleCache.removeValue(forKey: oldest)
+        }
     }
 
     static func windowId(_ window: AXWindowRef) -> Int {
@@ -98,16 +206,26 @@ enum AXWindowService {
     }
 
     static func frame(_ window: AXWindowRef) throws(AXErrorWrapper) -> CGRect {
-        var positionValue: CFTypeRef?
-        var sizeValue: CFTypeRef?
-        let posResult = AXUIElementCopyAttributeValue(window.element, kAXPositionAttribute as CFString, &positionValue)
-        let sizeResult = AXUIElementCopyAttributeValue(window.element, kAXSizeAttribute as CFString, &sizeValue)
-        guard posResult == .success,
-              sizeResult == .success,
-              let posRaw = positionValue,
-              let sizeRaw = sizeValue,
-              CFGetTypeID(posRaw) == AXValueGetTypeID(),
-              CFGetTypeID(sizeRaw) == AXValueGetTypeID() else { throw .cannotGetAttribute }
+        let attributes = [
+            kAXPositionAttribute as CFString,
+            kAXSizeAttribute as CFString,
+        ] as CFArray
+        var valuesPtr: CFArray?
+        let result = AXUIElementCopyMultipleAttributeValues(
+            window.element,
+            attributes,
+            .init(),
+            &valuesPtr
+        )
+        guard result == .success,
+              let values = valuesPtr as? [Any],
+              values.count == 2
+        else { throw .cannotGetAttribute }
+        let posRaw = values[0] as CFTypeRef
+        let sizeRaw = values[1] as CFTypeRef
+        guard CFGetTypeID(posRaw) == AXValueGetTypeID(),
+              CFGetTypeID(sizeRaw) == AXValueGetTypeID()
+        else { throw .cannotGetAttribute }
         var pos = CGPoint.zero
         var size = CGSize.zero
         guard AXValueGetValue(posRaw as! AXValue, .cgPoint, &pos),
@@ -140,7 +258,11 @@ enum AXWindowService {
         _ window: AXWindowRef,
         frame: CGRect,
         currentFrameHint: CGRect? = nil
-    ) throws(AXErrorWrapper) {
+    ) -> AXFrameWriteResult {
+        if let setFrameResultProviderForTests {
+            return setFrameResultProviderForTests(window, frame, currentFrameHint)
+        }
+
         let writeOrder = frameWriteOrder(
             currentFrame: currentFrameHint ?? (try? self.frame(window)),
             targetFrame: frame
@@ -150,7 +272,13 @@ enum AXWindowService {
         var size = CGSize(width: axFrame.size.width, height: axFrame.size.height)
         guard let positionValue = AXValueCreate(.cgPoint, &position),
               let sizeValue = AXValueCreate(.cgSize, &size)
-        else { throw .cannotSetFrame }
+        else {
+            return .skipped(
+                targetFrame: frame,
+                currentFrameHint: currentFrameHint,
+                failureReason: .valueCreationFailed
+            )
+        }
 
         let positionError: AXError
         let sizeError: AXError
@@ -162,7 +290,27 @@ enum AXWindowService {
             positionError = AXUIElementSetAttributeValue(window.element, kAXPositionAttribute as CFString, positionValue)
             sizeError = AXUIElementSetAttributeValue(window.element, kAXSizeAttribute as CFString, sizeValue)
         }
-        guard sizeError == .success, positionError == .success else { throw .cannotSetFrame }
+
+        let observedFrame = try? self.frame(window)
+
+        let failureReason: AXFrameWriteFailureReason? = if sizeError != .success {
+            mapFrameWriteFailure(sizeError, attribute: .size)
+        } else if positionError != .success {
+            mapFrameWriteFailure(positionError, attribute: .position)
+        } else if let observedFrame {
+            observedFrame.approximatelyEqual(to: frame, tolerance: 1.0) ? nil : .verificationMismatch
+        } else {
+            .readbackFailed
+        }
+
+        return AXFrameWriteResult(
+            targetFrame: frame,
+            observedFrame: observedFrame,
+            writeOrder: writeOrder,
+            sizeError: sizeError,
+            positionError: positionError,
+            failureReason: failureReason
+        )
     }
 
     private static func convertFromAX(_ rect: CGRect) -> CGRect {
@@ -277,11 +425,28 @@ enum AXWindowService {
         }
 
         let fullscreenButtonElement = attributeValue(.fullScreenButton)
+        var attributeFetchSucceeded = true
         let hasFullscreenButton = hasResolvedAttribute(fullscreenButtonElement)
 
         var fullscreenButtonEnabled: Bool?
         if hasFullscreenButton, let fullscreenButtonElement {
-            let buttonElement = fullscreenButtonElement as! AXUIElement
+            guard CFGetTypeID(fullscreenButtonElement as CFTypeRef) == AXUIElementGetTypeID() else {
+                attributeFetchSucceeded = false
+                return AXWindowFacts(
+                    role: attributeValue(.role) as? String,
+                    subrole: attributeValue(.subrole) as? String,
+                    title: includeTitle ? (attributeValue(.title) as? String) : nil,
+                    hasCloseButton: hasResolvedAttribute(attributeValue(.closeButton)),
+                    hasFullscreenButton: false,
+                    fullscreenButtonEnabled: nil,
+                    hasZoomButton: hasResolvedAttribute(attributeValue(.zoomButton)),
+                    hasMinimizeButton: hasResolvedAttribute(attributeValue(.minimizeButton)),
+                    appPolicy: appPolicy,
+                    bundleId: bundleId,
+                    attributeFetchSucceeded: attributeFetchSucceeded
+                )
+            }
+            let buttonElement = unsafeDowncast(fullscreenButtonElement as AnyObject, to: AXUIElement.self)
             var enabledValue: CFTypeRef?
             let enabledResult = AXUIElementCopyAttributeValue(
                 buttonElement,
@@ -289,7 +454,13 @@ enum AXWindowService {
                 &enabledValue
             )
             if enabledResult == .success {
-                fullscreenButtonEnabled = enabledValue as? Bool
+                if let enabledValue {
+                    if let resolvedEnabled = enabledValue as? Bool {
+                        fullscreenButtonEnabled = resolvedEnabled
+                    } else {
+                        attributeFetchSucceeded = false
+                    }
+                }
             }
         }
 
@@ -304,7 +475,7 @@ enum AXWindowService {
             hasMinimizeButton: hasResolvedAttribute(attributeValue(.minimizeButton)),
             appPolicy: appPolicy,
             bundleId: bundleId,
-            attributeFetchSucceeded: true
+            attributeFetchSucceeded: attributeFetchSucceeded
         )
     }
 
@@ -320,7 +491,7 @@ enum AXWindowService {
 
         if !facts.attributeFetchSucceeded {
             return AXWindowHeuristicDisposition(
-                disposition: .managed,
+                disposition: .undecided,
                 reasons: [.attributeFetchFailed]
             )
         }
@@ -329,8 +500,6 @@ enum AXWindowService {
             || facts.hasFullscreenButton
             || facts.hasZoomButton
             || facts.hasMinimizeButton
-        let isFixedSize = sizeConstraints?.isFixed == true
-        var weakHints: [AXWindowHeuristicReason] = []
 
         if facts.appPolicy == .accessory && !facts.hasCloseButton {
             return AXWindowHeuristicDisposition(
@@ -341,7 +510,7 @@ enum AXWindowService {
 
         if !hasAnyButton && facts.subrole != kAXStandardWindowSubrole as String {
             return AXWindowHeuristicDisposition(
-                disposition: .unmanaged,
+                disposition: .floating,
                 reasons: [.noButtonsOnNonStandardSubrole]
             )
         }
@@ -349,36 +518,29 @@ enum AXWindowService {
         if let subrole = facts.subrole,
            subrole != (kAXStandardWindowSubrole as String)
         {
-            if trustedFloatingSubroles.contains(subrole) {
-                return AXWindowHeuristicDisposition(
-                    disposition: .floating,
-                    reasons: [.trustedFloatingSubrole]
-                )
-            }
             return AXWindowHeuristicDisposition(
-                disposition: .unmanaged,
+                disposition: .floating,
                 reasons: [.nonStandardSubrole]
             )
         }
 
-        if facts.hasFullscreenButton {
-            if facts.fullscreenButtonEnabled != true {
-                weakHints.append(.disabledFullscreenButton)
-            }
-        } else {
-            weakHints.append(.missingFullscreenButton)
-        }
-
-        if isFixedSize {
+        if !facts.hasFullscreenButton {
             return AXWindowHeuristicDisposition(
                 disposition: .floating,
-                reasons: weakHints + [.fixedSizeWindow]
+                reasons: [.missingFullscreenButton]
+            )
+        }
+
+        if facts.fullscreenButtonEnabled != true {
+            return AXWindowHeuristicDisposition(
+                disposition: .floating,
+                reasons: [.disabledFullscreenButton]
             )
         }
 
         return AXWindowHeuristicDisposition(
             disposition: .managed,
-            reasons: weakHints
+            reasons: []
         )
     }
 
@@ -461,6 +623,9 @@ enum AXWindowService {
     }
 
     static func axWindowRef(for windowId: UInt32, pid: pid_t) -> AXWindowRef? {
+        if let axWindowRefProviderForTests {
+            return axWindowRefProviderForTests(windowId, pid)
+        }
         let appElement = AXUIElementCreateApplication(pid)
         var windowsRef: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(
@@ -481,6 +646,27 @@ enum AXWindowService {
         }
 
         return nil
+    }
+
+    private enum FrameWriteAttribute {
+        case size
+        case position
+    }
+
+    private static func mapFrameWriteFailure(
+        _ error: AXError,
+        attribute: FrameWriteAttribute
+    ) -> AXFrameWriteFailureReason {
+        if error == .invalidUIElement || error == .cannotComplete {
+            return .staleElement
+        }
+
+        return switch attribute {
+        case .size:
+            .sizeWriteFailed(error)
+        case .position:
+            .positionWriteFailed(error)
+        }
     }
 }
 

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -38,6 +39,26 @@ struct GeneralSettingsTab: View {
                 }
 
                 Text("Controls the appearance of menus and workspace bar")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section("Status Bar") {
+                Toggle("Show Workspace", isOn: $settings.statusBarShowWorkspaceName)
+                    .onChange(of: settings.statusBarShowWorkspaceName) { _, _ in
+                        controller.refreshStatusBar()
+                    }
+                Toggle("Use Workspace Number", isOn: $settings.statusBarUseWorkspaceId)
+                    .onChange(of: settings.statusBarUseWorkspaceId) { _, _ in
+                        controller.refreshStatusBar()
+                    }
+                    .disabled(!settings.statusBarShowWorkspaceName)
+                Toggle("Show Focused App", isOn: $settings.statusBarShowAppNames)
+                    .onChange(of: settings.statusBarShowAppNames) { _, _ in
+                        controller.refreshStatusBar()
+                    }
+                    .disabled(!settings.statusBarShowWorkspaceName)
+                Text("Shows the active workspace and focused app beside the menu bar icon")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -142,27 +163,45 @@ struct GeneralSettingsTab: View {
                     .foregroundColor(.secondary)
             }
 
-            Section("Settings Backup") {
+            Section("Config File") {
                 HStack {
-                    Button("Export Settings") {
-                        do {
-                            try settings.exportSettings()
-                            exportStatus = .exported
-                        } catch {
-                            exportStatus = .error(error.localizedDescription)
-                        }
+                    Button("Export Editable Config") {
+                        performConfigFileAction(.export(.full))
+                    }
+
+                    Button("Export Compact Backup") {
+                        performConfigFileAction(.export(.compact))
                     }
 
                     Button("Import Settings") {
-                        do {
-                            try settings.importSettings(applyingTo: controller)
-                            exportStatus = .imported
-                        } catch {
-                            exportStatus = .error(error.localizedDescription)
-                        }
+                        performConfigFileAction(.import)
                     }
                     .disabled(!settings.settingsFileExists)
                 }
+
+                HStack {
+                    if !settings.settingsFileExists {
+                        Button("Create Config File") {
+                            performConfigFileAction(.create)
+                        }
+                    }
+
+                    Button("Reveal Settings File") {
+                        performConfigFileAction(.reveal)
+                    }
+
+                    Button("Open Settings File") {
+                        performConfigFileAction(.open)
+                    }
+                }
+
+                Text(
+                    "Editable Config writes the full canonical file. Compact Backup writes "
+                        + "only settings that differ from defaults. Import merges either "
+                        + "file back into the full settings model."
+                )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
 
                 Text("~/.config/omniwm/settings.json")
                     .font(.caption)
@@ -185,6 +224,18 @@ struct GeneralSettingsTab: View {
             top: settings.outerGapTop,
             bottom: settings.outerGapBottom
         )
+    }
+
+    private func performConfigFileAction(_ action: ConfigFileAction) {
+        do {
+            exportStatus = try ConfigFileWorkflow.perform(
+                action,
+                settings: settings,
+                controller: controller
+            )
+        } catch {
+            exportStatus = .error(error.localizedDescription)
+        }
     }
 }
 
@@ -516,34 +567,6 @@ private struct MonitorNiriSettingsSection: View {
                     onReset: { updateSetting { $0.singleWindowAspectRatio = nil } }
                 )
             }
-        }
-    }
-}
-
-private enum ExportStatus {
-    case exported
-    case imported
-    case error(String)
-
-    var message: String {
-        switch self {
-        case .exported: "Settings exported"
-        case .imported: "Settings imported"
-        case .error(let msg): "Error: \(msg)"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .exported, .imported: "checkmark.circle.fill"
-        case .error: "xmark.circle.fill"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .exported, .imported: .green
-        case .error: .red
         }
     }
 }

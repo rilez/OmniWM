@@ -1,7 +1,3 @@
-# OmniWM
-
-A powerful tiling window manager for macOS.
-
 ## Demo Video
 
 [![Watch the demo](https://img.youtube.com/vi/WcHjGkuD2Fc/maxresdefault.jpg)](https://youtu.be/WcHjGkuD2Fc)
@@ -63,6 +59,13 @@ A powerful tiling window manager for macOS.
       <br>
       <a href="https://github.com/Yang-Yiming"><strong>Yang-Yiming</strong></a>
     </td>
+    <td align="center">
+      <a href="https://github.com/zicochaos" title="Zicochaos">
+        <img src="https://github.com/Zicochaos.png?size=96" width="96" alt="Zicochaos">
+      </a>
+      <br>
+      <a href="https://github.com/zicochaos"><strong>Zicochaos</strong></a>
+    </td>
   </tr>
 </table>
 
@@ -71,6 +74,9 @@ A powerful tiling window manager for macOS.
   <img src="https://img.shields.io/badge/Apple%20Silicon-supported-green?logo=apple&logoColor=white" alt="Apple Silicon">
   <img src="https://img.shields.io/badge/X86/X64-supported-green?logo=intel&logoColor=white" alt="Intel">
   <img src="https://img.shields.io/badge/Claude%20Code-Assisted-green?logo=claude&logoColor=white" alt="Claude Code">
+</p>
+<p align="center">
+  <a href="https://trendshift.io/repositories/16758" target="_blank"><img src="https://trendshift.io/api/badge/repositories/16758" alt="BarutSRB%2FOmniWM | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 </p>
 
 <p align="center">
@@ -315,6 +321,12 @@ killall OmniWM
 
 Access settings by clicking the **O** menu bar icon and selecting **Settings** or **App Rules**.
 Mouse and gesture settings are available in Settings.
+
+OmniWM stores its editable config at `~/.config/omniwm/settings.json`.
+
+- **Editable Config** writes the full canonical settings file, including hotkeys and monitor overrides, so it can be edited directly.
+- **Compact Backup** writes only values that differ from defaults. Import still merges that backup back into the full canonical settings model.
+- **Create Config File**, **Reveal Settings File**, and **Open Settings File** create `settings.json` on first use if it does not exist yet.
 
 ## App Rules
 

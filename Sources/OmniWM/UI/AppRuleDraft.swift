@@ -19,7 +19,6 @@ enum TitleMatcherMode: String, CaseIterable, Identifiable {
 struct AppRuleDraft: Identifiable, Equatable {
     let id: UUID
     var bundleId: String
-    var manageAction: WindowRuleManageAction
     var layoutAction: WindowRuleLayoutAction
     var usesLegacyAlwaysFloat: Bool
     var assignToWorkspaceEnabled: Bool
@@ -41,7 +40,6 @@ struct AppRuleDraft: Identifiable, Equatable {
     init(id: UUID = UUID(), bundleId: String = "") {
         self.id = id
         self.bundleId = bundleId
-        manageAction = .auto
         layoutAction = .auto
         usesLegacyAlwaysFloat = false
         assignToWorkspaceEnabled = false
@@ -64,7 +62,6 @@ struct AppRuleDraft: Identifiable, Equatable {
     init(rule: AppRule) {
         id = rule.id
         bundleId = rule.bundleId
-        manageAction = rule.effectiveManageAction
         layoutAction = rule.effectiveLayoutAction
         usesLegacyAlwaysFloat = rule.alwaysFloat == true && rule.layout == nil
         assignToWorkspaceEnabled = rule.assignToWorkspace != nil
@@ -128,7 +125,6 @@ struct AppRuleDraft: Identifiable, Equatable {
             axRole: axRoleEnabled ? axRole.trimmedNonEmpty : nil,
             axSubrole: axSubroleEnabled ? axSubrole.trimmedNonEmpty : nil,
             alwaysFloat: preserveLegacyAlwaysFloat ? true : nil,
-            manage: manageAction == .auto ? nil : manageAction,
             layout: preserveLegacyAlwaysFloat ? nil : (layoutAction == .auto ? nil : layoutAction),
             assignToWorkspace: assignToWorkspaceEnabled ? assignToWorkspace.trimmedNonEmpty : nil,
             minWidth: minWidthEnabled ? minWidth : nil,
@@ -138,8 +134,8 @@ struct AppRuleDraft: Identifiable, Equatable {
 }
 
 enum AppRuleDraftValidation {
-    private static let bundleIdPattern = try! NSRegularExpression(
-        pattern: "^[a-zA-Z][a-zA-Z0-9-]*(\\.[a-zA-Z0-9-]+)+$"
+    private static let appIdentifierPattern = try! NSRegularExpression(
+        pattern: "^[a-zA-Z0-9]+([.-][a-zA-Z0-9]+)*$"
     )
 
     static func bundleIdError(for bundleId: String) -> String? {
@@ -147,7 +143,7 @@ enum AppRuleDraftValidation {
         guard !trimmed.isEmpty else { return nil }
 
         let range = NSRange(trimmed.startIndex..., in: trimmed)
-        guard bundleIdPattern.firstMatch(in: trimmed, range: range) != nil else {
+        guard appIdentifierPattern.firstMatch(in: trimmed, range: range) != nil else {
             return "Invalid bundle ID format"
         }
         return nil

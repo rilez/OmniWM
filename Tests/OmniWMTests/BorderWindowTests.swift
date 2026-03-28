@@ -34,7 +34,8 @@ private func makeBorderTestContext() -> CGContext? {
             flushWindow: { _ in flushCount += 1 },
             transactionMove: { _, origin in moveOnlyOrigins.append(origin) },
             transactionMoveAndOrder: { _, _, _, targetWid, _ in orderedTargets.append(targetWid) },
-            transactionHide: { _ in }
+            transactionHide: { _ in },
+            backingScaleForFrame: { _ in 2.0 }
         )
         let borderWindow = BorderWindow(
             config: BorderConfig(enabled: true, width: 4, color: .systemBlue),
@@ -82,7 +83,8 @@ private func makeBorderTestContext() -> CGContext? {
             flushWindow: { _ in },
             transactionMove: { _, _ in moveOnlyCount += 1 },
             transactionMoveAndOrder: { _, _, _, targetWid, _ in orderedTargets.append(targetWid) },
-            transactionHide: { _ in hideCount += 1 }
+            transactionHide: { _ in hideCount += 1 },
+            backingScaleForFrame: { _ in 2.0 }
         )
         let borderWindow = BorderWindow(
             config: BorderConfig(enabled: true, width: 4, color: .systemBlue),
@@ -97,5 +99,46 @@ private func makeBorderTestContext() -> CGContext? {
         #expect(moveOnlyCount == 0)
         #expect(orderedTargets == [111, 111])
         #expect(hideCount == 1)
+    }
+
+    @Test @MainActor func reconfiguresExistingWindowWhenBackingScaleChanges() {
+        var configureCalls: [(wid: UInt32, scale: Float)] = []
+        var createCount = 0
+
+        let operations = BorderWindow.Operations(
+            createBorderWindow: { _ in
+                createCount += 1
+                return 902
+            },
+            releaseBorderWindow: { _ in },
+            configureWindow: { wid, scale, _ in configureCalls.append((wid, scale)) },
+            setWindowTags: { _, _ in },
+            createWindowContext: { _ in makeBorderTestContext() },
+            setWindowShape: { _, _ in },
+            flushWindow: { _ in },
+            transactionMove: { _, _ in },
+            transactionMoveAndOrder: { _, _, _, _, _ in },
+            transactionHide: { _ in },
+            backingScaleForFrame: { frame in
+                frame.midX < 1_000 ? 1.0 : 2.0
+            }
+        )
+        let borderWindow = BorderWindow(
+            config: BorderConfig(enabled: true, width: 4, color: .systemBlue),
+            operations: operations
+        )
+
+        borderWindow.update(
+            frame: CGRect(x: 80, y: 80, width: 640, height: 420),
+            targetWid: 120
+        )
+        borderWindow.update(
+            frame: CGRect(x: 1_280, y: 80, width: 640, height: 420),
+            targetWid: 120
+        )
+
+        #expect(createCount == 1)
+        #expect(configureCalls.map(\.wid) == [902, 902])
+        #expect(configureCalls.map(\.scale) == [1.0, 2.0])
     }
 }

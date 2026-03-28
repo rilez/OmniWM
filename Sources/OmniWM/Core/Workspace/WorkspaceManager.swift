@@ -16,20 +16,27 @@ struct WorkspaceDescriptor: Identifiable, Hashable {
 
 @MainActor
 final class WorkspaceManager {
-    enum NativeFullscreenTransition {
+    static let staleUnavailableNativeFullscreenTimeout: TimeInterval = 15
+
+    enum NativeFullscreenTransition: Equatable {
         case enterRequested
         case suspended
         case exitRequested
-        case awaitingReplacement
+    }
+
+    enum NativeFullscreenAvailability: Equatable {
+        case present
+        case temporarilyUnavailable
     }
 
     struct NativeFullscreenRecord {
         let originalToken: WindowToken
         var currentToken: WindowToken
         let workspaceId: WorkspaceDescriptor.ID
-        var replacementDeadline: Date?
         var exitRequestedByCommand: Bool
         var transition: NativeFullscreenTransition
+        var availability: NativeFullscreenAvailability
+        var unavailableSince: Date?
     }
 
     private struct DisconnectedVisibleWorkspaceMigration {
@@ -88,6 +95,10 @@ final class WorkspaceManager {
     private var nativeFullscreenOriginalTokenByCurrentToken: [WindowToken: WindowToken] = [:]
 
     private var _cachedSortedWorkspaces: [WorkspaceDescriptor]?
+    private var _cachedWorkspaceIdsByMonitor: [Monitor.ID: [WorkspaceDescriptor.ID]]?
+    private var _cachedVisibleWorkspaceIds: Set<WorkspaceDescriptor.ID>?
+    private var _cachedVisibleWorkspaceMap: [Monitor.ID: WorkspaceDescriptor.ID]?
+    private var _cachedMonitorIdByVisibleWorkspace: [WorkspaceDescriptor.ID: Monitor.ID]?
     var animationClock: AnimationClock?
     private var sessionState = SessionState()
 
@@ -157,6 +168,10 @@ final class WorkspaceManager {
         sessionState.focus.isAppFullscreenActive
     }
 
+    var hasNativeFullscreenLifecycleContext: Bool {
+        sessionState.focus.isAppFullscreenActive || !nativeFullscreenRecordsByOriginalToken.isEmpty
+    }
+
     func scratchpadToken() -> WindowToken? {
         sessionState.scratchpadToken
     }
@@ -177,7 +192,7 @@ final class WorkspaceManager {
 
     var hasPendingNativeFullscreenTransition: Bool {
         nativeFullscreenRecordsByOriginalToken.values.contains {
-            $0.transition == .enterRequested || $0.transition == .awaitingReplacement
+            $0.transition == .enterRequested || $0.availability == .temporarilyUnavailable
         }
     }
 
@@ -285,6 +300,26 @@ final class WorkspaceManager {
     }
 
     @discardableResult
+    func cancelManagedFocusRequest(
+        matching token: WindowToken? = nil,
+        workspaceId: WorkspaceDescriptor.ID? = nil
+    ) -> Bool {
+        let changed = updateFocusSession(notify: false) { focus in
+            self.clearPendingManagedFocusRequest(
+                matching: token,
+                workspaceId: workspaceId,
+                focus: &focus
+            )
+        }
+
+        if changed {
+            notifySessionStateChanged()
+        }
+
+        return changed
+    }
+
+    @discardableResult
     func setManagedAppFullscreen(_ active: Bool) -> Bool {
         updateFocusSession(notify: true) { focus in
             var changed = false
@@ -321,17 +356,14 @@ final class WorkspaceManager {
             originalToken: originalToken,
             currentToken: token,
             workspaceId: workspaceId,
-            replacementDeadline: nil,
             exitRequestedByCommand: false,
-            transition: .enterRequested
+            transition: .enterRequested,
+            availability: .present,
+            unavailableSince: nil
         )
 
         if record.currentToken != token {
             record.currentToken = token
-            changed = true
-        }
-        if record.replacementDeadline != nil {
-            record.replacementDeadline = nil
             changed = true
         }
         if record.exitRequestedByCommand {
@@ -340,6 +372,14 @@ final class WorkspaceManager {
         }
         if record.transition != .enterRequested {
             record.transition = .enterRequested
+            changed = true
+        }
+        if record.availability != .present {
+            record.availability = .present
+            changed = true
+        }
+        if record.unavailableSince != nil {
+            record.unavailableSince = nil
             changed = true
         }
         if existing == nil || changed {
@@ -360,17 +400,14 @@ final class WorkspaceManager {
             originalToken: originalToken,
             currentToken: token,
             workspaceId: entry.workspaceId,
-            replacementDeadline: nil,
             exitRequestedByCommand: false,
-            transition: .suspended
+            transition: .suspended,
+            availability: .present,
+            unavailableSince: nil
         )
 
         if record.currentToken != token {
             record.currentToken = token
-            changed = true
-        }
-        if record.replacementDeadline != nil {
-            record.replacementDeadline = nil
             changed = true
         }
         if record.exitRequestedByCommand {
@@ -379,6 +416,14 @@ final class WorkspaceManager {
         }
         if record.transition != .suspended {
             record.transition = .suspended
+            changed = true
+        }
+        if record.availability != .present {
+            record.availability = .present
+            changed = true
+        }
+        if record.unavailableSince != nil {
+            record.unavailableSince = nil
             changed = true
         }
         if existing == nil || changed {
@@ -411,18 +456,15 @@ final class WorkspaceManager {
             originalToken: originalToken,
             currentToken: token,
             workspaceId: workspaceId,
-            replacementDeadline: nil,
             exitRequestedByCommand: initiatedByCommand,
-            transition: .exitRequested
+            transition: .exitRequested,
+            availability: .present,
+            unavailableSince: nil
         )
 
         var changed = existing == nil
         if record.currentToken != token {
             record.currentToken = token
-            changed = true
-        }
-        if record.replacementDeadline != nil {
-            record.replacementDeadline = nil
             changed = true
         }
         if record.exitRequestedByCommand != initiatedByCommand {
@@ -433,6 +475,14 @@ final class WorkspaceManager {
             record.transition = .exitRequested
             changed = true
         }
+        if record.availability != .present {
+            record.availability = .present
+            changed = true
+        }
+        if record.unavailableSince != nil {
+            record.unavailableSince = nil
+            changed = true
+        }
         if changed {
             upsertNativeFullscreenRecord(record)
         }
@@ -441,9 +491,9 @@ final class WorkspaceManager {
     }
 
     @discardableResult
-    func markNativeFullscreenAwaitingReplacement(
+    func markNativeFullscreenTemporarilyUnavailable(
         _ token: WindowToken,
-        replacementDeadline: Date
+        now: Date = Date()
     ) -> NativeFullscreenRecord? {
         guard let originalToken = nativeFullscreenOriginalToken(for: token),
               var record = nativeFullscreenRecordsByOriginalToken[originalToken]
@@ -455,25 +505,26 @@ final class WorkspaceManager {
             setLayoutReason(.nativeFullscreen, for: record.currentToken)
         }
 
-        record.transition = .awaitingReplacement
-        record.replacementDeadline = replacementDeadline
+        if record.currentToken != token {
+            record.currentToken = token
+        }
+        record.availability = .temporarilyUnavailable
+        if record.unavailableSince == nil {
+            record.unavailableSince = now
+        }
         upsertNativeFullscreenRecord(record)
         _ = setManagedAppFullscreen(false)
         return record
     }
 
-    func nativeFullscreenAwaitingReplacementCandidate(
+    func nativeFullscreenUnavailableCandidate(
         for pid: pid_t,
-        activeWorkspaceId: WorkspaceDescriptor.ID?,
-        now: Date = Date()
+        activeWorkspaceId: WorkspaceDescriptor.ID?
     ) -> NativeFullscreenRecord? {
         let candidates = nativeFullscreenRecordsByOriginalToken.values.filter { record in
             guard record.currentToken.pid == pid,
-                  record.transition == .awaitingReplacement
+                  record.availability == .temporarilyUnavailable
             else {
-                return false
-            }
-            if let deadline = record.replacementDeadline, deadline < now {
                 return false
             }
             return true
@@ -506,7 +557,6 @@ final class WorkspaceManager {
         }
         guard record.currentToken != newToken else { return false }
         record.currentToken = newToken
-        record.replacementDeadline = nil
         upsertNativeFullscreenRecord(record)
         return true
     }
@@ -540,13 +590,14 @@ final class WorkspaceManager {
     }
 
     @discardableResult
-    func expireNativeFullscreenAwaitingReplacementRecords(
-        now: Date = Date()
+    func expireStaleTemporarilyUnavailableNativeFullscreenRecords(
+        now: Date = Date(),
+        staleInterval: TimeInterval = staleUnavailableNativeFullscreenTimeout
     ) -> [WindowModel.Entry] {
         let expiredOriginalTokens = nativeFullscreenRecordsByOriginalToken.values.compactMap { record -> WindowToken? in
-            guard record.transition == .awaitingReplacement,
-                  let deadline = record.replacementDeadline,
-                  deadline < now
+            guard record.availability == .temporarilyUnavailable,
+                  let unavailableSince = record.unavailableSince,
+                  now.timeIntervalSince(unavailableSince) >= staleInterval
             else {
                 return nil
             }
@@ -687,7 +738,9 @@ final class WorkspaceManager {
             return confirmed
         }
 
-        return tiledEntries(in: workspaceId).first { !isHiddenInCorner($0.token) }?.token
+        return tiledEntries(in: workspaceId).first {
+            isFocusResolutionEligible($0, in: workspaceId, mode: .tiling)
+        }?.token
     }
 
     func resolveWorkspaceFocusToken(in workspaceId: WorkspaceDescriptor.ID) -> WindowToken? {
@@ -715,7 +768,9 @@ final class WorkspaceManager {
         ) {
             return confirmed
         }
-        return floatingEntries(in: workspaceId).first { !isHiddenInCorner($0.token) }?.token
+        return floatingEntries(in: workspaceId).first {
+            isFocusResolutionEligible($0, in: workspaceId, mode: .floating)
+        }?.token
     }
 
     @discardableResult
@@ -901,13 +956,33 @@ final class WorkspaceManager {
     ) -> WindowToken? {
         guard let token,
               let entry = entry(for: token),
-              entry.workspaceId == workspaceId,
-              entry.mode == mode,
-              !isHiddenInCorner(token)
+              isFocusResolutionEligible(entry, in: workspaceId, mode: mode)
         else {
             return nil
         }
         return token
+    }
+
+    private func isFocusResolutionEligible(
+        _ entry: WindowModel.Entry,
+        in workspaceId: WorkspaceDescriptor.ID,
+        mode: TrackedWindowMode
+    ) -> Bool {
+        guard entry.workspaceId == workspaceId,
+              entry.mode == mode
+        else {
+            return false
+        }
+
+        guard entry.hiddenProportionalPosition != nil else {
+            return true
+        }
+
+        if case .workspaceInactive = entry.hiddenReason {
+            return true
+        }
+
+        return false
     }
 
     private func setRememberedFocus(
@@ -1072,6 +1147,43 @@ final class WorkspaceManager {
             byName[key] = Monitor.sortedByPosition(byName[key] ?? [])
         }
         _monitorsByName = byName
+        invalidateWorkspaceProjectionCaches()
+    }
+
+    private func invalidateWorkspaceProjectionCaches() {
+        _cachedWorkspaceIdsByMonitor = nil
+        _cachedVisibleWorkspaceIds = nil
+        _cachedVisibleWorkspaceMap = nil
+        _cachedMonitorIdByVisibleWorkspace = nil
+    }
+
+    private func workspaceIdsByMonitor() -> [Monitor.ID: [WorkspaceDescriptor.ID]] {
+        if let cached = _cachedWorkspaceIdsByMonitor {
+            return cached
+        }
+
+        var workspaceIdsByMonitor: [Monitor.ID: [WorkspaceDescriptor.ID]] = [:]
+        for workspace in sortedWorkspaces() {
+            guard let monitorId = resolvedWorkspaceMonitorId(for: workspace.id) else { continue }
+            workspaceIdsByMonitor[monitorId, default: []].append(workspace.id)
+        }
+
+        _cachedWorkspaceIdsByMonitor = workspaceIdsByMonitor
+        return workspaceIdsByMonitor
+    }
+
+    private func visibleWorkspaceMap() -> [Monitor.ID: WorkspaceDescriptor.ID] {
+        if let cached = _cachedVisibleWorkspaceMap {
+            return cached
+        }
+
+        let visibleWorkspaceMap = activeVisibleWorkspaceMap(from: sessionState.monitorSessions)
+        _cachedVisibleWorkspaceMap = visibleWorkspaceMap
+        _cachedMonitorIdByVisibleWorkspace = Dictionary(
+            uniqueKeysWithValues: visibleWorkspaceMap.map { ($0.value, $0.key) }
+        )
+        _cachedVisibleWorkspaceIds = Set(visibleWorkspaceMap.values)
+        return visibleWorkspaceMap
     }
 
     var workspaces: [WorkspaceDescriptor] {
@@ -1096,9 +1208,7 @@ final class WorkspaceManager {
     }
 
     func workspaces(on monitorId: Monitor.ID) -> [WorkspaceDescriptor] {
-        sortedWorkspaces().filter { workspace in
-            workspaceMonitorId(for: workspace.id) == monitorId
-        }
+        workspaceIdsByMonitor()[monitorId]?.compactMap(descriptor(for:)) ?? []
     }
 
     func primaryWorkspace() -> WorkspaceDescriptor? {
@@ -1151,7 +1261,10 @@ final class WorkspaceManager {
     }
 
     func visibleWorkspaceIds() -> Set<WorkspaceDescriptor.ID> {
-        Set(activeVisibleWorkspaceMap().values)
+        if let cached = _cachedVisibleWorkspaceIds {
+            return cached
+        }
+        return Set(visibleWorkspaceMap().values)
     }
 
     private func adjacentWorkspaceInOrder(
@@ -1252,7 +1365,8 @@ final class WorkspaceManager {
         windowId: Int,
         to workspace: WorkspaceDescriptor.ID,
         mode: TrackedWindowMode = .tiling,
-        ruleEffects: ManagedWindowRuleEffects = .none
+        ruleEffects: ManagedWindowRuleEffects = .none,
+        managedReplacementMetadata: ManagedReplacementMetadata? = nil
     ) -> WindowToken {
         windows.upsert(
             window: ax,
@@ -1260,13 +1374,24 @@ final class WorkspaceManager {
             windowId: windowId,
             workspace: workspace,
             mode: mode,
-            ruleEffects: ruleEffects
+            ruleEffects: ruleEffects,
+            managedReplacementMetadata: managedReplacementMetadata
         )
     }
 
     @discardableResult
-    func rekeyWindow(from oldToken: WindowToken, to newToken: WindowToken, newAXRef: AXWindowRef) -> WindowModel.Entry? {
-        guard let entry = windows.rekeyWindow(from: oldToken, to: newToken, newAXRef: newAXRef) else {
+    func rekeyWindow(
+        from oldToken: WindowToken,
+        to newToken: WindowToken,
+        newAXRef: AXWindowRef,
+        managedReplacementMetadata: ManagedReplacementMetadata? = nil
+    ) -> WindowModel.Entry? {
+        guard let entry = windows.rekeyWindow(
+            from: oldToken,
+            to: newToken,
+            newAXRef: newAXRef,
+            managedReplacementMetadata: managedReplacementMetadata
+        ) else {
             return nil
         }
 
@@ -1274,7 +1399,6 @@ final class WorkspaceManager {
            var record = nativeFullscreenRecordsByOriginalToken[originalToken]
         {
             record.currentToken = newToken
-            record.replacementDeadline = nil
             upsertNativeFullscreenRecord(record)
         }
 
@@ -1545,6 +1669,10 @@ final class WorkspaceManager {
         windows.restoreFromNativeState(for: token)
     }
 
+    func isNativeFullscreenTemporarilyUnavailable(_ token: WindowToken) -> Bool {
+        nativeFullscreenRecord(for: token)?.availability == .temporarilyUnavailable
+    }
+
     private func nativeFullscreenOriginalToken(for token: WindowToken) -> WindowToken? {
         if nativeFullscreenRecordsByOriginalToken[token] != nil {
             return token
@@ -1725,6 +1853,7 @@ final class WorkspaceManager {
         if !toRemove.isEmpty {
             _cachedSortedWorkspaces = nil
             workspaceIdByName = workspaceIdByName.filter { !toRemove.contains($0.value) }
+            invalidateWorkspaceProjectionCaches()
             for monitorId in sessionState.monitorSessions.keys {
                 updateMonitorSession(monitorId) { session in
                     if let visibleWorkspaceId = session.visibleWorkspaceId,
@@ -1927,6 +2056,7 @@ final class WorkspaceManager {
 
         _cachedSortedWorkspaces = nil
         workspaceIdByName = workspaceIdByName.filter { !toRemove.contains($0.value) }
+        invalidateWorkspaceProjectionCaches()
 
         for monitorId in sessionState.monitorSessions.keys {
             updateMonitorSession(monitorId) { session in
@@ -2124,6 +2254,7 @@ final class WorkspaceManager {
         let previousMonitorSessions = sessionState.monitorSessions
         let mappingMonitorIds = Set(previousMonitorSessions.keys)
         sessionState.monitorSessions = previousMonitorSessions.filter { currentMonitorIds.contains($0.key) }
+        invalidateWorkspaceProjectionCaches()
         if currentMonitorIds != mappingMonitorIds {
             rearrangeWorkspacesOnMonitors(
                 previousMonitors: previousMonitors,
@@ -2186,6 +2317,7 @@ final class WorkspaceManager {
             pruned.visibleWorkspaceId = nil
             return pruned
         }
+        invalidateWorkspaceProjectionCaches()
 
         for newMonitor in sortedNewMonitors {
             if let oldId = newToOld[newMonitor.id],
@@ -2238,12 +2370,16 @@ final class WorkspaceManager {
         }
     }
 
-    private func workspaceMonitorId(for workspaceId: WorkspaceDescriptor.ID) -> Monitor.ID? {
+    private func resolvedWorkspaceMonitorId(for workspaceId: WorkspaceDescriptor.ID) -> Monitor.ID? {
         guard let workspace = descriptor(for: workspaceId) else { return nil }
         if configuredWorkspaceNames().contains(workspace.name) {
             return effectiveMonitor(for: workspaceId)?.id
         }
         return monitorIdShowingWorkspace(workspaceId)
+    }
+
+    private func workspaceMonitorId(for workspaceId: WorkspaceDescriptor.ID) -> Monitor.ID? {
+        resolvedWorkspaceMonitorId(for: workspaceId)
     }
 
     private func configuredMonitorDescriptions(for workspaceName: String) -> [MonitorDescription]? {
@@ -2350,6 +2486,7 @@ final class WorkspaceManager {
             workspaceIdByName[workspace.name] = workspaceId
             _cachedSortedWorkspaces = nil
         }
+        invalidateWorkspaceProjectionCaches()
     }
 
     private func createWorkspace(named name: String) -> WorkspaceDescriptor.ID? {
@@ -2360,11 +2497,12 @@ final class WorkspaceManager {
         workspacesById[workspace.id] = workspace
         workspaceIdByName[workspace.name] = workspace.id
         _cachedSortedWorkspaces = nil
+        invalidateWorkspaceProjectionCaches()
         return workspace.id
     }
 
     private func visibleWorkspaceId(on monitorId: Monitor.ID) -> WorkspaceDescriptor.ID? {
-        sessionState.monitorSessions[monitorId]?.visibleWorkspaceId
+        visibleWorkspaceMap()[monitorId]
     }
 
     private func previousVisibleWorkspaceId(on monitorId: Monitor.ID) -> WorkspaceDescriptor.ID? {
@@ -2372,11 +2510,15 @@ final class WorkspaceManager {
     }
 
     private func monitorIdShowingWorkspace(_ workspaceId: WorkspaceDescriptor.ID) -> Monitor.ID? {
-        sessionState.monitorSessions.first { $0.value.visibleWorkspaceId == workspaceId }?.key
+        if let cached = _cachedMonitorIdByVisibleWorkspace {
+            return cached[workspaceId]
+        }
+        _ = visibleWorkspaceMap()
+        return _cachedMonitorIdByVisibleWorkspace?[workspaceId]
     }
 
     private func activeVisibleWorkspaceMap() -> [Monitor.ID: WorkspaceDescriptor.ID] {
-        activeVisibleWorkspaceMap(from: sessionState.monitorSessions)
+        visibleWorkspaceMap()
     }
 
     private func activeVisibleWorkspaceMap(
@@ -2399,6 +2541,7 @@ final class WorkspaceManager {
         } else {
             sessionState.monitorSessions[monitorId] = monitorSession
         }
+        invalidateWorkspaceProjectionCaches()
     }
 
     @discardableResult

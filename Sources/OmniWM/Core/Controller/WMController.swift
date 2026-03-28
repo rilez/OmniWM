@@ -31,6 +31,13 @@ final class WMController {
         var isQueued: Bool = false
     }
 
+    struct StatusBarWorkspaceSummary: Equatable {
+        let monitorId: Monitor.ID
+        let workspaceLabel: String
+        let workspaceRawName: String
+        let focusedAppName: String?
+    }
+
     struct WindowDecisionEvaluation {
         let token: WindowToken
         let facts: WindowRuleFacts
@@ -52,7 +59,7 @@ final class WMController {
     var isLockScreenActive: Bool = false
     let axManager = AXManager()
     let appInfoCache = AppInfoCache()
-    let focusCoordinator: FocusOperationCoordinator
+    let focusBridge: FocusBridgeCoordinator
     let windowRuleEngine = WindowRuleEngine()
 
     var niriEngine: NiriLayoutEngine?
@@ -99,6 +106,7 @@ final class WMController {
     private(set) lazy var focusNotificationDispatcher = FocusNotificationDispatcher(controller: self)
     @ObservationIgnored
     private(set) lazy var borderCoordinator = BorderCoordinator(controller: self)
+    @ObservationIgnored
     var hasStartedServices = false
     @ObservationIgnored
     private(set) var isMouseWarpPolicyEnabled = false
@@ -111,6 +119,7 @@ final class WMController {
 
     let animationClock = AnimationClock()
     private let windowFocusOperations: WindowFocusOperations
+    weak var statusBarController: StatusBarController?
 
     init(
         settings: SettingsStore,
@@ -121,7 +130,7 @@ final class WMController {
         self.hiddenBarController = hiddenBarController ?? HiddenBarController(settings: settings)
         self.windowFocusOperations = windowFocusOperations
         workspaceManager = WorkspaceManager(settings: settings)
-        focusCoordinator = FocusOperationCoordinator()
+        focusBridge = FocusBridgeCoordinator()
         workspaceManager.updateAnimationClock(animationClock)
         hotkeys.onCommand = { [weak self] command in
             self?.commandHandler.handleCommand(command)
@@ -134,7 +143,7 @@ final class WMController {
             )
         }
         workspaceManager.onSessionStateChanged = { [weak self] in
-            self?.focusNotificationDispatcher.notifyFocusChangesIfNeeded()
+            self?.handleSessionStateChanged()
         }
     }
 
@@ -197,11 +206,13 @@ final class WMController {
         setQuakeTerminalEnabled(settings.quakeTerminalEnabled)
 
         setEnabled(true)
+        refreshStatusBar()
     }
 
     func applyCurrentAppearanceMode() {
         settings.appearanceMode.apply()
         workspaceBarManager.updateSettings()
+        statusBarController?.rebuildMenu()
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -301,7 +312,7 @@ final class WMController {
     func requestWorkspaceBarRefresh() {
         workspaceBarRefreshDebugState.requestCount += 1
 
-        guard workspaceBarRefreshIsEnabled else { return }
+        guard anyBarRefreshIsEnabled else { return }
         guard pendingWorkspaceBarRefreshGeneration == nil else { return }
 
         let generation = workspaceBarRefreshGeneration
@@ -309,10 +320,10 @@ final class WMController {
         workspaceBarRefreshDebugState.scheduledCount += 1
         workspaceBarRefreshDebugState.isQueued = true
 
-        DispatchQueue.main.async { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.flushRequestedWorkspaceBarRefresh(expectedGeneration: generation)
-            }
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            await Task.yield()
+            self?.flushRequestedWorkspaceBarRefresh(expectedGeneration: generation)
         }
     }
 
@@ -329,6 +340,34 @@ final class WMController {
 
     func isManagedWindowSuspendedForNativeFullscreen(_ token: WindowToken) -> Bool {
         workspaceManager.isNativeFullscreenSuspended(token)
+    }
+
+    func refreshStatusBar() {
+        statusBarController?.refreshWorkspaces()
+    }
+
+    func activeStatusBarWorkspaceSummary() -> StatusBarWorkspaceSummary? {
+        guard let monitor = monitorForInteraction(),
+              let workspace = workspaceManager.activeWorkspaceOrFirst(on: monitor.id)
+        else {
+            return nil
+        }
+
+        let focusedAppName: String? = if let focusedToken = workspaceManager.focusedToken,
+                                          let entry = workspaceManager.entry(for: focusedToken),
+                                          entry.workspaceId == workspace.id
+        {
+            resolvedAppInfo(for: entry.pid)?.name
+        } else {
+            nil
+        }
+
+        return StatusBarWorkspaceSummary(
+            monitorId: monitor.id,
+            workspaceLabel: settings.displayName(for: workspace.name),
+            workspaceRawName: workspace.name,
+            focusedAppName: focusedAppName
+        )
     }
 
     func updateWorkspaceBarSettings() {
@@ -476,6 +515,14 @@ final class WMController {
         settings.workspaceBarEnabled || settings.monitorBarSettings.contains(where: { $0.enabled == true })
     }
 
+    private var statusBarRefreshIsEnabled: Bool {
+        statusBarController != nil && settings.statusBarShowWorkspaceName
+    }
+
+    private var anyBarRefreshIsEnabled: Bool {
+        workspaceBarRefreshIsEnabled || statusBarRefreshIsEnabled
+    }
+
     private func flushRequestedWorkspaceBarRefresh(expectedGeneration: UInt64) {
         guard pendingWorkspaceBarRefreshGeneration == expectedGeneration,
               workspaceBarRefreshGeneration == expectedGeneration
@@ -486,11 +533,16 @@ final class WMController {
         pendingWorkspaceBarRefreshGeneration = nil
         workspaceBarRefreshDebugState.isQueued = false
 
-        guard workspaceBarRefreshIsEnabled else { return }
+        guard anyBarRefreshIsEnabled else { return }
 
         workspaceBarRefreshDebugState.executionCount += 1
         workspaceBarRefreshExecutionHookForTests?()
-        workspaceBarManager.update()
+        if workspaceBarRefreshIsEnabled {
+            workspaceBarManager.update()
+        }
+        if statusBarRefreshIsEnabled {
+            refreshStatusBar()
+        }
     }
 
     private func cancelPendingWorkspaceBarRefresh() {
@@ -621,6 +673,13 @@ final class WMController {
         return workspaceManager.monitors.first
     }
 
+    private func handleSessionStateChanged() {
+        focusNotificationDispatcher.notifyFocusChangesIfNeeded()
+        if statusBarRefreshIsEnabled {
+            refreshStatusBar()
+        }
+    }
+
     func activeWorkspace() -> WorkspaceDescriptor? {
         guard let monitor = monitorForInteraction() else { return nil }
         return workspaceManager.activeWorkspaceOrFirst(on: monitor.id)
@@ -701,9 +760,11 @@ final class WMController {
         return WindowDecision(
             disposition: manualOverride == .forceTile ? .managed : .floating,
             source: .manualOverride,
+            layoutDecisionKind: .explicitLayout,
             workspaceName: decision.workspaceName,
             ruleEffects: decision.ruleEffects,
-            heuristicReasons: []
+            heuristicReasons: [],
+            deferredReason: nil
         )
     }
 
@@ -959,7 +1020,7 @@ final class WMController {
         monitor: Monitor
     ) {
         if entry.workspaceId != workspaceId {
-            workspaceManager.setWorkspace(for: entry.token, to: workspaceId)
+            reassignManagedWindow(entry.token, to: workspaceId)
         }
         axManager.markWindowActive(entry.windowId)
 
@@ -1015,11 +1076,12 @@ final class WMController {
                 if applyFloatingFrame ?? shouldApplyFloatingFrameImmediately(for: entry.workspaceId) {
                     axManager.forceApplyNextFrame(for: entry.windowId)
                     axManager.applyFramesParallel([(entry.pid, entry.windowId, targetFrame)])
-                    borderCoordinator.updateBorderIfAllowed(
-                        token: token,
-                        frame: targetFrame,
-                        windowId: entry.windowId
-                    )
+                    if currentKeyboardFocusTargetForRendering()?.token == token {
+                        _ = renderKeyboardFocusBorder(
+                            preferredFrame: targetFrame,
+                            policy: .coordinated
+                        )
+                    }
                 }
             }
             return true
@@ -1177,6 +1239,9 @@ final class WMController {
             manualOverride: evaluation.manualOverride,
             disposition: evaluation.decision.disposition,
             source: evaluation.decision.source,
+            layoutDecisionKind: evaluation.decision.layoutDecisionKind,
+            deferredReason: evaluation.decision.deferredReason,
+            admissionOutcome: evaluation.decision.admissionOutcome,
             workspaceName: evaluation.decision.workspaceName,
             minWidth: evaluation.decision.ruleEffects.minWidth,
             minHeight: evaluation.decision.ruleEffects.minHeight,
@@ -1214,6 +1279,7 @@ final class WMController {
 
     private func resolveAXWindowRef(for token: WindowToken) -> AXWindowRef? {
         workspaceManager.entry(for: token)?.axRef
+            ?? axEventHandler.axWindowRefProvider?(UInt32(token.windowId), token.pid)
             ?? AXWindowService.axWindowRef(for: UInt32(token.windowId), pid: token.pid)
     }
 
@@ -1255,6 +1321,7 @@ final class WMController {
         }
 
         var relayoutNeeded = false
+        var affectedWorkspaceIds: Set<WorkspaceDescriptor.ID> = []
 
         for token in tokensToReevaluate.sorted(by: {
             if $0.pid == $1.pid {
@@ -1272,7 +1339,8 @@ final class WMController {
                 decision: evaluation.decision,
                 existingEntry: existingEntry
             ) else {
-                if existingEntry != nil {
+                if let existingEntry {
+                    affectedWorkspaceIds.insert(existingEntry.workspaceId)
                     _ = workspaceManager.removeWindow(pid: token.pid, windowId: token.windowId)
                     relayoutNeeded = true
                 }
@@ -1312,17 +1380,38 @@ final class WMController {
                 )
             }
 
+            if let updatedEntry = workspaceManager.entry(for: token) {
+                updatedEntry.managedReplacementMetadata = ManagedReplacementMetadata(
+                    bundleId: evaluation.facts.ax.bundleId ?? updatedEntry.managedReplacementMetadata?.bundleId,
+                    workspaceId: updatedEntry.workspaceId,
+                    mode: updatedEntry.mode,
+                    role: evaluation.facts.ax.role ?? updatedEntry.managedReplacementMetadata?.role,
+                    subrole: evaluation.facts.ax.subrole ?? updatedEntry.managedReplacementMetadata?.subrole,
+                    title: evaluation.facts.ax.title ?? updatedEntry.managedReplacementMetadata?.title,
+                    windowLevel: evaluation.facts.windowServer?.level ?? updatedEntry.managedReplacementMetadata?.windowLevel,
+                    parentWindowId: evaluation.facts.windowServer?.parentId ?? updatedEntry.managedReplacementMetadata?.parentWindowId,
+                    frame: evaluation.facts.windowServer?.frame ?? updatedEntry.managedReplacementMetadata?.frame
+                )
+            }
+
             if existingEntry == nil
                 || oldEffects != evaluation.decision.ruleEffects
                 || oldWorkspaceId != workspaceId
                 || oldMode != trackedMode
             {
+                if let oldWorkspaceId {
+                    affectedWorkspaceIds.insert(oldWorkspaceId)
+                }
+                affectedWorkspaceIds.insert(workspaceId)
                 relayoutNeeded = true
             }
         }
 
         if relayoutNeeded {
-            layoutRefreshController.requestRelayout(reason: .windowRuleReevaluation)
+            layoutRefreshController.requestRelayout(
+                reason: .windowRuleReevaluation,
+                affectedWorkspaceIds: affectedWorkspaceIds
+            )
         }
 
         return relayoutNeeded
@@ -1405,7 +1494,10 @@ final class WMController {
             existingEntry: entry
         ) else {
             _ = workspaceManager.removeWindow(pid: token.pid, windowId: token.windowId)
-            layoutRefreshController.requestRelayout(reason: .windowRuleReevaluation)
+            layoutRefreshController.requestRelayout(
+                reason: .windowRuleReevaluation,
+                affectedWorkspaceIds: [entry.workspaceId]
+            )
             return
         }
 
@@ -1415,7 +1507,10 @@ final class WMController {
             preferredMonitor: monitorForInteraction(),
             applyFloatingFrame: true
         )
-        layoutRefreshController.requestRelayout(reason: .windowRuleReevaluation)
+        layoutRefreshController.requestRelayout(
+            reason: .windowRuleReevaluation,
+            affectedWorkspaceIds: [entry.workspaceId]
+        )
     }
 
     func toggleScratchpadWindow() {
@@ -1481,6 +1576,19 @@ final class WMController {
         )
     }
 
+    func reassignManagedWindow(
+        _ token: WindowToken,
+        to workspaceId: WorkspaceDescriptor.ID
+    ) {
+        workspaceManager.setWorkspace(for: token, to: workspaceId)
+        guard let entry = workspaceManager.entry(for: token) else { return }
+        focusBridge.updateFocusedTargetWorkspace(
+            matching: token,
+            axRef: entry.axRef,
+            workspaceId: entry.workspaceId
+        )
+    }
+
     func recoverSourceFocusAfterMove(
         in workspaceId: WorkspaceDescriptor.ID,
         preferredNodeId: NodeId?
@@ -1506,6 +1614,30 @@ final class WMController {
     func ensureFocusedTokenValid(in workspaceId: WorkspaceDescriptor.ID) {
         guard !shouldSuppressManagedFocusRecovery else { return }
         guard !workspaceManager.hasPendingNativeFullscreenTransition else { return }
+
+        if let pendingFocusedToken = workspaceManager.pendingFocusedToken,
+           workspaceManager.pendingFocusedWorkspaceId == workspaceId
+        {
+            if let engine = niriEngine,
+               let node = engine.findNode(for: pendingFocusedToken)
+            {
+                _ = workspaceManager.commitWorkspaceSelection(
+                    nodeId: node.id,
+                    focusedToken: pendingFocusedToken,
+                    in: workspaceId,
+                    onMonitor: workspaceManager.monitorId(for: workspaceId)
+                )
+            } else {
+                _ = workspaceManager.applySessionPatch(
+                    .init(
+                        workspaceId: workspaceId,
+                        viewportState: nil,
+                        rememberedFocusToken: pendingFocusedToken
+                    )
+                )
+            }
+            return
+        }
 
         if let focusedToken = workspaceManager.focusedToken,
            workspaceManager.entry(for: focusedToken)?.workspaceId == workspaceId
@@ -1629,34 +1761,30 @@ extension WMController {
             in: entry.workspaceId,
             onMonitor: workspaceManager.monitorId(for: entry.workspaceId)
         )
+        let request = focusBridge.beginManagedRequest(
+            token: token,
+            workspaceId: entry.workspaceId
+        )
+        recordNiriCreateFocusTrace(
+            .pendingFocusStarted(
+                requestId: request.requestId,
+                token: token,
+                workspaceId: entry.workspaceId
+            )
+        )
 
         let axRef = entry.axRef
         let pid = entry.pid
         let windowId = entry.windowId
-        let moveMouseEnabled = moveMouseToFocusedWindowEnabled
 
-        focusCoordinator.focusWindow(
+        focusBridge.focusWindow(
             token,
             performFocus: {
-                // 1. Activate app first (brings process to front, may pick wrong key window)
                 self.performWindowFronting(pid: pid, windowId: windowId, axRef: axRef)
-
-                if moveMouseEnabled {
-                    self.moveMouseToWindow(token)
-                }
-
-                if let entry = self.workspaceManager.entry(for: token) {
-                    if let engine = self.niriEngine,
-                       let node = engine.findNode(for: token),
-                       let frame = node.renderedFrame ?? node.frame
-                    {
-                        self.borderCoordinator.updateBorderIfAllowed(token: token, frame: frame, windowId: entry.windowId)
-                    } else if let frame = self.axManager.lastAppliedFrame(for: entry.windowId) {
-                        self.borderCoordinator.updateBorderIfAllowed(token: token, frame: frame, windowId: entry.windowId)
-                    } else if let frame = try? AXWindowService.frame(entry.axRef) {
-                        self.borderCoordinator.updateBorderIfAllowed(token: token, frame: frame, windowId: entry.windowId)
-                    }
-                }
+                self.axEventHandler.probeFocusedWindowAfterFronting(
+                    expectedToken: token,
+                    workspaceId: entry.workspaceId
+                )
             },
             onDeferredFocus: { [weak self] deferred in
                 guard let self, self.workspaceManager.entry(for: deferred) != nil else { return }
@@ -1667,6 +1795,100 @@ extension WMController {
 
     func focusWindow(_ handle: WindowHandle) {
         focusWindow(handle.id)
+    }
+
+    func keyboardFocusTarget(for token: WindowToken, axRef: AXWindowRef) -> KeyboardFocusTarget {
+        if let entry = workspaceManager.entry(for: token) {
+            return KeyboardFocusTarget(
+                token: token,
+                axRef: entry.axRef,
+                workspaceId: entry.workspaceId,
+                isManaged: true
+            )
+        }
+
+        return KeyboardFocusTarget(
+            token: token,
+            axRef: axRef,
+            workspaceId: nil,
+            isManaged: false
+        )
+    }
+
+    func managedKeyboardFocusTarget(for token: WindowToken) -> KeyboardFocusTarget? {
+        guard let entry = workspaceManager.entry(for: token) else { return nil }
+        return KeyboardFocusTarget(
+            token: token,
+            axRef: entry.axRef,
+            workspaceId: entry.workspaceId,
+            isManaged: true
+        )
+    }
+
+    func currentKeyboardFocusTargetForRendering() -> KeyboardFocusTarget? {
+        if let focusedTarget = focusBridge.focusedTarget {
+            return focusedTarget
+        }
+
+        guard !workspaceManager.isNonManagedFocusActive,
+              let focusedToken = workspaceManager.focusedToken
+        else {
+            return nil
+        }
+
+        return managedKeyboardFocusTarget(for: focusedToken)
+    }
+
+    func preferredKeyboardFocusFrame(for token: WindowToken) -> CGRect? {
+        if let node = niriEngine?.findNode(for: token) {
+            return node.renderedFrame ?? node.frame
+        }
+        if let node = dwindleEngine?.findNode(for: token) {
+            return node.cachedFrame
+        }
+        if let floatingState = workspaceManager.floatingState(for: token) {
+            return floatingState.lastFrame
+        }
+        return nil
+    }
+
+    @discardableResult
+    func renderKeyboardFocusBorder(
+        for target: KeyboardFocusTarget? = nil,
+        preferredFrame: CGRect? = nil,
+        policy: KeyboardFocusBorderRenderPolicy = .coordinated
+    ) -> Bool {
+        borderCoordinator.renderBorder(
+            for: target ?? currentKeyboardFocusTargetForRendering(),
+            preferredFrame: preferredFrame,
+            policy: policy
+        )
+    }
+
+    @discardableResult
+    func reapplyKeyboardFocusBorderIfMatching(
+        token: WindowToken,
+        preferredFrame: CGRect? = nil,
+        phase: ManagedBorderReapplyPhase,
+        policy: KeyboardFocusBorderRenderPolicy = .direct
+    ) -> Bool {
+        guard currentKeyboardFocusTargetForRendering()?.token == token else { return false }
+        recordNiriCreateFocusTrace(.borderReapplied(token: token, phase: phase))
+        return renderKeyboardFocusBorder(preferredFrame: preferredFrame, policy: policy)
+    }
+
+    func clearKeyboardFocusTarget(
+        matching token: WindowToken? = nil,
+        pid: pid_t? = nil,
+        restoreCurrentBorder: Bool = false
+    ) {
+        focusBridge.clearFocusedTarget(matching: token, pid: pid)
+        guard restoreCurrentBorder else { return }
+        _ = renderKeyboardFocusBorder(policy: .direct)
+    }
+
+    func recordNiriCreateFocusTrace(_ kind: NiriCreateFocusTraceEvent.Kind) {
+        axEventHandler.recordNiriCreateFocusTrace(.init(kind: kind))
     }
 
     var isDiscoveryInProgress: Bool {

@@ -22,8 +22,15 @@ struct LayoutMonitorSnapshot {
     let orientation: Monitor.Orientation
 }
 
+struct WorkspaceRefreshInput {
+    let workspaceId: WorkspaceDescriptor.ID
+    let monitor: LayoutMonitorSnapshot
+    let windows: [LayoutWindowSnapshot]
+    let isActiveWorkspace: Bool
+}
+
 struct NiriWindowRemovalSeed {
-    let removedNodeId: NodeId?
+    let removedNodeIds: [NodeId]
     let oldFrames: [WindowToken: CGRect]
 }
 
@@ -34,6 +41,9 @@ struct NiriWorkspaceSnapshot {
     let viewportState: ViewportState
     let preferredFocusToken: WindowToken?
     let confirmedFocusedToken: WindowToken?
+    let pendingFocusedToken: WindowToken?
+    let pendingFocusedWorkspaceId: WorkspaceDescriptor.ID?
+    let isNonManagedFocusActive: Bool
     let hasCompletedInitialRefresh: Bool
     let useScrollAnimationPath: Bool
     let removalSeed: NiriWindowRemovalSeed?

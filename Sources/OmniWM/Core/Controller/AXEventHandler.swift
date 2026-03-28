@@ -1,6 +1,84 @@
 import AppKit
 import Foundation
 
+enum ActivationRetryReason: String, Equatable {
+    case missingFocusedWindow = "missing_focused_window"
+    case pendingFocusMismatch = "pending_focus_mismatch"
+    case pendingFocusUnmanagedToken = "pending_focus_unmanaged_token"
+    case retryExhausted = "retry_exhausted"
+}
+
+private enum ActivationRequestDisposition {
+    case matchesActiveRequest(ManagedFocusRequest)
+    case conflictsWithPendingRequest(ManagedFocusRequest)
+    case unrelatedNoRequest
+}
+
+enum ActivationCallOrigin: String {
+    case external
+    case probe
+    case retry
+}
+
+struct NiriCreateFocusTraceEvent: Equatable {
+    enum Kind: Equatable {
+        case createSeen(windowId: UInt32)
+        case createRetryScheduled(windowId: UInt32, pid: pid_t, attempt: Int)
+        case candidateTracked(token: WindowToken, workspaceId: WorkspaceDescriptor.ID)
+        case relayoutActivatedWindow(token: WindowToken, workspaceId: WorkspaceDescriptor.ID)
+        case pendingFocusStarted(requestId: UInt64, token: WindowToken, workspaceId: WorkspaceDescriptor.ID)
+        case activationSourceObserved(pid: pid_t, source: ActivationEventSource)
+        case activationDeferred(
+            requestId: UInt64,
+            token: WindowToken,
+            source: ActivationEventSource,
+            reason: ActivationRetryReason,
+            attempt: Int
+        )
+        case focusConfirmed(token: WindowToken, workspaceId: WorkspaceDescriptor.ID, source: ActivationEventSource)
+        case borderReapplied(token: WindowToken, phase: ManagedBorderReapplyPhase)
+        case nonManagedFallbackEntered(pid: pid_t, source: ActivationEventSource)
+    }
+
+    let timestamp: Date
+    let kind: Kind
+
+    init(
+        timestamp: Date = Date(),
+        kind: Kind
+    ) {
+        self.timestamp = timestamp
+        self.kind = kind
+    }
+}
+
+extension NiriCreateFocusTraceEvent: CustomStringConvertible {
+    var description: String {
+        switch kind {
+        case let .createSeen(windowId):
+            "create_seen window=\(windowId)"
+        case let .createRetryScheduled(windowId, pid, attempt):
+            "create_retry_scheduled window=\(windowId) pid=\(pid) attempt=\(attempt)"
+        case let .candidateTracked(token, workspaceId):
+            "candidate_tracked token=\(token) workspace=\(workspaceId.uuidString)"
+        case let .relayoutActivatedWindow(token, workspaceId):
+            "relayout_activated_window token=\(token) workspace=\(workspaceId.uuidString)"
+        case let .pendingFocusStarted(requestId, token, workspaceId):
+            "pending_focus_started request=\(requestId) token=\(token) workspace=\(workspaceId.uuidString)"
+        case let .activationSourceObserved(pid, source):
+            "activation_source_observed pid=\(pid) source=\(source.rawValue)"
+        case let .activationDeferred(requestId, token, source, reason, attempt):
+            "activation_deferred request=\(requestId) token=\(token) source=\(source.rawValue) reason=\(reason.rawValue) attempt=\(attempt)"
+        case let .focusConfirmed(token, workspaceId, source):
+            "focus_confirmed token=\(token) workspace=\(workspaceId.uuidString) source=\(source.rawValue)"
+        case let .borderReapplied(token, phase):
+            "border_reapplied token=\(token) phase=\(phase.rawValue)"
+        case let .nonManagedFallbackEntered(pid, source):
+            "non_managed_fallback_entered pid=\(pid) source=\(source.rawValue)"
+        }
+    }
+}
+
 @MainActor
 final class AXEventHandler: CGSEventDelegate {
     struct DebugCounters {
@@ -11,37 +89,47 @@ final class AXEventHandler: CGSEventDelegate {
     private struct PreparedCreate {
         let windowId: UInt32
         let token: WindowToken
-        let bundleId: String?
         let axRef: AXWindowRef
-        let workspaceId: WorkspaceDescriptor.ID
-        let mode: TrackedWindowMode
         let ruleEffects: ManagedWindowRuleEffects
+        let replacementMetadata: ManagedReplacementMetadata
+
+        var bundleId: String? { replacementMetadata.bundleId }
+        var workspaceId: WorkspaceDescriptor.ID { replacementMetadata.workspaceId }
+        var mode: TrackedWindowMode { replacementMetadata.mode }
     }
 
     private struct PreparedDestroy {
         let token: WindowToken
-        let bundleId: String?
-        let workspaceId: WorkspaceDescriptor.ID
+        let replacementMetadata: ManagedReplacementMetadata
+
+        var bundleId: String? { replacementMetadata.bundleId }
+        var workspaceId: WorkspaceDescriptor.ID { replacementMetadata.workspaceId }
+        var mode: TrackedWindowMode { replacementMetadata.mode }
     }
 
-    private struct GhosttyReplacementKey: Hashable {
+    private struct ManagedReplacementKey: Hashable {
         let pid: pid_t
         let workspaceId: WorkspaceDescriptor.ID
     }
 
-    private struct PendingGhosttyCreate {
+    private enum ManagedReplacementCorrelationPolicy {
+        case ghostty
+        case strictMetadata
+    }
+
+    private struct PendingManagedCreate {
         let sequence: UInt64
         let candidate: PreparedCreate
     }
 
-    private struct PendingGhosttyDestroy {
+    private struct PendingManagedDestroy {
         let sequence: UInt64
         let candidate: PreparedDestroy
     }
 
-    private enum PendingGhosttyEvent {
-        case create(PendingGhosttyCreate)
-        case destroy(PendingGhosttyDestroy)
+    private enum PendingManagedReplacementEvent {
+        case create(PendingManagedCreate)
+        case destroy(PendingManagedDestroy)
 
         var sequence: UInt64 {
             switch self {
@@ -51,48 +139,87 @@ final class AXEventHandler: CGSEventDelegate {
         }
     }
 
-    private struct PendingGhosttyReplacementBurst {
-        var creates: [PendingGhosttyCreate] = []
-        var destroys: [PendingGhosttyDestroy] = []
+    private struct PendingManagedReplacementBurst {
+        var creates: [PendingManagedCreate] = []
+        var destroys: [PendingManagedDestroy] = []
+        var ghosttyDestroyHoldCount = 0
 
-        mutating func append(create: PendingGhosttyCreate) {
+        mutating func append(create: PendingManagedCreate) {
             guard !creates.contains(where: { $0.candidate.token == create.candidate.token }) else { return }
             creates.append(create)
         }
 
-        mutating func append(destroy: PendingGhosttyDestroy) {
+        mutating func append(destroy: PendingManagedDestroy) {
             guard !destroys.contains(where: { $0.candidate.token == destroy.candidate.token }) else { return }
             destroys.append(destroy)
         }
 
-        var orderedEvents: [PendingGhosttyEvent] {
-            let events = creates.map(PendingGhosttyEvent.create) + destroys.map(PendingGhosttyEvent.destroy)
+        var orderedEvents: [PendingManagedReplacementEvent] {
+            let events = creates.map(PendingManagedReplacementEvent.create) + destroys.map(PendingManagedReplacementEvent.destroy)
             return events.sorted { $0.sequence < $1.sequence }
         }
 
-        var hasSingleReplacementPair: Bool {
-            creates.count == 1 && destroys.count == 1
+        func orderedEvents(excludingSequences sequences: Set<UInt64>) -> [PendingManagedReplacementEvent] {
+            orderedEvents.filter { !sequences.contains($0.sequence) }
+        }
+    }
+
+    private struct MatchedManagedReplacementPair {
+        let destroy: PendingManagedDestroy
+        let create: PendingManagedCreate
+
+        var excludedSequences: Set<UInt64> {
+            [destroy.sequence, create.sequence]
         }
     }
 
     private static let ghosttyBundleId = "com.mitchellh.ghostty"
-    private static let ghosttyReplacementGraceDelay: Duration = .milliseconds(150)
-    private static let nativeFullscreenReplacementGraceDelay: Duration = .seconds(1)
+    private static let replacementCorrelationBundleIds: Set<String> = [
+        ghosttyBundleId,
+        "com.apple.safari",
+        "com.brave.browser",
+        "com.google.chrome",
+        "com.microsoft.edgemac",
+        "com.vivaldi.vivaldi",
+        "company.thebrowser.browser",
+        "company.thebrowser.dia",
+        "org.mozilla.firefox",
+        "app.zen-browser.zen"
+    ]
+    private static let managedReplacementGraceDelay: Duration = .milliseconds(150)
+    private static let nativeFullscreenFollowupDelay: Duration = .seconds(1)
+    private static let nativeFullscreenStaleCleanupDelay: Duration = .seconds(
+        Int64(WorkspaceManager.staleUnavailableNativeFullscreenTimeout)
+    )
+    private static let stabilizationRetryDelay: Duration = .milliseconds(100)
+    private static let createdWindowRetryLimit = 5
+    private static let activationRetryLimit = 5
+    private static let createFocusTraceLimit = 128
+    private static let createFocusTraceLoggingEnabled =
+        ProcessInfo.processInfo.environment["OMNIWM_DEBUG_NIRI_CREATE_FOCUS"] == "1"
 
     weak var controller: WMController?
     private var deferredCreatedWindowIds: Set<UInt32> = []
     private var deferredCreatedWindowOrder: [UInt32] = []
-    private var pendingGhosttyReplacementBursts: [GhosttyReplacementKey: PendingGhosttyReplacementBurst] = [:]
-    private var pendingGhosttyReplacementTasks: [GhosttyReplacementKey: Task<Void, Never>] = [:]
-    private var pendingNativeFullscreenReplacementTasks: [WindowToken: Task<Void, Never>] = [:]
+    private var pendingManagedReplacementBursts: [ManagedReplacementKey: PendingManagedReplacementBurst] = [:]
+    private var pendingManagedReplacementTasks: [ManagedReplacementKey: Task<Void, Never>] = [:]
+    private var pendingNativeFullscreenFollowupTasks: [WindowToken: Task<Void, Never>] = [:]
+    private var pendingNativeFullscreenStaleCleanupTasks: [WindowToken: Task<Void, Never>] = [:]
     private var pendingWindowRuleReevaluationTask: Task<Void, Never>?
     private var pendingWindowRuleReevaluationTargets: Set<WindowRuleReevaluationTarget> = []
-    private var nextGhosttyEventSequence: UInt64 = 0
+    private var pendingWindowStabilizationTasks: [WindowToken: Task<Void, Never>] = [:]
+    private var pendingCreatedWindowRetryTasks: [UInt32: Task<Void, Never>] = [:]
+    private var createdWindowRetryCountById: [UInt32: Int] = [:]
+    private var pendingActivationRetryTask: Task<Void, Never>?
+    private var pendingActivationRetryRequestId: UInt64?
+    private var createFocusTrace: [NiriCreateFocusTraceEvent] = []
+    private var nextManagedReplacementEventSequence: UInt64 = 0
     var windowInfoProvider: ((UInt32) -> WindowServerInfo?)?
     var axWindowRefProvider: ((UInt32, pid_t) -> AXWindowRef?)?
     var bundleIdProvider: ((pid_t) -> String?)?
     var windowSubscriptionHandler: (([UInt32]) -> Void)?
     var focusedWindowValueProvider: ((pid_t) -> CFTypeRef?)?
+    var focusedWindowRefProvider: ((pid_t) -> AXWindowRef?)?
     var windowFactsProvider: ((AXWindowRef, pid_t) -> WindowRuleFacts?)?
     var frameProvider: ((AXWindowRef) -> CGRect?)?
     var fastFrameProvider: ((AXWindowRef) -> CGRect?)?
@@ -111,8 +238,11 @@ final class AXEventHandler: CGSEventDelegate {
     }
 
     func cleanup() {
-        resetGhosttyReplacementState()
+        resetManagedReplacementState()
         resetNativeFullscreenReplacementState()
+        resetWindowStabilizationState()
+        resetCreatedWindowRetryState()
+        resetActivationRetryState()
         pendingWindowRuleReevaluationTask?.cancel()
         pendingWindowRuleReevaluationTask = nil
         pendingWindowRuleReevaluationTargets.removeAll()
@@ -137,11 +267,13 @@ final class AXEventHandler: CGSEventDelegate {
             handleFrameChanged(windowId: windowId)
 
         case let .frontAppChanged(pid):
-            handleAppActivation(pid: pid)
+            handleAppActivation(pid: pid, source: .cgsFrontAppChanged)
 
         case let .titleChanged(windowId):
+            AXWindowService.invalidateCachedTitle(windowId: windowId)
             controller.requestWorkspaceBarRefresh()
             if let token = resolveWindowToken(windowId) ?? resolveTrackedToken(windowId) {
+                updateManagedReplacementTitle(windowId: windowId, token: token)
                 scheduleWindowRuleReevaluationIfNeeded(targets: [.window(token)])
             }
         }
@@ -177,6 +309,11 @@ final class AXEventHandler: CGSEventDelegate {
     }
 
     private func handleCGSWindowCreated(windowId: UInt32) {
+        recordNiriCreateFocusTrace(.init(kind: .createSeen(windowId: windowId)))
+        processCreatedWindow(windowId: windowId)
+    }
+
+    private func processCreatedWindow(windowId: UInt32) {
         guard let controller else { return }
         if controller.isDiscoveryInProgress {
             deferCreatedWindow(windowId)
@@ -189,13 +326,18 @@ final class AXEventHandler: CGSEventDelegate {
             windowInfo: windowInfo
         ) else {
             if let windowInfo {
+                _ = scheduleCreatedWindowRetryIfNeeded(
+                    windowId: windowId,
+                    pid: pid_t(windowInfo.pid)
+                )
                 scheduleWindowRuleReevaluationIfNeeded(targets: [.pid(pid_t(windowInfo.pid))])
             }
             return
         }
 
-        if shouldDelayGhosttyLifecycle(for: candidate.token.pid, bundleId: candidate.bundleId) {
-            enqueueGhosttyCreate(candidate)
+        cancelCreatedWindowRetry(windowId: windowId)
+        if shouldDelayManagedReplacementCreate(candidate) {
+            enqueueManagedReplacementCreate(candidate)
             return
         }
 
@@ -204,11 +346,51 @@ final class AXEventHandler: CGSEventDelegate {
 
     func resetDebugStateForTests() {
         debugCounters = .init()
-        resetGhosttyReplacementState()
+        resetManagedReplacementState()
         resetNativeFullscreenReplacementState()
+        resetWindowStabilizationState()
+        resetCreatedWindowRetryState()
+        resetActivationRetryState()
+        controller?.focusBridge.reset()
+        createFocusTrace.removeAll(keepingCapacity: true)
         pendingWindowRuleReevaluationTask?.cancel()
         pendingWindowRuleReevaluationTask = nil
         pendingWindowRuleReevaluationTargets.removeAll()
+    }
+
+    func probeFocusedWindowAfterFronting(
+        expectedToken: WindowToken,
+        workspaceId _: WorkspaceDescriptor.ID
+    ) {
+        let requestId = controller?.focusBridge.activeManagedRequest(for: expectedToken)?.requestId
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let requestId,
+               self.controller?.focusBridge.activeManagedRequest(requestId: requestId) == nil
+            {
+                return
+            }
+            self.handleAppActivation(
+                pid: expectedToken.pid,
+                source: .focusedWindowChanged,
+                origin: .probe
+            )
+        }
+    }
+
+    func niriCreateFocusTraceSnapshotForTests() -> [NiriCreateFocusTraceEvent] {
+        createFocusTrace
+    }
+
+    func recordNiriCreateFocusTrace(_ event: NiriCreateFocusTraceEvent) {
+        if createFocusTrace.count == Self.createFocusTraceLimit {
+            createFocusTrace.removeFirst()
+        }
+        createFocusTrace.append(event)
+
+        if Self.createFocusTraceLoggingEnabled {
+            fputs("[NiriCreateFocus] \(event.description)\n", stderr)
+        }
     }
 
     private func handleFrameChanged(windowId: UInt32) {
@@ -216,11 +398,11 @@ final class AXEventHandler: CGSEventDelegate {
         guard let token = resolveTrackedToken(windowId) else { return }
         guard let entry = controller.workspaceManager.entry(for: token) else { return }
 
-        updateFocusedBorderForFrameChange(token: token)
-
         guard isWindowDisplayable(token: token) else {
             return
         }
+
+        updateFocusedBorderForFrameChange(token: token)
 
         if entry.mode == .floating {
             if let frame = frameProvider?(entry.axRef)
@@ -244,7 +426,8 @@ final class AXEventHandler: CGSEventDelegate {
 
     private func updateFocusedBorderForFrameChange(token: WindowToken) {
         guard let controller else { return }
-        guard controller.workspaceManager.focusedToken == token,
+        guard let target = controller.currentKeyboardFocusTargetForRendering(),
+              target.token == token,
               let entry = controller.workspaceManager.entry(for: token)
         else { return }
 
@@ -253,11 +436,18 @@ final class AXEventHandler: CGSEventDelegate {
             ?? AXWindowService.framePreferFast(entry.axRef)
             ?? (try? AXWindowService.frame(entry.axRef))
         {
-            controller.borderCoordinator.updateBorderIfAllowed(token: token, frame: frame, windowId: entry.windowId)
+            updateManagedReplacementFrame(frame, for: entry)
+            _ = controller.renderKeyboardFocusBorder(
+                for: target,
+                preferredFrame: frame,
+                policy: .coordinated
+            )
         }
     }
 
     private func handleCGSWindowDestroyed(windowId: UInt32) {
+        AXWindowService.invalidateCachedTitle(windowId: windowId)
+        cancelCreatedWindowRetry(windowId: windowId)
         removeDeferredCreatedWindow(windowId)
         handleWindowDestroyed(windowId: windowId, pidHint: nil)
     }
@@ -289,14 +479,34 @@ final class AXEventHandler: CGSEventDelegate {
                 windowId: windowId,
                 windowInfo: resolveWindowInfo(windowId)
             ) else {
+                if let windowInfo = resolveWindowInfo(windowId) {
+                    _ = scheduleCreatedWindowRetryIfNeeded(
+                        windowId: windowId,
+                        pid: pid_t(windowInfo.pid)
+                    )
+                }
                 continue
             }
-            trackPreparedCreate(candidate)
+            cancelCreatedWindowRetry(windowId: windowId)
+            if shouldDelayManagedReplacementCreate(candidate) {
+                enqueueManagedReplacementCreate(candidate)
+            } else {
+                trackPreparedCreate(candidate)
+            }
         }
     }
 
     private func trackPreparedCreate(_ candidate: PreparedCreate) {
         guard let controller else { return }
+        cancelCreatedWindowRetry(windowId: candidate.windowId)
+        recordNiriCreateFocusTrace(
+            .init(
+                kind: .candidateTracked(
+                    token: candidate.token,
+                    workspaceId: candidate.workspaceId
+                )
+            )
+        )
 
         if restoreNativeFullscreenReplacementIfNeeded(
             token: candidate.token,
@@ -309,50 +519,133 @@ final class AXEventHandler: CGSEventDelegate {
             return
         }
 
-        if candidate.workspaceId != controller.activeWorkspace()?.id {
-            if let monitor = controller.workspaceManager.monitor(for: candidate.workspaceId),
-               controller.workspaceManager.workspaces(on: monitor.id)
-               .contains(where: { $0.id == candidate.workspaceId })
-            {
-                _ = controller.workspaceManager.setActiveWorkspace(candidate.workspaceId, on: monitor.id)
-            }
-        }
-
         _ = controller.workspaceManager.addWindow(
             candidate.axRef,
             pid: candidate.token.pid,
             windowId: candidate.token.windowId,
             to: candidate.workspaceId,
             mode: candidate.mode,
-            ruleEffects: candidate.ruleEffects
+            ruleEffects: candidate.ruleEffects,
+            managedReplacementMetadata: candidate.replacementMetadata
         )
 
+        var floatingTargetFrame: CGRect?
         if candidate.mode == .floating,
            let frame = frameProvider?(candidate.axRef)
             ?? fastFrameProvider?(candidate.axRef)
             ?? AXWindowService.framePreferFast(candidate.axRef)
             ?? (try? AXWindowService.frame(candidate.axRef))
         {
+            if let entry = controller.workspaceManager.entry(for: candidate.token) {
+                updateManagedReplacementFrame(frame, for: entry)
+            }
             controller.workspaceManager.updateFloatingGeometry(
                 frame: frame,
                 for: candidate.token,
                 referenceMonitor: controller.workspaceManager.monitor(for: candidate.workspaceId)
             )
+            floatingTargetFrame = controller.workspaceManager.resolvedFloatingFrame(
+                for: candidate.token,
+                preferredMonitor: controller.workspaceManager.monitor(for: candidate.workspaceId)
+            )
+        }
+
+        if let floatingTargetFrame,
+           shouldApplyFloatingCreateFrameImmediately(for: candidate.workspaceId)
+        {
+            scheduleFloatingCreateFrameApplication(
+                floatingTargetFrame,
+                for: candidate
+            )
+        } else {
+            scheduleAXContextWarmup(for: candidate.token.pid)
+        }
+
+        controller.layoutRefreshController.requestRelayout(
+            reason: .axWindowCreated,
+            affectedWorkspaceIds: [candidate.workspaceId]
+        )
+        scheduleWindowRuleReevaluationIfNeeded(targets: [.pid(candidate.token.pid)])
+    }
+
+    private func shouldApplyFloatingCreateFrameImmediately(
+        for workspaceId: WorkspaceDescriptor.ID
+    ) -> Bool {
+        guard let controller,
+              let monitor = controller.workspaceManager.monitor(for: workspaceId)
+        else {
+            return false
+        }
+        return controller.workspaceManager.activeWorkspace(on: monitor.id)?.id == workspaceId
+    }
+
+    private func scheduleAXContextWarmup(for pid: pid_t) {
+        Task { @MainActor [weak self] in
+            await self?.warmAXContextIfNeeded(for: pid)
+        }
+    }
+
+    private func warmAXContextIfNeeded(for pid: pid_t) async {
+        guard let controller,
+              let app = NSRunningApplication(processIdentifier: pid)
+        else {
+            return
+        }
+        _ = await controller.axManager.windowsForApp(app)
+    }
+
+    private func scheduleFloatingCreateFrameApplication(
+        _ targetFrame: CGRect,
+        for candidate: PreparedCreate
+    ) {
+        guard let controller else { return }
+        let windowId = Int(candidate.windowId)
+        let canApplySynchronously = controller.axManager.hasContext(for: candidate.token.pid)
+            || controller.axManager.usesFrameApplyOverrideForTests
+
+        if canApplySynchronously {
+            applyFloatingCreateFrame(targetFrame, for: candidate)
+            if controller.axManager.recentFrameWriteFailure(for: windowId) == .contextUnavailable {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.warmAXContextIfNeeded(for: candidate.token.pid)
+                    self.applyFloatingCreateFrame(targetFrame, for: candidate)
+                }
+            }
+            return
         }
 
         Task { @MainActor [weak self] in
-            guard let self, let controller = self.controller else { return }
-            if let app = NSRunningApplication(processIdentifier: candidate.token.pid) {
-                _ = await controller.axManager.windowsForApp(app)
+            guard let self else { return }
+            await self.warmAXContextIfNeeded(for: candidate.token.pid)
+            self.applyFloatingCreateFrame(targetFrame, for: candidate)
+            if self.controller?.axManager.recentFrameWriteFailure(for: windowId) == .contextUnavailable {
+                await self.warmAXContextIfNeeded(for: candidate.token.pid)
+                self.applyFloatingCreateFrame(targetFrame, for: candidate)
             }
         }
+    }
 
-        controller.layoutRefreshController.requestRelayout(reason: .axWindowCreated)
-        scheduleWindowRuleReevaluationIfNeeded(targets: [.pid(candidate.token.pid)])
+    private func applyFloatingCreateFrame(
+        _ targetFrame: CGRect,
+        for candidate: PreparedCreate
+    ) {
+        guard let controller,
+              controller.workspaceManager.entry(for: candidate.token) != nil,
+              shouldApplyFloatingCreateFrameImmediately(for: candidate.workspaceId)
+        else {
+            return
+        }
+
+        let windowId = Int(candidate.windowId)
+        controller.axManager.forceApplyNextFrame(for: windowId)
+        controller.axManager.applyFramesParallel([(candidate.token.pid, windowId, targetFrame)])
     }
 
     func handleRemoved(pid: pid_t, winId: Int) {
         guard let windowId = UInt32(exactly: winId) else { return }
+        AXWindowService.invalidateCachedTitle(windowId: windowId)
+        cancelCreatedWindowRetry(windowId: windowId)
         removeDeferredCreatedWindow(windowId)
         handleWindowDestroyed(windowId: windowId, pidHint: pid)
     }
@@ -364,8 +657,24 @@ final class AXEventHandler: CGSEventDelegate {
         let removedHandle = entry?.handle
 
         if let removed = removedHandle {
-            controller.focusCoordinator.discardPendingFocus(removed.id)
+            controller.focusBridge.discardPendingFocus(removed.id)
         }
+
+        let canceledRequest = controller.focusBridge.cancelManagedRequest(
+            matching: token,
+            workspaceId: affectedWorkspaceId
+        )
+        _ = controller.workspaceManager.cancelManagedFocusRequest(
+            matching: token,
+            workspaceId: affectedWorkspaceId
+        )
+        if let canceledRequest {
+            cancelActivationRetry(requestId: canceledRequest.requestId)
+        }
+        controller.clearKeyboardFocusTarget(
+            matching: token,
+            restoreCurrentBorder: false
+        )
 
         if handleNativeFullscreenDestroy(token) {
             return
@@ -406,6 +715,7 @@ final class AXEventHandler: CGSEventDelegate {
 
         _ = controller.workspaceManager.removeWindow(pid: token.pid, windowId: token.windowId)
         controller.clearManualWindowOverride(for: token)
+        _ = controller.renderKeyboardFocusBorder(policy: .direct)
 
         if let wsId = affectedWorkspaceId {
             controller.layoutRefreshController.requestWindowRemoval(
@@ -419,11 +729,30 @@ final class AXEventHandler: CGSEventDelegate {
         scheduleWindowRuleReevaluationIfNeeded(targets: [.pid(token.pid)])
     }
 
-    func handleAppActivation(pid: pid_t) {
+    func handleAppActivation(
+        pid: pid_t,
+        source: ActivationEventSource = .workspaceDidActivateApplication,
+        origin: ActivationCallOrigin = .external
+    ) {
         guard let controller else { return }
+        recordNiriCreateFocusTrace(
+            .init(
+                kind: .activationSourceObserved(
+                    pid: pid,
+                    source: source
+                )
+            )
+        )
         guard controller.hasStartedServices else { return }
 
+        let activeRequest = controller.focusBridge.activeManagedRequest
+
         if pid == getpid(), (controller.hasFrontmostOwnedWindow || controller.hasVisibleOwnedWindow) {
+            if let activeRequest, activeRequest.token.pid == pid {
+                _ = controller.focusBridge.cancelManagedRequest(requestId: activeRequest.requestId)
+                cancelActivationRetry(requestId: activeRequest.requestId)
+            }
+            controller.clearKeyboardFocusTarget(pid: pid)
             _ = controller.workspaceManager.enterNonManagedFocus(
                 appFullscreen: false,
                 preserveFocusedToken: true
@@ -432,9 +761,21 @@ final class AXEventHandler: CGSEventDelegate {
             return
         }
 
-        guard let axRef = resolveFocusedAXWindowRef(pid: pid) else {
-            _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: false)
-            controller.borderManager.hideBorder()
+        let axRef = resolveFocusedAXWindowRef(pid: pid)
+        let observedToken = axRef.map { WindowToken(pid: pid, windowId: $0.windowId) }
+        let requestDisposition = activationRequestDisposition(
+            for: pid,
+            token: observedToken,
+            activeRequest: activeRequest
+        )
+
+        guard let axRef else {
+            handleMissingFocusedWindow(
+                pid: pid,
+                source: source,
+                origin: origin,
+                requestDisposition: requestDisposition
+            )
             return
         }
         let token = WindowToken(pid: pid, windowId: axRef.windowId)
@@ -454,10 +795,28 @@ final class AXEventHandler: CGSEventDelegate {
                 controller.workspaceManager.activeWorkspace(on: monitor.id)?.id == wsId
             } ?? false
 
+            switch requestDisposition {
+            case .matchesActiveRequest:
+                break
+            case let .conflictsWithPendingRequest(request):
+                continueManagedFocusRequest(
+                    request,
+                    source: source,
+                    origin: origin,
+                    reason: .pendingFocusMismatch
+                )
+                return
+            case .unrelatedNoRequest:
+                guard source.isAuthoritative || isWorkspaceActive else { return }
+            }
+
             handleManagedAppActivation(
                 entry: entry,
                 isWorkspaceActive: isWorkspaceActive,
-                appFullscreen: appFullscreen
+                appFullscreen: appFullscreen,
+                source: source,
+                confirmRequest: true,
+                origin: origin
             )
             return
         }
@@ -477,22 +836,68 @@ final class AXEventHandler: CGSEventDelegate {
                 controller.workspaceManager.activeWorkspace(on: monitor.id)?.id == wsId
             } ?? false
 
+            switch requestDisposition {
+            case .matchesActiveRequest:
+                break
+            case let .conflictsWithPendingRequest(request):
+                continueManagedFocusRequest(
+                    request,
+                    source: source,
+                    origin: origin,
+                    reason: .pendingFocusMismatch
+                )
+                return
+            case .unrelatedNoRequest:
+                guard source.isAuthoritative || isWorkspaceActive else { return }
+            }
+
             handleManagedAppActivation(
                 entry: restoredEntry,
                 isWorkspaceActive: isWorkspaceActive,
-                appFullscreen: appFullscreen
+                appFullscreen: appFullscreen,
+                source: source,
+                confirmRequest: true,
+                origin: origin
             )
             return
         }
 
-        _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: appFullscreen)
-        controller.borderManager.hideBorder()
+        switch requestDisposition {
+        case let .matchesActiveRequest(request), let .conflictsWithPendingRequest(request):
+            continueManagedFocusRequest(
+                request,
+                source: source,
+                origin: origin,
+                reason: .pendingFocusUnmanagedToken
+            )
+            return
+        case .unrelatedNoRequest:
+            let target = controller.keyboardFocusTarget(for: token, axRef: axRef)
+            controller.focusBridge.setFocusedTarget(target)
+            let fallbackFullscreen = appFullscreenForFallbackLifecyclePreservation(
+                observedAppFullscreen: appFullscreen
+            )
+            _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: fallbackFullscreen)
+            _ = controller.renderKeyboardFocusBorder(for: target, policy: .direct)
+        }
+
+        recordNiriCreateFocusTrace(
+            .init(
+                kind: .nonManagedFallbackEntered(
+                    pid: pid,
+                    source: source
+                )
+            )
+        )
     }
 
     func handleManagedAppActivation(
         entry: WindowModel.Entry,
         isWorkspaceActive: Bool,
-        appFullscreen: Bool
+        appFullscreen: Bool,
+        source: ActivationEventSource = .focusedWindowChanged,
+        confirmRequest: Bool? = nil,
+        origin: ActivationCallOrigin = .external
     ) {
         guard let controller else { return }
         if appFullscreen {
@@ -504,46 +909,100 @@ final class AXEventHandler: CGSEventDelegate {
         let wsId = entry.workspaceId
         let monitorId = controller.workspaceManager.monitorId(for: wsId)
         let shouldActivateWorkspace = !isWorkspaceActive && !controller.isTransferringWindow
+        let activeRequest = controller.focusBridge.activeManagedRequest(for: entry.pid)
+        let shouldConfirmRequest = confirmRequest ?? (activeRequest?.token == entry.token || activeRequest == nil)
+        let preservePendingSelection = !shouldConfirmRequest && activeRequest != nil
 
-        _ = controller.workspaceManager.confirmManagedFocus(
-            entry.token,
-            in: wsId,
-            onMonitor: monitorId,
-            appFullscreen: appFullscreen,
-            activateWorkspaceOnMonitor: shouldActivateWorkspace
-        )
+        if shouldConfirmRequest {
+            _ = controller.workspaceManager.confirmManagedFocus(
+                entry.token,
+                in: wsId,
+                onMonitor: monitorId,
+                appFullscreen: appFullscreen,
+                activateWorkspaceOnMonitor: shouldActivateWorkspace
+            )
+            if let confirmedRequest = controller.focusBridge.confirmManagedRequest(
+                token: entry.token,
+                source: source
+            ) {
+                cancelActivationRetry(requestId: confirmedRequest.requestId)
+                recordNiriCreateFocusTrace(
+                    .init(
+                        kind: .focusConfirmed(
+                            token: entry.token,
+                            workspaceId: wsId,
+                            source: source
+                        )
+                    )
+                )
+            }
+        } else {
+            _ = controller.workspaceManager.setManagedFocus(
+                entry.token,
+                in: wsId,
+                onMonitor: monitorId
+            )
+        }
+
+        let target = controller.keyboardFocusTarget(for: entry.token, axRef: entry.axRef)
+        controller.focusBridge.setFocusedTarget(target)
 
         if let engine = controller.niriEngine,
            let node = engine.findNode(for: entry.handle),
            let _ = controller.workspaceManager.monitor(for: wsId)
         {
-            var state = controller.workspaceManager.niriViewportState(for: wsId)
-            controller.niriLayoutHandler.activateNode(
-                node, in: wsId, state: &state,
-                options: .init(layoutRefresh: isWorkspaceActive, axFocus: false)
-            )
-            _ = controller.workspaceManager.applySessionPatch(
-                .init(
-                    workspaceId: wsId,
-                    viewportState: state,
-                    rememberedFocusToken: nil
+            if !preservePendingSelection {
+                var state = controller.workspaceManager.niriViewportState(for: wsId)
+                controller.niriLayoutHandler.activateNode(
+                    node, in: wsId, state: &state,
+                    options: .init(layoutRefresh: isWorkspaceActive, axFocus: false)
                 )
-            )
-
-            if let frame = node.renderedFrame ?? node.frame {
-                controller.borderCoordinator.updateBorderIfAllowed(handle: entry.handle, frame: frame, windowId: entry.windowId)
-            } else if let frame = try? AXWindowService.frame(entry.axRef) {
-                controller.borderCoordinator.updateBorderIfAllowed(handle: entry.handle, frame: frame, windowId: entry.windowId)
+                _ = controller.workspaceManager.applySessionPatch(
+                    .init(
+                        workspaceId: wsId,
+                        viewportState: state,
+                        rememberedFocusToken: nil
+                    )
+                )
             }
-        } else if let frame = try? AXWindowService.frame(entry.axRef) {
-            controller.borderCoordinator.updateBorderIfAllowed(handle: entry.handle, frame: frame, windowId: entry.windowId)
+
+            _ = controller.renderKeyboardFocusBorder(
+                for: target,
+                preferredFrame: node.renderedFrame ?? node.frame,
+                policy: .direct
+            )
+        } else {
+            _ = controller.renderKeyboardFocusBorder(
+                for: target,
+                policy: .direct
+            )
         }
+
+        if !shouldConfirmRequest,
+           let activeRequest,
+           activeRequest.token != entry.token
+        {
+            continueManagedFocusRequest(
+                activeRequest,
+                source: source,
+                origin: origin,
+                reason: .pendingFocusMismatch
+            )
+        }
+
         controller.niriLayoutHandler.updateTabbedColumnOverlays()
-        if shouldActivateWorkspace {
+        if shouldActivateWorkspace, shouldConfirmRequest {
             controller.syncMonitorsToNiriEngine()
             controller.layoutRefreshController.commitWorkspaceTransition(
                 reason: .appActivationTransition
             )
+        }
+        if shouldConfirmRequest,
+           controller.moveMouseToFocusedWindowEnabled,
+           controller.workspaceManager.focusedToken == entry.token,
+           !controller.workspaceManager.isNonManagedFocusActive
+        {
+            controller.moveMouseToWindow(entry.token)
         }
     }
 
@@ -555,7 +1014,7 @@ final class AXEventHandler: CGSEventDelegate {
     @discardableResult
     private func suspendManagedWindowForNativeFullscreen(_ entry: WindowModel.Entry) -> Bool {
         guard let controller else { return false }
-        cancelNativeFullscreenReplacementExpiry(containing: entry.token)
+        cancelNativeFullscreenLifecycleTasks(containing: entry.token)
         let changed = controller.workspaceManager.markNativeFullscreenSuspended(entry.token)
         controller.borderManager.hideBorder()
         return changed
@@ -568,7 +1027,7 @@ final class AXEventHandler: CGSEventDelegate {
         guard hadRecord || controller.workspaceManager.layoutReason(for: entry.token) == .nativeFullscreen else {
             return false
         }
-        cancelNativeFullscreenReplacementExpiry(containing: entry.token)
+        cancelNativeFullscreenLifecycleTasks(containing: entry.token)
         return controller.workspaceManager.restoreNativeFullscreenRecord(for: entry.token) != nil || hadRecord
     }
 
@@ -581,17 +1040,29 @@ final class AXEventHandler: CGSEventDelegate {
         appFullscreen: Bool
     ) -> Bool {
         guard let controller else { return false }
-        guard let record = controller.workspaceManager.nativeFullscreenAwaitingReplacementCandidate(
+        guard let record = controller.workspaceManager.nativeFullscreenUnavailableCandidate(
             for: token.pid,
             activeWorkspaceId: workspaceId
         ) else {
             return false
         }
+        if record.currentToken == token {
+            guard controller.workspaceManager.entry(for: token) != nil else {
+                return false
+            }
+            cancelNativeFullscreenLifecycleTasks(for: record.originalToken)
+            if appFullscreen {
+                _ = controller.workspaceManager.markNativeFullscreenSuspended(token)
+            } else {
+                _ = controller.workspaceManager.restoreNativeFullscreenRecord(for: token)
+            }
+            return true
+        }
         guard rekeyManagedWindowIdentity(from: record.currentToken, to: token, windowId: windowId, axRef: axRef) != nil else {
             return false
         }
 
-        cancelNativeFullscreenReplacementExpiry(for: record.originalToken)
+        cancelNativeFullscreenLifecycleTasks(for: record.originalToken)
 
         if appFullscreen {
             _ = controller.workspaceManager.markNativeFullscreenSuspended(token)
@@ -607,13 +1078,15 @@ final class AXEventHandler: CGSEventDelegate {
         from oldToken: WindowToken,
         to newToken: WindowToken,
         windowId: UInt32,
-        axRef: AXWindowRef
+        axRef: AXWindowRef,
+        managedReplacementMetadata: ManagedReplacementMetadata? = nil
     ) -> WindowModel.Entry? {
         guard let controller,
               let entry = controller.workspaceManager.rekeyWindow(
                   from: oldToken,
                   to: newToken,
-                  newAXRef: axRef
+                  newAXRef: axRef,
+                  managedReplacementMetadata: managedReplacementMetadata
               )
         else {
             return nil
@@ -624,12 +1097,20 @@ final class AXEventHandler: CGSEventDelegate {
             _ = controller.dwindleEngine?.rekeyWindow(from: oldToken, to: newToken, in: workspaceId)
         }
 
-        controller.focusCoordinator.rekeyPendingFocus(from: oldToken, to: newToken)
+        controller.focusBridge.rekeyPendingFocus(from: oldToken, to: newToken)
+        controller.focusBridge.rekeyManagedRequest(from: oldToken, to: newToken)
+        controller.focusBridge.rekeyFocusedTarget(
+            from: oldToken,
+            to: newToken,
+            axRef: axRef,
+            workspaceId: entry.workspaceId
+        )
         controller.axManager.rekeyWindowState(
             pid: newToken.pid,
             oldWindowId: oldToken.windowId,
             newWindow: axRef
         )
+        AXWindowService.invalidateCachedTitles(windowIds: [UInt32(oldToken.windowId), windowId])
         subscribeToWindows([windowId])
         controller.requestWorkspaceBarRefresh()
         controller.niriLayoutHandler.updateTabbedColumnOverlays()
@@ -648,28 +1129,41 @@ final class AXEventHandler: CGSEventDelegate {
     private func handleNativeFullscreenDestroy(_ token: WindowToken) -> Bool {
         guard let controller,
               let record = controller.workspaceManager.nativeFullscreenRecord(for: token),
-              record.currentToken == token,
-              record.transition != .awaitingReplacement
+              record.currentToken == token
         else {
             return false
         }
 
-        let deadline = Date().addingTimeInterval(1)
-        guard let awaitingRecord = controller.workspaceManager.markNativeFullscreenAwaitingReplacement(
-            token,
-            replacementDeadline: deadline
+        guard let unavailableRecord = controller.workspaceManager.markNativeFullscreenTemporarilyUnavailable(
+            token
         ) else {
             return false
         }
 
         controller.borderManager.hideBorder()
-        scheduleNativeFullscreenReplacementExpiry(for: awaitingRecord.originalToken)
+        scheduleNativeFullscreenFollowup(for: unavailableRecord.originalToken)
         return true
     }
 
     func handleAppHidden(pid: pid_t) {
         guard let controller else { return }
         controller.hiddenAppPIDs.insert(pid)
+
+        if let activeRequest = controller.focusBridge.activeManagedRequest,
+           activeRequest.token.pid == pid
+        {
+            _ = controller.focusBridge.cancelManagedRequest(requestId: activeRequest.requestId)
+            cancelActivationRetry(requestId: activeRequest.requestId)
+            controller.focusBridge.discardPendingFocus(activeRequest.token)
+        }
+        if controller.currentKeyboardFocusTargetForRendering()?.pid == pid {
+            controller.clearKeyboardFocusTarget(pid: pid)
+            _ = controller.workspaceManager.enterNonManagedFocus(
+                appFullscreen: false,
+                preserveFocusedToken: true
+            )
+            controller.borderManager.hideBorder()
+        }
 
         for entry in controller.workspaceManager.entries(forPid: pid) {
             controller.workspaceManager.setLayoutReason(.macosHiddenApp, for: entry.token)
@@ -689,22 +1183,46 @@ final class AXEventHandler: CGSEventDelegate {
         controller.layoutRefreshController.requestVisibilityRefresh(reason: .appUnhidden)
     }
 
-    func resetGhosttyReplacementState() {
-        for (_, task) in pendingGhosttyReplacementTasks {
+    func resetManagedReplacementState() {
+        for (_, task) in pendingManagedReplacementTasks {
             task.cancel()
         }
-        pendingGhosttyReplacementTasks.removeAll()
-        pendingGhosttyReplacementBursts.removeAll()
-        nextGhosttyEventSequence = 0
+        pendingManagedReplacementTasks.removeAll()
+        pendingManagedReplacementBursts.removeAll()
+        nextManagedReplacementEventSequence = 0
     }
 
-    func flushPendingGhosttyReplacementEventsForTests() {
-        let keys = pendingGhosttyReplacementBursts.keys.sorted {
+    func resetWindowStabilizationState() {
+        for (_, task) in pendingWindowStabilizationTasks {
+            task.cancel()
+        }
+        pendingWindowStabilizationTasks.removeAll()
+    }
+
+    func flushPendingManagedReplacementEventsForTests() {
+        let keys = pendingManagedReplacementBursts.keys.sorted {
             ($0.pid, $0.workspaceId.uuidString) < ($1.pid, $1.workspaceId.uuidString)
         }
         for key in keys {
-            pendingGhosttyReplacementTasks.removeValue(forKey: key)?.cancel()
-            flushGhosttyReplacementBurst(for: key)
+            pendingManagedReplacementTasks.removeValue(forKey: key)?.cancel()
+            flushManagedReplacementBurst(for: key)
+        }
+    }
+
+    func flushPendingNativeFullscreenFollowupsForTests() {
+        let tokens = pendingNativeFullscreenFollowupTasks.keys.sorted {
+            ($0.pid, $0.windowId) < ($1.pid, $1.windowId)
+        }
+        for originalToken in tokens {
+            pendingNativeFullscreenFollowupTasks.removeValue(forKey: originalToken)?.cancel()
+            guard let controller,
+                  let record = controller.workspaceManager.nativeFullscreenRecord(for: originalToken),
+                  record.originalToken == originalToken,
+                  record.availability == .temporarilyUnavailable
+            else {
+                continue
+            }
+            controller.layoutRefreshController.requestFullRescan(reason: .activeSpaceChanged)
         }
     }
 
@@ -740,6 +1258,13 @@ final class AXEventHandler: CGSEventDelegate {
 
         if ownedWindow { return nil }
 
+        if trackedMode == nil {
+            scheduleWindowStabilizationRetryIfNeeded(
+                token: token,
+                decision: evaluation.decision
+            )
+        }
+
         guard let trackedMode else { return nil }
 
         let workspaceId = controller.resolveWorkspaceForNewWindow(
@@ -752,11 +1277,14 @@ final class AXEventHandler: CGSEventDelegate {
         return PreparedCreate(
             windowId: windowId,
             token: token,
-            bundleId: bundleId,
             axRef: axRef,
-            workspaceId: workspaceId,
-            mode: trackedMode,
-            ruleEffects: evaluation.decision.ruleEffects
+            ruleEffects: evaluation.decision.ruleEffects,
+            replacementMetadata: makeManagedReplacementMetadata(
+                bundleId: bundleId ?? evaluation.facts.ax.bundleId,
+                workspaceId: workspaceId,
+                mode: trackedMode,
+                facts: evaluation.facts
+            )
         )
     }
 
@@ -775,12 +1303,35 @@ final class AXEventHandler: CGSEventDelegate {
             ?? pidHint.map { WindowToken(pid: $0, windowId: Int(windowId)) }
 
         guard let token = resolvedToken,
-              let trackedWorkspaceId = controller.workspaceManager.workspace(for: token) else { return nil }
+              let entry = controller.workspaceManager.entry(for: token)
+        else {
+            return nil
+        }
+
+        let bundleId = resolveBundleId(token.pid)
+        let windowInfo = resolveWindowInfo(windowId)
+        let facts = managedReplacementFacts(
+            for: entry.axRef,
+            pid: token.pid,
+            bundleId: bundleId,
+            windowInfo: windowInfo
+        )
+
+        let liveMetadata = makeManagedReplacementMetadata(
+            bundleId: bundleId,
+            workspaceId: entry.workspaceId,
+            mode: entry.mode,
+            facts: facts
+        )
+        let replacementMetadata = if let cachedMetadata = entry.managedReplacementMetadata {
+            cachedMetadata.mergingNonNilValues(from: liveMetadata)
+        } else {
+            liveMetadata
+        }
 
         return PreparedDestroy(
             token: token,
-            bundleId: resolveBundleId(token.pid),
-            workspaceId: trackedWorkspaceId
+            replacementMetadata: replacementMetadata
         )
     }
 
@@ -792,6 +1343,7 @@ final class AXEventHandler: CGSEventDelegate {
             ?? resolveTrackedToken(windowId)
             ?? pidHint.map { WindowToken(pid: $0, windowId: Int(windowId)) }
         if let resolvedToken {
+            cancelWindowStabilizationRetry(for: resolvedToken)
             controller?.clearManualWindowOverride(for: resolvedToken)
         }
 
@@ -804,8 +1356,8 @@ final class AXEventHandler: CGSEventDelegate {
             return
         }
 
-        if shouldDelayGhosttyLifecycle(for: candidate.token.pid, bundleId: candidate.bundleId) {
-            enqueueGhosttyDestroy(candidate)
+        if shouldDelayManagedReplacementDestroy(candidate) {
+            enqueueManagedReplacementDestroy(candidate)
             return
         }
 
@@ -816,89 +1368,80 @@ final class AXEventHandler: CGSEventDelegate {
         handleRemoved(token: candidate.token)
     }
 
-    private func shouldDelayGhosttyLifecycle(for pid: pid_t, bundleId: String?) -> Bool {
-        let resolvedBundleId = bundleId ?? resolveBundleId(pid)
-        return resolvedBundleId == Self.ghosttyBundleId
+    private func shouldDelayManagedReplacementCreate(_ candidate: PreparedCreate) -> Bool {
+        guard managedReplacementCorrelationPolicy(for: candidate.bundleId) != nil else {
+            return false
+        }
+
+        let key = ManagedReplacementKey(pid: candidate.token.pid, workspaceId: candidate.workspaceId)
+        if pendingManagedReplacementBursts[key] != nil {
+            return true
+        }
+
+        return hasTrackedSiblingEntry(
+            for: candidate.token.pid,
+            in: candidate.workspaceId,
+            excluding: candidate.token
+        )
     }
 
-    private func enqueueGhosttyCreate(_ candidate: PreparedCreate) {
-        let key = GhosttyReplacementKey(pid: candidate.token.pid, workspaceId: candidate.workspaceId)
-        var burst = pendingGhosttyReplacementBursts[key] ?? PendingGhosttyReplacementBurst()
-        let pendingCreate = PendingGhosttyCreate(sequence: nextGhosttySequence(), candidate: candidate)
+    private func shouldDelayManagedReplacementDestroy(_ candidate: PreparedDestroy) -> Bool {
+        managedReplacementCorrelationPolicy(for: candidate.bundleId) != nil
+    }
+
+    private func enqueueManagedReplacementCreate(_ candidate: PreparedCreate) {
+        let key = ManagedReplacementKey(pid: candidate.token.pid, workspaceId: candidate.workspaceId)
+        var burst = pendingManagedReplacementBursts[key] ?? PendingManagedReplacementBurst()
+        let pendingCreate = PendingManagedCreate(sequence: nextManagedReplacementSequence(), candidate: candidate)
         burst.append(create: pendingCreate)
-        pendingGhosttyReplacementBursts[key] = burst
-
-        if let matchedDestroy = matchedDestroyCandidate(in: burst, for: candidate.token) {
-            completeGhosttyReplacement(for: key, destroy: matchedDestroy, create: pendingCreate)
-            return
-        }
-
-        scheduleGhosttyReplacementFlush(for: key)
+        pendingManagedReplacementBursts[key] = burst
+        scheduleManagedReplacementFlush(for: key)
     }
 
-    private func enqueueGhosttyDestroy(_ candidate: PreparedDestroy) {
-        let key = GhosttyReplacementKey(pid: candidate.token.pid, workspaceId: candidate.workspaceId)
-        var burst = pendingGhosttyReplacementBursts[key] ?? PendingGhosttyReplacementBurst()
-        let pendingDestroy = PendingGhosttyDestroy(sequence: nextGhosttySequence(), candidate: candidate)
+    private func enqueueManagedReplacementDestroy(_ candidate: PreparedDestroy) {
+        let key = ManagedReplacementKey(pid: candidate.token.pid, workspaceId: candidate.workspaceId)
+        var burst = pendingManagedReplacementBursts[key] ?? PendingManagedReplacementBurst()
+        let pendingDestroy = PendingManagedDestroy(sequence: nextManagedReplacementSequence(), candidate: candidate)
         burst.append(destroy: pendingDestroy)
-        pendingGhosttyReplacementBursts[key] = burst
-
-        if let matchedCreate = matchedCreateCandidate(in: burst, for: candidate.token) {
-            completeGhosttyReplacement(for: key, destroy: pendingDestroy, create: matchedCreate)
-            return
-        }
-
-        scheduleGhosttyReplacementFlush(for: key)
+        pendingManagedReplacementBursts[key] = burst
+        scheduleManagedReplacementFlush(for: key)
     }
 
-    private func matchedCreateCandidate(
-        in burst: PendingGhosttyReplacementBurst,
-        for oldToken: WindowToken
-    ) -> PendingGhosttyCreate? {
-        guard burst.hasSingleReplacementPair,
-              let create = burst.creates.first,
-              create.candidate.token != oldToken
-        else {
-            return nil
+    private func matchedManagedReplacementPair(
+        in burst: PendingManagedReplacementBurst
+    ) -> MatchedManagedReplacementPair? {
+        var matchedPair: MatchedManagedReplacementPair?
+
+        for destroy in burst.destroys {
+            for create in burst.creates {
+                guard destroy.candidate.token != create.candidate.token,
+                      managedReplacementMetadataMatches(
+                          old: destroy.candidate.replacementMetadata,
+                          new: create.candidate.replacementMetadata
+                      )
+                else {
+                    continue
+                }
+
+                if matchedPair != nil {
+                    return nil
+                }
+                matchedPair = MatchedManagedReplacementPair(destroy: destroy, create: create)
+            }
         }
-        return create
+
+        return matchedPair
     }
 
-    private func matchedDestroyCandidate(
-        in burst: PendingGhosttyReplacementBurst,
-        for newToken: WindowToken
-    ) -> PendingGhosttyDestroy? {
-        guard burst.hasSingleReplacementPair,
-              let destroy = burst.destroys.first,
-              destroy.candidate.token != newToken
-        else {
-            return nil
-        }
-        return destroy
+    @discardableResult
+    private func completeManagedReplacement(
+        destroy: PendingManagedDestroy,
+        create: PendingManagedCreate
+    ) -> Bool {
+        rekeyManagedReplacement(from: destroy.candidate.token, to: create.candidate)
     }
 
-    private func completeGhosttyReplacement(
-        for key: GhosttyReplacementKey,
-        destroy: PendingGhosttyDestroy,
-        create: PendingGhosttyCreate
-    ) {
-        pendingGhosttyReplacementTasks.removeValue(forKey: key)?.cancel()
-        pendingGhosttyReplacementBursts.removeValue(forKey: key)
-
-        let destroyCandidate = destroy.candidate
-        let createCandidate = create.candidate
-
-        guard destroyCandidate.workspaceId == createCandidate.workspaceId else {
-            replayGhosttyReplacementEvents([.destroy(destroy), .create(create)])
-            return
-        }
-
-        if !rekeyGhosttyReplacement(from: destroyCandidate.token, to: createCandidate) {
-            replayGhosttyReplacementEvents([.destroy(destroy), .create(create)])
-        }
-    }
-
-    private func replayGhosttyReplacementEvents(_ events: [PendingGhosttyEvent]) {
+    private func replayManagedReplacementEvents(_ events: [PendingManagedReplacementEvent]) {
         for event in events.sorted(by: { $0.sequence < $1.sequence }) {
             switch event {
             case let .create(create):
@@ -910,103 +1453,597 @@ final class AXEventHandler: CGSEventDelegate {
     }
 
     @discardableResult
-    private func rekeyGhosttyReplacement(from oldToken: WindowToken, to create: PreparedCreate) -> Bool {
+    private func rekeyManagedReplacement(from oldToken: WindowToken, to create: PreparedCreate) -> Bool {
         rekeyManagedWindowIdentity(
             from: oldToken,
             to: create.token,
             windowId: create.windowId,
-            axRef: create.axRef
+            axRef: create.axRef,
+            managedReplacementMetadata: create.replacementMetadata
         ) != nil
+    }
+
+    private func makeManagedReplacementMetadata(
+        bundleId: String?,
+        workspaceId: WorkspaceDescriptor.ID,
+        mode: TrackedWindowMode,
+        facts: WindowRuleFacts
+    ) -> ManagedReplacementMetadata {
+        ManagedReplacementMetadata(
+            bundleId: bundleId,
+            workspaceId: workspaceId,
+            mode: mode,
+            role: facts.ax.role,
+            subrole: facts.ax.subrole,
+            title: facts.ax.title,
+            windowLevel: facts.windowServer?.level,
+            parentWindowId: facts.windowServer?.parentId,
+            frame: facts.windowServer?.frame
+        )
+    }
+
+    private func managedReplacementFacts(
+        for axRef: AXWindowRef,
+        pid: pid_t,
+        bundleId: String?,
+        windowInfo: WindowServerInfo?
+    ) -> WindowRuleFacts {
+        if let providedFacts = windowFactsProvider?(axRef, pid) {
+            return WindowRuleFacts(
+                appName: providedFacts.appName,
+                ax: providedFacts.ax,
+                sizeConstraints: providedFacts.sizeConstraints,
+                windowServer: providedFacts.windowServer ?? windowInfo
+            )
+        }
+
+        let app = NSRunningApplication(processIdentifier: pid)
+        return WindowRuleFacts(
+            appName: app?.localizedName,
+            ax: AXWindowService.collectWindowFacts(
+                axRef,
+                appPolicy: app?.activationPolicy,
+                bundleId: bundleId,
+                includeTitle: true
+            ),
+            sizeConstraints: nil,
+            windowServer: windowInfo
+        )
+    }
+
+    private func hasTrackedSiblingEntry(
+        for pid: pid_t,
+        in workspaceId: WorkspaceDescriptor.ID,
+        excluding token: WindowToken
+    ) -> Bool {
+        guard let controller else { return false }
+        return controller.workspaceManager.entries(forPid: pid).contains {
+            $0.workspaceId == workspaceId && $0.token != token
+        }
+    }
+
+    private func managedReplacementCorrelationPolicy(
+        for bundleId: String?
+    ) -> ManagedReplacementCorrelationPolicy? {
+        guard let bundleId = bundleId?.lowercased() else { return nil }
+        if bundleId == Self.ghosttyBundleId {
+            return .ghostty
+        }
+        if Self.replacementCorrelationBundleIds.contains(bundleId) {
+            return .strictMetadata
+        }
+        return nil
+    }
+
+    private func managedReplacementMetadataMatches(
+        old: ManagedReplacementMetadata,
+        new: ManagedReplacementMetadata
+    ) -> Bool {
+        guard let oldBundleId = old.bundleId?.lowercased(),
+              let newBundleId = new.bundleId?.lowercased(),
+              oldBundleId == newBundleId,
+              let policy = managedReplacementCorrelationPolicy(for: oldBundleId),
+              policy == managedReplacementCorrelationPolicy(for: newBundleId),
+              old.workspaceId == new.workspaceId,
+              old.role == new.role,
+              old.subrole == new.subrole
+        else {
+            return false
+        }
+
+        switch policy {
+        case .ghostty:
+            return ghosttyManagedReplacementMetadataMatches(old: old, new: new)
+
+        case .strictMetadata:
+            return strictManagedReplacementMetadataMatches(old: old, new: new)
+        }
+    }
+
+    private func ghosttyManagedReplacementMetadataMatches(
+        old: ManagedReplacementMetadata,
+        new: ManagedReplacementMetadata
+    ) -> Bool {
+        if let oldLevel = old.windowLevel,
+           let newLevel = new.windowLevel,
+           oldLevel != newLevel
+        {
+            return false
+        }
+
+        var hasStructuralEvidence = false
+        if let oldParentWindowId = old.parentWindowId,
+           let newParentWindowId = new.parentWindowId
+        {
+            guard oldParentWindowId == newParentWindowId else {
+                return false
+            }
+            hasStructuralEvidence = true
+        }
+
+        if let oldFrame = old.frame,
+           let newFrame = new.frame
+        {
+            guard framesAreCloseForManagedReplacement(oldFrame, newFrame) else {
+                return false
+            }
+            hasStructuralEvidence = true
+        }
+
+        return hasStructuralEvidence
+    }
+
+    private func shouldApplySecondaryGhosttyDestroyHold(
+        to burst: PendingManagedReplacementBurst
+    ) -> Bool {
+        guard burst.ghosttyDestroyHoldCount == 0,
+              burst.creates.isEmpty,
+              !burst.destroys.isEmpty
+        else {
+            return false
+        }
+
+        return burst.destroys.allSatisfy {
+            managedReplacementCorrelationPolicy(for: $0.candidate.bundleId) == .ghostty
+        }
+    }
+
+    private func strictManagedReplacementMetadataMatches(
+        old: ManagedReplacementMetadata,
+        new: ManagedReplacementMetadata
+    ) -> Bool {
+        guard old.mode == new.mode else {
+            return false
+        }
+
+        let oldTitle = normalizedTitleIdentity(old.title)
+        let newTitle = normalizedTitleIdentity(new.title)
+        if let oldTitle, let newTitle {
+            return oldTitle == newTitle
+        }
+
+        guard oldTitle == nil,
+              newTitle == nil,
+              old.windowLevel == new.windowLevel,
+              old.parentWindowId == new.parentWindowId,
+              framesAreCloseForManagedReplacement(old.frame, new.frame)
+        else {
+            return false
+        }
+
+        return true
+    }
+
+    private func normalizedTitleIdentity(_ title: String?) -> String? {
+        guard let title = title?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !title.isEmpty
+        else {
+            return nil
+        }
+        return title
+    }
+
+    private func framesAreCloseForManagedReplacement(_ lhs: CGRect?, _ rhs: CGRect?) -> Bool {
+        guard let lhs, let rhs else { return false }
+
+        return abs(lhs.midX - rhs.midX) <= 96
+            && abs(lhs.midY - rhs.midY) <= 96
+            && abs(lhs.width - rhs.width) <= 64
+            && abs(lhs.height - rhs.height) <= 64
     }
 
     private func refreshBorderAfterManagedRekey(entry: WindowModel.Entry) {
         guard let controller else { return }
-        guard controller.workspaceManager.focusedToken == entry.token else { return }
+        guard controller.currentKeyboardFocusTargetForRendering()?.token == entry.token else { return }
 
-        if let engine = controller.niriEngine,
-           let node = engine.findNode(for: entry.token),
-           let frame = node.renderedFrame ?? node.frame
-        {
-            controller.borderCoordinator.updateBorderIfAllowed(
-                token: entry.token,
-                frame: frame,
-                windowId: entry.windowId
-            )
-            return
-        }
-
-        if let frame = frameProvider?(entry.axRef) ?? (try? AXWindowService.frame(entry.axRef)) {
-            controller.borderCoordinator.updateBorderIfAllowed(
-                token: entry.token,
-                frame: frame,
-                windowId: entry.windowId
-            )
-        }
+        let preferredFrame = controller.niriEngine?.findNode(for: entry.token).flatMap { $0.renderedFrame ?? $0.frame }
+            ?? frameProvider?(entry.axRef)
+        _ = controller.renderKeyboardFocusBorder(
+            preferredFrame: preferredFrame,
+            policy: .coordinated
+        )
     }
 
     private func resetNativeFullscreenReplacementState() {
-        for (_, task) in pendingNativeFullscreenReplacementTasks {
+        for (_, task) in pendingNativeFullscreenFollowupTasks {
             task.cancel()
         }
-        pendingNativeFullscreenReplacementTasks.removeAll()
+        pendingNativeFullscreenFollowupTasks.removeAll()
+        for (_, task) in pendingNativeFullscreenStaleCleanupTasks {
+            task.cancel()
+        }
+        pendingNativeFullscreenStaleCleanupTasks.removeAll()
     }
 
-    private func scheduleNativeFullscreenReplacementExpiry(for originalToken: WindowToken) {
-        cancelNativeFullscreenReplacementExpiry(for: originalToken)
-        pendingNativeFullscreenReplacementTasks[originalToken] = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: Self.nativeFullscreenReplacementGraceDelay)
+    private func scheduleNativeFullscreenFollowup(for originalToken: WindowToken) {
+        cancelNativeFullscreenLifecycleTasks(for: originalToken)
+        pendingNativeFullscreenFollowupTasks[originalToken] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.nativeFullscreenFollowupDelay)
             guard !Task.isCancelled, let self, let controller = self.controller else { return }
-            defer { self.pendingNativeFullscreenReplacementTasks.removeValue(forKey: originalToken) }
+            defer { self.pendingNativeFullscreenFollowupTasks.removeValue(forKey: originalToken) }
             guard let record = controller.workspaceManager.nativeFullscreenRecord(for: originalToken),
                   record.originalToken == originalToken,
-                  record.transition == .awaitingReplacement
+                  record.availability == .temporarilyUnavailable
             else {
                 return
             }
             controller.layoutRefreshController.requestFullRescan(reason: .activeSpaceChanged)
         }
+        pendingNativeFullscreenStaleCleanupTasks[originalToken] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.nativeFullscreenStaleCleanupDelay)
+            guard !Task.isCancelled, let self, let controller = self.controller else { return }
+            defer { self.pendingNativeFullscreenStaleCleanupTasks.removeValue(forKey: originalToken) }
+            guard let record = controller.workspaceManager.nativeFullscreenRecord(for: originalToken),
+                  record.originalToken == originalToken,
+                  record.availability == .temporarilyUnavailable
+            else {
+                return
+            }
+            let removedEntries = controller.workspaceManager.expireStaleTemporarilyUnavailableNativeFullscreenRecords()
+            guard !removedEntries.isEmpty else { return }
+            controller.layoutRefreshController.requestFullRescan(reason: .activeSpaceChanged)
+        }
     }
 
-    private func cancelNativeFullscreenReplacementExpiry(for originalToken: WindowToken) {
-        pendingNativeFullscreenReplacementTasks.removeValue(forKey: originalToken)?.cancel()
+    func cancelNativeFullscreenLifecycleTasks(for originalToken: WindowToken) {
+        pendingNativeFullscreenFollowupTasks.removeValue(forKey: originalToken)?.cancel()
+        pendingNativeFullscreenStaleCleanupTasks.removeValue(forKey: originalToken)?.cancel()
     }
 
-    private func cancelNativeFullscreenReplacementExpiry(containing token: WindowToken) {
+    func cancelNativeFullscreenLifecycleTasks(containing token: WindowToken) {
         if let controller,
            let originalToken = controller.workspaceManager.nativeFullscreenRecord(for: token)?.originalToken
         {
-            cancelNativeFullscreenReplacementExpiry(for: originalToken)
+            cancelNativeFullscreenLifecycleTasks(for: originalToken)
             return
         }
-        cancelNativeFullscreenReplacementExpiry(for: token)
+        cancelNativeFullscreenLifecycleTasks(for: token)
     }
 
-    private func scheduleGhosttyReplacementFlush(for key: GhosttyReplacementKey) {
-        pendingGhosttyReplacementTasks.removeValue(forKey: key)?.cancel()
-        pendingGhosttyReplacementTasks[key] = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: Self.ghosttyReplacementGraceDelay)
+    private func scheduleManagedReplacementFlush(for key: ManagedReplacementKey) {
+        pendingManagedReplacementTasks.removeValue(forKey: key)?.cancel()
+        pendingManagedReplacementTasks[key] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.managedReplacementGraceDelay)
             guard !Task.isCancelled else { return }
-            self?.flushGhosttyReplacementBurst(for: key)
+            self?.flushManagedReplacementBurst(for: key)
         }
     }
 
-    private func flushGhosttyReplacementBurst(for key: GhosttyReplacementKey) {
-        pendingGhosttyReplacementTasks.removeValue(forKey: key)?.cancel()
-        guard let burst = pendingGhosttyReplacementBursts.removeValue(forKey: key) else { return }
+    private func flushManagedReplacementBurst(for key: ManagedReplacementKey) {
+        pendingManagedReplacementTasks.removeValue(forKey: key)?.cancel()
+        guard var burst = pendingManagedReplacementBursts.removeValue(forKey: key) else { return }
 
-        for event in burst.orderedEvents {
-            switch event {
-            case let .create(create):
-                trackPreparedCreate(create.candidate)
-            case let .destroy(destroy):
-                processPreparedDestroy(destroy.candidate)
+        if let pair = matchedManagedReplacementPair(in: burst) {
+            if completeManagedReplacement(destroy: pair.destroy, create: pair.create) {
+                replayManagedReplacementEvents(
+                    burst.orderedEvents(excludingSequences: pair.excludedSequences)
+                )
+            } else {
+                replayManagedReplacementEvents(burst.orderedEvents)
             }
+            return
+        }
+
+        if shouldApplySecondaryGhosttyDestroyHold(to: burst) {
+            burst.ghosttyDestroyHoldCount = 1
+            pendingManagedReplacementBursts[key] = burst
+            scheduleManagedReplacementFlush(for: key)
+            return
+        }
+
+        replayManagedReplacementEvents(burst.orderedEvents)
+    }
+
+    private func nextManagedReplacementSequence() -> UInt64 {
+        defer { nextManagedReplacementEventSequence += 1 }
+        return nextManagedReplacementEventSequence
+    }
+
+    private func updateManagedReplacementFrame(_ frame: CGRect, for entry: WindowModel.Entry) {
+        entry.managedReplacementMetadata?.frame = frame
+    }
+
+    private func updateManagedReplacementTitle(windowId: UInt32, token: WindowToken) {
+        guard let controller,
+              let entry = controller.workspaceManager.entry(for: token),
+              let title = resolveWindowInfo(windowId)?.title ?? AXWindowService.titlePreferFast(windowId: windowId)
+        else {
+            return
+        }
+        entry.managedReplacementMetadata?.title = title
+    }
+
+    private func scheduleWindowStabilizationRetryIfNeeded(
+        token: WindowToken,
+        decision: WindowDecision
+    ) {
+        guard decision.disposition == .undecided,
+              decision.deferredReason != nil
+        else {
+            return
+        }
+
+        pendingWindowStabilizationTasks[token]?.cancel()
+        pendingWindowStabilizationTasks[token] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.stabilizationRetryDelay)
+            guard !Task.isCancelled, let self, let controller = self.controller else { return }
+            self.pendingWindowStabilizationTasks.removeValue(forKey: token)
+            _ = await controller.reevaluateWindowRules(for: [.window(token)])
         }
     }
 
-    private func nextGhosttySequence() -> UInt64 {
-        defer { nextGhosttyEventSequence += 1 }
-        return nextGhosttyEventSequence
+    private func cancelWindowStabilizationRetry(for token: WindowToken) {
+        pendingWindowStabilizationTasks.removeValue(forKey: token)?.cancel()
+    }
+
+    private func scheduleCreatedWindowRetryIfNeeded(
+        windowId: UInt32,
+        pid: pid_t
+    ) -> Bool {
+        guard let controller else { return false }
+        let token = WindowToken(pid: pid, windowId: Int(windowId))
+        guard controller.workspaceManager.entry(for: token) == nil else {
+            cancelCreatedWindowRetry(windowId: windowId)
+            return false
+        }
+        guard !controller.isOwnedWindow(windowNumber: Int(windowId)) else {
+            cancelCreatedWindowRetry(windowId: windowId)
+            return false
+        }
+        guard resolveAXWindowRef(windowId: windowId, pid: pid) == nil else {
+            return false
+        }
+
+        let attempt = createdWindowRetryCountById[windowId, default: 0] + 1
+        guard attempt <= Self.createdWindowRetryLimit else { return false }
+
+        createdWindowRetryCountById[windowId] = attempt
+        pendingCreatedWindowRetryTasks.removeValue(forKey: windowId)?.cancel()
+        recordNiriCreateFocusTrace(
+            .init(
+                kind: .createRetryScheduled(
+                    windowId: windowId,
+                    pid: pid,
+                    attempt: attempt
+                )
+            )
+        )
+        pendingCreatedWindowRetryTasks[windowId] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.stabilizationRetryDelay)
+            guard !Task.isCancelled, let self else { return }
+            self.pendingCreatedWindowRetryTasks.removeValue(forKey: windowId)
+            self.processCreatedWindow(windowId: windowId)
+        }
+        return true
+    }
+
+    private func cancelCreatedWindowRetry(windowId: UInt32) {
+        pendingCreatedWindowRetryTasks.removeValue(forKey: windowId)?.cancel()
+        createdWindowRetryCountById.removeValue(forKey: windowId)
+    }
+
+    private func resetCreatedWindowRetryState() {
+        for (_, task) in pendingCreatedWindowRetryTasks {
+            task.cancel()
+        }
+        pendingCreatedWindowRetryTasks.removeAll()
+        createdWindowRetryCountById.removeAll()
+    }
+
+    private func handleMissingFocusedWindow(
+        pid: pid_t,
+        source: ActivationEventSource,
+        origin: ActivationCallOrigin,
+        requestDisposition: ActivationRequestDisposition
+    ) {
+        guard let controller else { return }
+
+        switch requestDisposition {
+        case let .matchesActiveRequest(request), let .conflictsWithPendingRequest(request):
+            continueManagedFocusRequest(
+                request,
+                source: source,
+                origin: origin,
+                reason: .missingFocusedWindow
+            )
+            return
+        case .unrelatedNoRequest:
+            break
+        }
+
+        cancelActivationRetry()
+        controller.focusBridge.setFocusedTarget(nil)
+        let fallbackFullscreen = appFullscreenForFallbackLifecyclePreservation(
+            observedAppFullscreen: false
+        )
+        _ = controller.workspaceManager.enterNonManagedFocus(appFullscreen: fallbackFullscreen)
+        recordNiriCreateFocusTrace(
+            .init(
+                kind: .nonManagedFallbackEntered(
+                    pid: pid,
+                    source: source
+                )
+            )
+        )
+        controller.borderManager.hideBorder()
+    }
+
+    private func appFullscreenForFallbackLifecyclePreservation(
+        observedAppFullscreen: Bool
+    ) -> Bool {
+        guard let controller else { return observedAppFullscreen }
+
+        let hasLifecycleContext = controller.workspaceManager.hasNativeFullscreenLifecycleContext
+        return observedAppFullscreen || hasLifecycleContext
+    }
+
+    private func activationRequestDisposition(
+        for pid: pid_t,
+        token: WindowToken?,
+        activeRequest: ManagedFocusRequest?
+    ) -> ActivationRequestDisposition {
+        guard let activeRequest else { return .unrelatedNoRequest }
+        guard activeRequest.token.pid == pid else {
+            return .conflictsWithPendingRequest(activeRequest)
+        }
+        guard let token else {
+            return .matchesActiveRequest(activeRequest)
+        }
+        return activeRequest.token == token
+            ? .matchesActiveRequest(activeRequest)
+            : .conflictsWithPendingRequest(activeRequest)
+    }
+
+    private func continueManagedFocusRequest(
+        _ request: ManagedFocusRequest,
+        source: ActivationEventSource,
+        origin: ActivationCallOrigin,
+        reason: ActivationRetryReason
+    ) {
+        if scheduleActivationRetryIfNeeded(
+            request: request,
+            source: source,
+            origin: origin,
+            reason: reason
+        ) {
+            return
+        }
+        guard origin != .probe else {
+            return
+        }
+        handleActivationRetryExhausted(
+            request: request,
+            source: source,
+            origin: origin
+        )
+    }
+
+    private func scheduleActivationRetryIfNeeded(
+        request: ManagedFocusRequest,
+        source: ActivationEventSource,
+        origin: ActivationCallOrigin,
+        reason: ActivationRetryReason
+    ) -> Bool {
+        guard let controller,
+              let updatedRequest = controller.focusBridge.recordRetry(
+                  for: request.token,
+                  source: source,
+                  retryLimit: Self.activationRetryLimit
+              )
+        else {
+            return false
+        }
+
+        cancelActivationRetry()
+        pendingActivationRetryRequestId = updatedRequest.requestId
+        recordNiriCreateFocusTrace(
+            .init(
+                kind: .activationDeferred(
+                    requestId: updatedRequest.requestId,
+                    token: updatedRequest.token,
+                    source: source,
+                    reason: reason,
+                    attempt: updatedRequest.retryCount
+                )
+            )
+        )
+        let retryOrigin: ActivationCallOrigin = origin == .probe ? .probe : .retry
+        pendingActivationRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.stabilizationRetryDelay)
+            guard !Task.isCancelled, let self else { return }
+            let requestId = updatedRequest.requestId
+            guard self.pendingActivationRetryRequestId == requestId else { return }
+            self.pendingActivationRetryTask = nil
+            self.pendingActivationRetryRequestId = nil
+            guard let controller = self.controller,
+                  let liveRequest = controller.focusBridge.activeManagedRequest(requestId: requestId)
+            else {
+                return
+            }
+            self.handleAppActivation(
+                pid: liveRequest.token.pid,
+                source: source,
+                origin: retryOrigin
+            )
+        }
+        return true
+    }
+
+    private func handleActivationRetryExhausted(
+        request: ManagedFocusRequest,
+        source: ActivationEventSource,
+        origin: ActivationCallOrigin
+    ) {
+        guard let controller else { return }
+
+        cancelActivationRetry(requestId: request.requestId)
+        _ = controller.focusBridge.cancelManagedRequest(requestId: request.requestId)
+        _ = controller.workspaceManager.cancelManagedFocusRequest(
+            matching: request.token,
+            workspaceId: request.workspaceId
+        )
+
+        if let target = controller.currentKeyboardFocusTargetForRendering(),
+           controller.renderKeyboardFocusBorder(
+               for: target,
+               preferredFrame: controller.preferredKeyboardFocusFrame(for: target.token),
+               policy: .direct
+           )
+        {
+            recordNiriCreateFocusTrace(
+                .init(
+                    kind: .borderReapplied(
+                        token: target.token,
+                        phase: .retryExhaustedFallback
+                    )
+                )
+            )
+        } else {
+            recordNiriCreateFocusTrace(
+                .init(
+                    kind: .nonManagedFallbackEntered(
+                        pid: request.token.pid,
+                        source: source
+                    )
+                )
+            )
+            controller.borderManager.hideBorder()
+        }
+    }
+
+    private func cancelActivationRetry() {
+        pendingActivationRetryTask?.cancel()
+        pendingActivationRetryTask = nil
+        pendingActivationRetryRequestId = nil
+    }
+
+    private func cancelActivationRetry(requestId: UInt64) {
+        guard pendingActivationRetryRequestId == requestId else { return }
+        cancelActivationRetry()
+    }
+
+    private func resetActivationRetryState() {
+        cancelActivationRetry()
     }
 
     private func deferCreatedWindow(_ windowId: UInt32) {
@@ -1063,6 +2100,9 @@ final class AXEventHandler: CGSEventDelegate {
     }
 
     private func resolveFocusedAXWindowRef(pid: pid_t) -> AXWindowRef? {
+        if let focusedWindowRefProvider {
+            return focusedWindowRefProvider(pid)
+        }
         guard let windowElement = resolveFocusedWindowValue(pid: pid) else {
             return nil
         }

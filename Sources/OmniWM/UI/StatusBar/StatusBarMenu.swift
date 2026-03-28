@@ -11,12 +11,32 @@ private func applyCurrentAppAppearance(to view: NSView) {
 final class StatusBarMenuBuilder {
     private let settings: SettingsStore
     private weak var controller: WMController?
+    var infoAlertPresenter: (String, String) -> Void
+    var configFileURL = SettingsStore.exportURL
+    var configFileActionPerformer: (ConfigFileAction, URL, SettingsStore, WMController) throws -> ExportStatus
 
     private var toggleViews: [String: MenuToggleRowView] = [:]
 
     init(settings: SettingsStore, controller: WMController) {
         self.settings = settings
         self.controller = controller
+        infoAlertPresenter = { title, message in
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = title
+            alert.informativeText = message
+            alert.addButton(withTitle: "OK")
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            _ = alert.runModal()
+        }
+        configFileActionPerformer = { action, targetURL, settings, controller in
+            try ConfigFileWorkflow.perform(
+                action,
+                targetURL: targetURL,
+                settings: settings,
+                controller: controller
+            )
+        }
     }
 
     func buildMenu() -> NSMenu {
@@ -184,6 +204,84 @@ final class StatusBarMenuBuilder {
         let settingsItem = NSMenuItem()
         settingsItem.view = settingsRow
         menu.addItem(settingsItem)
+
+        menu.addItem(createSectionLabel("CONFIG FILE"))
+
+        let exportEditableRow = MenuActionRowView(
+            icon: "square.and.arrow.up",
+            label: "Export Editable Config"
+        ) { [weak self] in
+            self?.performConfigFileAction(.export(.full))
+        }
+        let exportEditableItem = NSMenuItem()
+        exportEditableItem.view = exportEditableRow
+        menu.addItem(exportEditableItem)
+
+        let exportCompactRow = MenuActionRowView(
+            icon: "archivebox",
+            label: "Export Compact Backup"
+        ) { [weak self] in
+            self?.performConfigFileAction(.export(.compact))
+        }
+        let exportCompactItem = NSMenuItem()
+        exportCompactItem.view = exportCompactRow
+        menu.addItem(exportCompactItem)
+
+        let importSettingsRow = MenuActionRowView(
+            icon: "square.and.arrow.down",
+            label: "Import Settings"
+        ) { [weak self] in
+            self?.performConfigFileAction(.import)
+        }
+        let importSettingsItem = NSMenuItem()
+        importSettingsItem.view = importSettingsRow
+        menu.addItem(importSettingsItem)
+
+        let revealSettingsFileRow = MenuActionRowView(
+            icon: "folder",
+            label: "Reveal Settings File"
+        ) { [weak self] in
+            self?.performConfigFileAction(.reveal)
+        }
+        let revealSettingsFileItem = NSMenuItem()
+        revealSettingsFileItem.view = revealSettingsFileRow
+        menu.addItem(revealSettingsFileItem)
+
+        let openSettingsFileRow = MenuActionRowView(
+            icon: "doc.text",
+            label: "Open Settings File"
+        ) { [weak self] in
+            self?.performConfigFileAction(.open)
+        }
+        let openSettingsFileItem = NSMenuItem()
+        openSettingsFileItem.view = openSettingsFileRow
+        menu.addItem(openSettingsFileItem)
+    }
+
+    func performConfigFileAction(_ action: ConfigFileAction) {
+        do {
+            guard let controller else {
+                throw CocoaError(.coderInvalidValue)
+            }
+            let status = try configFileActionPerformer(
+                action,
+                configFileURL,
+                settings,
+                controller
+            )
+            if let title = status.successAlertTitle {
+                presentInfoAlert(title: title, message: configFileURL.path)
+            }
+        } catch {
+            presentInfoAlert(
+                title: action.failureAlertTitle,
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    private func presentInfoAlert(title: String, message: String) {
+        infoAlertPresenter(title, message)
     }
 
     private func addLinksSection(to menu: NSMenu) {
