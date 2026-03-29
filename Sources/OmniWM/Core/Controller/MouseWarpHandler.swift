@@ -3,25 +3,6 @@ import Foundation
 
 @MainActor
 final class MouseWarpHandler: NSObject {
-    /// Cached bounds for the active event tap clamp. Updated when lastMonitorId changes.
-    /// Contains the current monitor frame and all spatially-adjacent monitor frames.
-    /// Any cursor position outside these frames gets clamped before delivery.
-    struct WarpBounds {
-        let currentFrame: CGRect
-        let allowedFrames: [CGRect]
-
-        func shouldClamp(_ point: CGPoint) -> Bool {
-            !allowedFrames.contains { $0.contains(point) }
-        }
-
-        func clamped(_ point: CGPoint) -> CGPoint {
-            CGPoint(
-                x: min(max(point.x, currentFrame.minX + 1), currentFrame.maxX - 1),
-                y: min(max(point.y, currentFrame.minY + 1), currentFrame.maxY - 1)
-            )
-        }
-    }
-
     struct State {
         struct PendingWarpEvents {
             var pendingLocation: CGPoint?
@@ -49,7 +30,6 @@ final class MouseWarpHandler: NSObject {
         var cooldownTimer: Timer?
         var isWarping = false
         var lastMonitorId: Monitor.ID?
-        var warpBounds: WarpBounds?
         var pendingWarpEvents = PendingWarpEvents()
         var debugCounters = DebugCounters()
     }
@@ -103,20 +83,7 @@ final class MouseWarpHandler: NSObject {
             precondition(Thread.isMainThread, "Mouse warp taps are expected on the main run loop")
 
             MainActor.assumeIsolated {
-                guard let instance = MouseWarpHandler._instance else { return }
-
-                // Active clamp: if cursor would escape to a non-adjacent monitor,
-                // rewrite the event position before it's delivered.
-                if let bounds = instance.state.warpBounds,
-                   !instance.state.isWarping,
-                   bounds.shouldClamp(screenLocation) {
-                    let clamped = bounds.clamped(screenLocation)
-                    event.location = ScreenCoordinateSpace.toWindowServer(point: clamped)
-                    instance.receiveTapMouseWarpMoved(at: clamped)
-                    return
-                }
-
-                instance.receiveTapMouseWarpMoved(at: screenLocation)
+                MouseWarpHandler._instance?.receiveTapMouseWarpMoved(at: screenLocation)
             }
 
             return Unmanaged.passUnretained(event)
@@ -125,7 +92,7 @@ final class MouseWarpHandler: NSObject {
         state.eventTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .defaultTap,
+            options: .listenOnly,
             eventsOfInterest: eventMask,
             callback: callback,
             userInfo: nil
@@ -154,46 +121,8 @@ final class MouseWarpHandler: NSObject {
         MouseWarpHandler._instance = nil
         state.isWarping = false
         state.lastMonitorId = nil
-        state.warpBounds = nil
         state.pendingWarpEvents.clear()
         state.debugCounters = .init()
-    }
-
-    /// Rebuild the cached warp bounds for the given monitor. The bounds include
-    /// the monitor's own frame plus the actual frames of all spatially-adjacent monitors.
-    private func rebuildWarpBounds(for monitor: Monitor) {
-        guard let controller else {
-            state.warpBounds = nil
-            return
-        }
-        let entries = controller.settings.spatialMonitorLayout
-        guard let entry = spatialEntry(for: monitor, in: entries) else {
-            state.warpBounds = nil
-            return
-        }
-        let layout = SpatialMonitorLayout(entries: entries)
-        let monitors = controller.workspaceManager.monitors
-
-        var allowed = [monitor.frame]
-        for edge in [SpatialMonitorLayout.Edge.left, .right, .top, .bottom] {
-            let probePositions: [CGFloat]
-            switch edge {
-            case .left, .right:
-                probePositions = [entry.frame.minY + 1, entry.frame.midY, entry.frame.maxY - 1]
-            case .top, .bottom:
-                probePositions = [entry.frame.minX + 1, entry.frame.midX, entry.frame.maxX - 1]
-            }
-            for pos in probePositions {
-                if let neighbor = layout.adjacentMonitor(from: entry, edge: edge, atPosition: pos),
-                   let neighborMonitor = monitors.first(where: {
-                       $0.displayId == neighbor.displayId && $0.name == neighbor.monitorName
-                   }),
-                   !allowed.contains(where: { $0 == neighborMonitor.frame }) {
-                    allowed.append(neighborMonitor.frame)
-                }
-            }
-        }
-        state.warpBounds = WarpBounds(currentFrame: monitor.frame, allowedFrames: allowed)
     }
 
     func flushPendingWarpEventsForTests() {
@@ -267,7 +196,6 @@ final class MouseWarpHandler: NSObject {
         }
 
         state.lastMonitorId = currentMonitor.id
-        rebuildWarpBounds(for: currentMonitor)
 
         guard let entry = spatialEntry(for: currentMonitor, in: layoutEntries) else { return }
 
@@ -421,7 +349,6 @@ final class MouseWarpHandler: NSObject {
 
         state.isWarping = true
         state.lastMonitorId = targetMonitor.id
-        rebuildWarpBounds(for: targetMonitor)
         let warpPoint = ScreenCoordinateSpace.toWindowServer(point: CGPoint(x: landingX, y: landingY))
         postMouseMovedEvent(warpPoint)
         scheduleWarpCooldownReset()
